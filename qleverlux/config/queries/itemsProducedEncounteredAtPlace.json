@@ -1,0 +1,15 @@
+{
+  "_scope": "item",
+  "OR": [
+    {
+      "producedAt": {
+        "id": "URI-HERE"
+      }
+    },
+    {
+      "encounteredAt": {
+        "id": "URI-HERE"
+      }
+    }
+  ]
+}

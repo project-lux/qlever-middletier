@@ -1,0 +1,60 @@
+{
+  "_scope": "item",
+  "AND": [
+    {
+      "OR": [
+        {
+          "memberOf": {
+            "AND": [
+              {
+                "id": "URI-HERE"
+              },
+              {
+                "classification": {
+                  "identifier": "http://vocab.getty.edu/aat/300375748"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "memberOf": {
+            "memberOf": {
+              "AND": [
+                {
+                  "id": "URI-HERE"
+                },
+                {
+                  "classification": {
+                    "identifier": "http://vocab.getty.edu/aat/300375748"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "memberOf": {
+            "memberOf": {
+              "memberOf": {
+                "AND": [
+                  {
+                    "id": "URI-HERE"
+                  },
+                  {
+                    "classification": {
+                      "identifier": "http://vocab.getty.edu/aat/300375748"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "hasDigitalImage": 1
+    }
+  ]
+}

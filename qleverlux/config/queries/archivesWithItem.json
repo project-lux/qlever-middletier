@@ -1,0 +1,15 @@
+{
+  "_scope": "set",
+  "AND": [
+    {
+      "classification": {
+        "identifier": "http://vocab.getty.edu/aat/300375748"
+      }
+    },
+    {
+      "containingItem": {
+        "id": "URI-HERE"
+      }
+    }
+  ]
+}

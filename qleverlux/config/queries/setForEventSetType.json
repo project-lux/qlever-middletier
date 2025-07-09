@@ -1,0 +1,15 @@
+{
+  "_scope": "set",
+  "OR": [
+    {
+      "aboutEvent": {
+        "id": "URI-HERE"
+      }
+    },
+    {
+      "creationCausedBy": {
+        "id": "URI-HERE"
+      }
+    }
+  ]
+}

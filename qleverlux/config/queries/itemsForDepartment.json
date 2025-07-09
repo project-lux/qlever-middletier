@@ -1,0 +1,21 @@
+{
+  "_scope": "item",
+  "OR": [
+    {
+      "memberOf": {
+        "curatedBy": {
+          "id": "URI-HERE"
+        }
+      }
+    },
+    {
+      "memberOf": {
+        "curatedBy": {
+          "memberOf": {
+            "id": "URI-HERE"
+          }
+        }
+      }
+    }
+  ]
+}

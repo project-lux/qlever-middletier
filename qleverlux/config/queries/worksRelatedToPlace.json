@@ -1,0 +1,20 @@
+{
+  "_scope": "work",
+  "OR": [
+    {
+      "aboutPlace": {
+        "id": "URI-HERE"
+      }
+    },
+    {
+      "createdAt": {
+        "id": "URI-HERE"
+      }
+    },
+    {
+      "publishedAt": {
+        "id": "URI-HERE"
+      }
+    }
+  ]
+}

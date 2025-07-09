@@ -1,0 +1,76 @@
+{
+  "item": {
+    "anySortName": "lux:itemSortName",
+    "itemProductionDate": "lux:startOfItemBeginning",
+    "itemEncounteredDate": "lux:startOfItemEncounter",
+    "itemDimensionValue": "lux:dimension",
+    "itemDepthDimensionValue": "lux:depth",
+    "itemHeightDimensionValue": "lux:height",
+    "itemWidthDimensionValue": "lux:width",
+    "itemClassificationConceptName": "lux:itemClassification/lux:conceptSortName",
+    "itemEncounterPlaceName": "lux:placeOfItemEncounter/lux:placeSortName",
+    "itemEncounterAgentName": "lux:agentOfItemEncounter/lux:agentSortName",
+    "itemProductionInfluencedByAgentName": "lux:agentInfluenceOfItem/lux:agentSortName",
+    "itemMaterialConceptName": "lux:material/lux:conceptSortName",
+    "itemProductionPlaceName": "lux:placeOfItemProduction/lux:placeSortName",
+    "itemProductionAgentName": "lux:agentOfItemProduction/lux:agentSortName",
+    "itemTechniqueConceptName": "lux:typeOfItemProduction/lux:conceptSortName",
+    "itemHasDigitalImage": "lux:itemHasDigitalImage",
+    "itemRecordType": "lux:recordType"
+  },
+  "work": {
+    "anySortName": "lux:workSortName",
+    "workCreationDate": "lux:startOfWorkBeginning",
+    "workPublicationDate": "lux:startOfItemBeginning",
+    "workClassificationConceptName": "lux:workClassification/lux:conceptSortName",
+    "workCreationAgentName": "lux:agentOfWorkBeginning/lux:agentSortName",
+    "workPublicationPlaceName": "lux:placeOfWorkPublication/lux:placeSortName",
+    "workPublicationAgentName": "lux:agentOfWorkPublication/lux:agentSortName",
+    "workHasDigitalImage": "lux:workHasDigitalImage",
+    "workRecordType": "lux:recordType"
+  },
+  "set": {
+    "anySortName": "lux:setSortName",
+    "setClassificationConceptName": "lux:setClassification/lux:conceptSortName",
+    "setCreationAgentName": "lux:agentOfSetBeginning/lux:agentSortName",
+    "setCreationPlaceName": "lux:placeOfSetBeginning/lux:placeSortName",
+    "setCreationDate": "lux:startOfSetBeginning",
+    "setCurationAgentName": "lux:setCuratedBy/lux:agentSortName",
+    "setHasDigitalImage": "lux:setHasDigitalImage",
+    "setPublicationAgentName": "lux:agentOfSetPublication/lux:agentSortName",
+    "setPublicationPlaceName": "lux:placeOfSetPublication/lux:placeSortName",
+    "setPublicationDate": "lux:startOfSetPublication"
+  },
+  "agent": {
+    "anySortName": "lux:agentSortName",
+    "agentEndDate": "lux:startOfAgentEnding",
+    "agentStartDate": "lux:startOfAgentBeginning",
+    "agentHasDigitalImage": "lux:agentHasDigitalImage",
+    "agentRecordType": "lux:recordType",
+    "agentStartPlaceName": "lux:placeOfAgentBeginning/lux:placeSortName",
+    "agentClassificationConceptName": "lux:agentClassification/lux:conceptSortName",
+    "agentEndPlaceName": "lux:placeOfAgentEnding/lux:placeSortName",
+    "agentGenderConceptName": "lux:gender/lux:conceptSortName",
+    "agentNationalityConceptName": "lux:nationality/lux:conceptSortName",
+    "agentOccupationConceptName": "lux:occupation/lux:conceptSortName"
+  },
+  "place": {
+    "anySortName": "lux:placeSortName",
+    "placeHasDigitalImage": "lux:placeHasDigitalImage",
+    "placeClassificationConceptName": "lux:placeClassification/lux:conceptSortName"
+  },
+  "concept": {
+    "anySortName": "lux:conceptSortName",
+    "conceptRecordType": "lux:recordType",
+    "conceptClassificationConceptName": "lux:conceptClassification/lux:conceptSortName"
+  },
+  "event": {
+    "anySortName": "lux:eventSortName",
+    "eventStartDate": "lux:startOfEvent",
+    "eventEndDate": "lux:endOfEvent",
+    "eventRecordType": "lux:recordType",
+    "eventCarriedOutByAgentName": "lux:agentOfEvent/lux:agentSortName",
+    "eventClassificationConceptName": "lux:eventClassification/lux:conceptSortName",
+    "eventTookPlaceAtPlaceName": "lux:placeOfEvent/lux:placeSortName"
+  }
+}

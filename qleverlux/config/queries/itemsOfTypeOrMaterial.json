@@ -1,0 +1,15 @@
+{
+  "_scope": "item",
+  "OR": [
+    {
+      "classification": {
+        "id": "URI-HERE"
+      }
+    },
+    {
+      "material": {
+        "id": "URI-HERE"
+      }
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "_scope": "set",
+  "OR": [
+    {
+      "aboutAgent": {
+        "id": "URI-HERE"
+      }
+    },
+    {
+      "createdBy": {
+        "id": "URI-HERE"
+      }
+    },
+    {
+      "publishedBy": {
+        "id": "URI-HERE"
+      }
+    }
+  ]
+}

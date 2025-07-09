@@ -1,0 +1,39 @@
+{
+  "_scope": "multi",
+  "OR": [
+    {
+      "_scope": "item",
+      "memberOf": {
+        "AND": [
+          {
+            "classification": {
+              "identifier": "http://vocab.getty.edu/aat/300375748"
+            }
+          },
+          {
+            "containingSet": {
+              "id": "URI-HERE"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "_scope": "set",
+      "memberOf": {
+        "AND": [
+          {
+            "classification": {
+              "identifier": "http://vocab.getty.edu/aat/300375748"
+            }
+          },
+          {
+            "containingSet": {
+              "id": "URI-HERE"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

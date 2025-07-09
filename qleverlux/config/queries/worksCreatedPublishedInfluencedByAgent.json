@@ -1,0 +1,20 @@
+{
+  "_scope": "work",
+  "OR": [
+    {
+      "createdBy": {
+        "id": "URI-HERE"
+      }
+    },
+    {
+      "publishedBy": {
+        "id": "URI-HERE"
+      }
+    },
+    {
+      "creationInfluencedBy": {
+        "id": "URI-HERE"
+      }
+    }
+  ]
+}

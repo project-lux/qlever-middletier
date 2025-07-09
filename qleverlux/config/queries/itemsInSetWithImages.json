@@ -1,0 +1,33 @@
+{
+  "_scope": "item",
+  "AND": [
+    {
+      "OR": [
+        {
+          "memberOf": {
+            "id": "URI-HERE"
+          }
+        },
+        {
+          "memberOf": {
+            "memberOf": {
+              "id": "URI-HERE"
+            }
+          }
+        },
+        {
+          "memberOf": {
+            "memberOf": {
+              "memberOf": {
+                "id": "URI-HERE"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "hasDigitalImage": 1
+    }
+  ]
+}

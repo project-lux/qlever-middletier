@@ -1,0 +1,20 @@
+{
+  "_scope": "item",
+  "OR": [
+    {
+      "producedBy": {
+        "id": "URI-HERE"
+      }
+    },
+    {
+      "encounteredBy": {
+        "id": "URI-HERE"
+      }
+    },
+    {
+      "productionInfluencedBy": {
+        "id": "URI-HERE"
+      }
+    }
+  ]
+}

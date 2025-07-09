@@ -1,0 +1,294 @@
+Created by PLY version 3.11 (http://www.dabeaz.com/ply)
+
+Grammar
+
+Rule 0     S' -> query
+Rule 1     query -> expression
+Rule 2     expression -> expression AND expression
+Rule 3     expression -> expression OR expression
+Rule 4     expression -> NOT expression
+Rule 5     expression -> LPAREN expression RPAREN
+Rule 6     expression -> term_list
+Rule 7     term_list -> term
+Rule 8     term_list -> term_list term
+Rule 9     term -> WORD
+Rule 10    term -> QUOTED_STRING
+
+Terminals, with rules where they appear
+
+AND                  : 2
+LPAREN               : 5
+NOT                  : 4
+OR                   : 3
+QUOTED_STRING        : 10
+RPAREN               : 5
+WORD                 : 9
+error                : 
+
+Nonterminals, with rules where they appear
+
+expression           : 1 2 2 3 3 4 5
+query                : 0
+term                 : 7 8
+term_list            : 6 8
+
+Parsing method: LALR
+
+state 0
+
+    (0) S' -> . query
+    (1) query -> . expression
+    (2) expression -> . expression AND expression
+    (3) expression -> . expression OR expression
+    (4) expression -> . NOT expression
+    (5) expression -> . LPAREN expression RPAREN
+    (6) expression -> . term_list
+    (7) term_list -> . term
+    (8) term_list -> . term_list term
+    (9) term -> . WORD
+    (10) term -> . QUOTED_STRING
+
+    NOT             shift and go to state 3
+    LPAREN          shift and go to state 4
+    WORD            shift and go to state 7
+    QUOTED_STRING   shift and go to state 8
+
+    query                          shift and go to state 1
+    expression                     shift and go to state 2
+    term_list                      shift and go to state 5
+    term                           shift and go to state 6
+
+state 1
+
+    (0) S' -> query .
+
+
+
+state 2
+
+    (1) query -> expression .
+    (2) expression -> expression . AND expression
+    (3) expression -> expression . OR expression
+
+    $end            reduce using rule 1 (query -> expression .)
+    AND             shift and go to state 9
+    OR              shift and go to state 10
+
+
+state 3
+
+    (4) expression -> NOT . expression
+    (2) expression -> . expression AND expression
+    (3) expression -> . expression OR expression
+    (4) expression -> . NOT expression
+    (5) expression -> . LPAREN expression RPAREN
+    (6) expression -> . term_list
+    (7) term_list -> . term
+    (8) term_list -> . term_list term
+    (9) term -> . WORD
+    (10) term -> . QUOTED_STRING
+
+    NOT             shift and go to state 3
+    LPAREN          shift and go to state 4
+    WORD            shift and go to state 7
+    QUOTED_STRING   shift and go to state 8
+
+    expression                     shift and go to state 11
+    term_list                      shift and go to state 5
+    term                           shift and go to state 6
+
+state 4
+
+    (5) expression -> LPAREN . expression RPAREN
+    (2) expression -> . expression AND expression
+    (3) expression -> . expression OR expression
+    (4) expression -> . NOT expression
+    (5) expression -> . LPAREN expression RPAREN
+    (6) expression -> . term_list
+    (7) term_list -> . term
+    (8) term_list -> . term_list term
+    (9) term -> . WORD
+    (10) term -> . QUOTED_STRING
+
+    NOT             shift and go to state 3
+    LPAREN          shift and go to state 4
+    WORD            shift and go to state 7
+    QUOTED_STRING   shift and go to state 8
+
+    expression                     shift and go to state 12
+    term_list                      shift and go to state 5
+    term                           shift and go to state 6
+
+state 5
+
+    (6) expression -> term_list .
+    (8) term_list -> term_list . term
+    (9) term -> . WORD
+    (10) term -> . QUOTED_STRING
+
+    AND             reduce using rule 6 (expression -> term_list .)
+    OR              reduce using rule 6 (expression -> term_list .)
+    $end            reduce using rule 6 (expression -> term_list .)
+    RPAREN          reduce using rule 6 (expression -> term_list .)
+    WORD            shift and go to state 7
+    QUOTED_STRING   shift and go to state 8
+
+    term                           shift and go to state 13
+
+state 6
+
+    (7) term_list -> term .
+
+    WORD            reduce using rule 7 (term_list -> term .)
+    QUOTED_STRING   reduce using rule 7 (term_list -> term .)
+    AND             reduce using rule 7 (term_list -> term .)
+    OR              reduce using rule 7 (term_list -> term .)
+    $end            reduce using rule 7 (term_list -> term .)
+    RPAREN          reduce using rule 7 (term_list -> term .)
+
+
+state 7
+
+    (9) term -> WORD .
+
+    WORD            reduce using rule 9 (term -> WORD .)
+    QUOTED_STRING   reduce using rule 9 (term -> WORD .)
+    AND             reduce using rule 9 (term -> WORD .)
+    OR              reduce using rule 9 (term -> WORD .)
+    $end            reduce using rule 9 (term -> WORD .)
+    RPAREN          reduce using rule 9 (term -> WORD .)
+
+
+state 8
+
+    (10) term -> QUOTED_STRING .
+
+    WORD            reduce using rule 10 (term -> QUOTED_STRING .)
+    QUOTED_STRING   reduce using rule 10 (term -> QUOTED_STRING .)
+    AND             reduce using rule 10 (term -> QUOTED_STRING .)
+    OR              reduce using rule 10 (term -> QUOTED_STRING .)
+    $end            reduce using rule 10 (term -> QUOTED_STRING .)
+    RPAREN          reduce using rule 10 (term -> QUOTED_STRING .)
+
+
+state 9
+
+    (2) expression -> expression AND . expression
+    (2) expression -> . expression AND expression
+    (3) expression -> . expression OR expression
+    (4) expression -> . NOT expression
+    (5) expression -> . LPAREN expression RPAREN
+    (6) expression -> . term_list
+    (7) term_list -> . term
+    (8) term_list -> . term_list term
+    (9) term -> . WORD
+    (10) term -> . QUOTED_STRING
+
+    NOT             shift and go to state 3
+    LPAREN          shift and go to state 4
+    WORD            shift and go to state 7
+    QUOTED_STRING   shift and go to state 8
+
+    expression                     shift and go to state 14
+    term_list                      shift and go to state 5
+    term                           shift and go to state 6
+
+state 10
+
+    (3) expression -> expression OR . expression
+    (2) expression -> . expression AND expression
+    (3) expression -> . expression OR expression
+    (4) expression -> . NOT expression
+    (5) expression -> . LPAREN expression RPAREN
+    (6) expression -> . term_list
+    (7) term_list -> . term
+    (8) term_list -> . term_list term
+    (9) term -> . WORD
+    (10) term -> . QUOTED_STRING
+
+    NOT             shift and go to state 3
+    LPAREN          shift and go to state 4
+    WORD            shift and go to state 7
+    QUOTED_STRING   shift and go to state 8
+
+    expression                     shift and go to state 15
+    term_list                      shift and go to state 5
+    term                           shift and go to state 6
+
+state 11
+
+    (4) expression -> NOT expression .
+    (2) expression -> expression . AND expression
+    (3) expression -> expression . OR expression
+
+    AND             reduce using rule 4 (expression -> NOT expression .)
+    OR              reduce using rule 4 (expression -> NOT expression .)
+    $end            reduce using rule 4 (expression -> NOT expression .)
+    RPAREN          reduce using rule 4 (expression -> NOT expression .)
+
+  ! AND             [ shift and go to state 9 ]
+  ! OR              [ shift and go to state 10 ]
+
+
+state 12
+
+    (5) expression -> LPAREN expression . RPAREN
+    (2) expression -> expression . AND expression
+    (3) expression -> expression . OR expression
+
+    RPAREN          shift and go to state 16
+    AND             shift and go to state 9
+    OR              shift and go to state 10
+
+
+state 13
+
+    (8) term_list -> term_list term .
+
+    WORD            reduce using rule 8 (term_list -> term_list term .)
+    QUOTED_STRING   reduce using rule 8 (term_list -> term_list term .)
+    AND             reduce using rule 8 (term_list -> term_list term .)
+    OR              reduce using rule 8 (term_list -> term_list term .)
+    $end            reduce using rule 8 (term_list -> term_list term .)
+    RPAREN          reduce using rule 8 (term_list -> term_list term .)
+
+
+state 14
+
+    (2) expression -> expression AND expression .
+    (2) expression -> expression . AND expression
+    (3) expression -> expression . OR expression
+
+    AND             reduce using rule 2 (expression -> expression AND expression .)
+    OR              reduce using rule 2 (expression -> expression AND expression .)
+    $end            reduce using rule 2 (expression -> expression AND expression .)
+    RPAREN          reduce using rule 2 (expression -> expression AND expression .)
+
+  ! AND             [ shift and go to state 9 ]
+  ! OR              [ shift and go to state 10 ]
+
+
+state 15
+
+    (3) expression -> expression OR expression .
+    (2) expression -> expression . AND expression
+    (3) expression -> expression . OR expression
+
+    OR              reduce using rule 3 (expression -> expression OR expression .)
+    $end            reduce using rule 3 (expression -> expression OR expression .)
+    RPAREN          reduce using rule 3 (expression -> expression OR expression .)
+    AND             shift and go to state 9
+
+  ! AND             [ reduce using rule 3 (expression -> expression OR expression .) ]
+  ! OR              [ shift and go to state 10 ]
+
+
+state 16
+
+    (5) expression -> LPAREN expression RPAREN .
+
+    AND             reduce using rule 5 (expression -> LPAREN expression RPAREN .)
+    OR              reduce using rule 5 (expression -> LPAREN expression RPAREN .)
+    $end            reduce using rule 5 (expression -> LPAREN expression RPAREN .)
+    RPAREN          reduce using rule 5 (expression -> LPAREN expression RPAREN .)
+

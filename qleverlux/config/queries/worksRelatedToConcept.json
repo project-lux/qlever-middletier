@@ -1,0 +1,38 @@
+{
+  "_scope": "work",
+  "OR": [
+    {
+      "classification": {
+        "OR": [
+          {
+            "id": "URI-HERE"
+          },
+          {
+            "influencedByConcept": {
+              "id": "URI-HERE"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "language": {
+        "OR": [
+          {
+            "id": "URI-HERE"
+          },
+          {
+            "influencedByConcept": {
+              "id": "URI-HERE"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "aboutConcept": {
+        "id": "URI-HERE"
+      }
+    }
+  ]
+}

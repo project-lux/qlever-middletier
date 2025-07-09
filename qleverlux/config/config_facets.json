@@ -1,0 +1,173 @@
+{
+  "agentActiveDate": { "searchTermName": "agentActiveDate", "idFacet": false },
+  "agentActivePlaceId": { "searchTermName": "activeAt", "idFacet": true },
+  "agentEndDate": { "searchTermName": "agentEndDate", "idFacet": false },
+  "agentEndPlaceId": { "searchTermName": "endAt", "idFacet": true },
+  "agentGenderId": { "searchTermName": "agentGender", "idFacet": true },
+  "agentHasDigitalImage": {
+    "searchTermName": "agentHasDigitalImage",
+    "idFacet": false
+  },
+  "agentIdentifier": { "searchTermName": "agentIdentifier", "idFacet": false },
+  "agentMemberOfId": { "searchTermName": "agentMemberOf", "idFacet": true },
+  "agentNationalityId": {
+    "searchTermName": "agentNationality",
+    "idFacet": true
+  },
+  "agentOccupationId": { "searchTermName": "agentOccupation", "idFacet": true },
+  "agentProfessionalActivityId": {
+    "searchTermName": "agentProfessionalActivity",
+    "idFacet": true
+  },
+  "agentRecordType": { "searchTermName": "agentRecordType", "idFacet": false },
+  "agentStartDate": { "searchTermName": "agentStartDate", "idFacet": false },
+  "agentStartPlaceId": { "searchTermName": "startAt", "idFacet": true },
+  "agentTypeId": { "searchTermName": "classification", "idFacet": true },
+  "conceptHasDigitalImage": {
+    "searchTermName": "conceptHasDigitalImage",
+    "idFacet": false
+  },
+  "conceptIdentifier": {
+    "searchTermName": "conceptIdentifier",
+    "idFacet": false
+  },
+  "conceptInfluencedByAgentId": {
+    "searchTermName": "conceptInfluencedByAgent",
+    "idFacet": true
+  },
+  "conceptInfluencedByConceptId": {
+    "searchTermName": "conceptInfluencedByConcept",
+    "idFacet": true
+  },
+  "conceptInfluencedByEventId": {
+    "searchTermName": "conceptInfluencedByEvent",
+    "idFacet": true
+  },
+  "conceptInfluencedByPlaceId": {
+    "searchTermName": "conceptInfluencedByPlace",
+    "idFacet": true
+  },
+  "conceptPartOfId": { "searchTermName": "broader", "idFacet": true },
+  "conceptRecordType": {
+    "searchTermName": "conceptRecordType",
+    "idFacet": false
+  },
+  "conceptTypeId": { "searchTermName": "classification", "idFacet": true },
+  "eventAgentId": { "searchTermName": "carriedOutBy", "idFacet": true },
+  "eventEndDate": { "searchTermName": "eventEndDate", "idFacet": false },
+  "eventIdentifier": { "searchTermName": "eventIdentifier", "idFacet": false },
+  "eventPlaceId": { "searchTermName": "tookPlaceAt", "idFacet": true },
+  "eventRecordType": { "searchTermName": "eventRecordType", "idFacet": false },
+  "eventStartDate": { "searchTermName": "eventStartDate", "idFacet": false },
+  "eventTypeId": { "searchTermName": "classification", "idFacet": true },
+  "itemCarriedById": { "searchTermName": "carries", "idFacet": true },
+  "itemDepthDimensionValue": { "searchTermName": "depth", "idFacet": false },
+  "itemDimensionValue": { "searchTermName": "dimension", "idFacet": false },
+  "itemEncounteredAgentId": {
+    "searchTermName": "encounteredBy",
+    "idFacet": true
+  },
+  "itemEncounteredDate": {
+    "searchTermName": "encounteredDate",
+    "idFacet": false
+  },
+  "itemEncounteredPlaceId": {
+    "searchTermName": "encounteredAt",
+    "idFacet": true
+  },
+  "itemHasDigitalImage": {
+    "searchTermName": "itemHasDigitalImage",
+    "idFacet": false
+  },
+  "itemHeightDimensionValue": { "searchTermName": "height", "idFacet": false },
+  "itemIdentifier": { "searchTermName": "itemIdentifier", "idFacet": false },
+  "itemIsOnline": { "searchTermName": "itemIsOnline", "idFacet": false },
+  "itemMaterialId": { "searchTermName": "material", "idFacet": true },
+  "itemMemberOfId": { "searchTermName": "itemMemberOf", "idFacet": true },
+  "itemProductionAgentId": { "searchTermName": "producedBy", "idFacet": true },
+  "itemProductionDate": { "searchTermName": "producedDate", "idFacet": false },
+  "itemProductionPlaceId": { "searchTermName": "producedAt", "idFacet": true },
+  "itemProductionTechniqueId": {
+    "searchTermName": "producedUsing",
+    "idFacet": false
+  },
+  "itemRecordType": { "searchTermName": "lux:recordType", "idFacet": false },
+  "itemShownById": { "searchTermName": "carries", "idFacet": true },
+  "itemTypeId": { "searchTermName": "classification", "idFacet": true },
+  "itemWidthDimensionValue": { "searchTermName": "width", "idFacet": false },
+  "placeHasDigitalImage": {
+    "searchTermName": "placeHasDigitalImage",
+    "idFacet": false
+  },
+  "placeIdentifier": { "searchTermName": "placeIdentifier", "idFacet": false },
+  "placePartOfId": { "searchTermName": "placePartOf", "idFacet": true },
+  "placeTypeId": { "searchTermName": "classification", "idFacet": true },
+  "setAboutAgentId": { "searchTermName": "setAboutAgent", "idFacet": true },
+  "setAboutConceptId": { "searchTermName": "setAboutConcept", "idFacet": true },
+  "setAboutEventId": { "searchTermName": "setAboutEvent", "idFacet": true },
+  "setAboutItemId": { "searchTermName": "setAboutItem", "idFacet": true },
+  "setAboutPlaceId": { "searchTermName": "setAboutPlace", "idFacet": true },
+  "setAboutSetId": { "searchTermName": "setAboutSet", "idFacet": true },
+  "setAboutWorkId": { "searchTermName": "setAboutWork", "idFacet": true },
+  "setCreationAgentId": { "searchTermName": "createdBy", "idFacet": true },
+  "setCreationDate": { "searchTermName": "createdDate", "idFacet": false },
+  "setCreationOrPublicationDate": {
+    "searchTermName": "setCreationOrPublicationDate",
+    "idFacet": false
+  },
+  "setCreationPlaceId": { "searchTermName": "createdAt", "idFacet": true },
+  "setCurationAgentId": {
+    "searchTermName": "setCurationAgent",
+    "idFacet": true
+  },
+  "setHasDigitalImage": {
+    "searchTermName": "setHasDigitalImage",
+    "idFacet": false
+  },
+  "setIdentifier": { "searchTermName": "setIdentifier", "idFacet": false },
+  "setIsOnline": { "searchTermName": "setIsOnline", "idFacet": false },
+  "setPartOfId": { "searchTermName": "setPartOf", "idFacet": true },
+  "setPublicationAgentId": { "searchTermName": "publishedBy", "idFacet": true },
+  "setPublicationDate": { "searchTermName": "publishedDate", "idFacet": false },
+  "setPublicationPlaceId": { "searchTermName": "publishedAt", "idFacet": true },
+  "setTypeId": { "searchTermName": "classification", "idFacet": true },
+  "workAboutAgentId": { "searchTermName": "workAboutAgent", "idFacet": true },
+  "workAboutConceptId": {
+    "searchTermName": "workAboutConcept",
+    "idFacet": true
+  },
+  "workAboutEventId": { "searchTermName": "workAboutEvent", "idFacet": true },
+  "workAboutItemId": { "searchTermName": "workAboutItem", "idFacet": true },
+  "workAboutPlaceId": { "searchTermName": "workAboutPlace", "idFacet": true },
+  "workAboutSetId": { "searchTermName": "workAboutSet", "idFacet": true },
+  "workAboutWorkId": { "searchTermName": "workAboutWork", "idFacet": true },
+  "workCreationAgentId": { "searchTermName": "createdBy", "idFacet": true },
+  "workCreationDate": { "searchTermName": "createdDate", "idFacet": false },
+  "workCreationOrPublicationDate": {
+    "searchTermName": "workCreationOrPublicationDate",
+    "idFacet": false
+  },
+  "workCreationPlaceId": { "searchTermName": "createdAt", "idFacet": true },
+  "workHasDigitalImage": {
+    "searchTermName": "workHasDigitalImage",
+    "idFacet": false
+  },
+  "workIdentifier": { "searchTermName": "workIdentifier", "idFacet": false },
+  "workIsOnline": { "searchTermName": "workIsOnline", "idFacet": false },
+  "workLanguageId": { "searchTermName": "workLanguage", "idFacet": true },
+  "workPartOfId": { "searchTermName": "workPartOf", "idFacet": true },
+  "workPublicationAgentId": {
+    "searchTermName": "publishedBy",
+    "idFacet": true
+  },
+  "workPublicationDate": {
+    "searchTermName": "publishedDate",
+    "idFacet": false
+  },
+  "workPublicationPlaceId": {
+    "searchTermName": "publishedAt",
+    "idFacet": true
+  },
+  "workRecordType": { "searchTermName": "workRecordType", "idFacet": false },
+  "workTypeId": { "searchTermName": "classification", "idFacet": false }
+}

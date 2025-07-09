@@ -1,0 +1,35 @@
+# Qleverfile for Olympics, use with https://github.com/ad-freiburg/qlever-control
+#
+# qlever get-data  # downloads .zip file of size 13 MB, uncompressed to 323 MB 
+# qlever index     # takes ~10 seconds and ~1 GB RAM (on an AMD Ryzen 9 5900X)
+# qlever start     # starts the server (instant)
+
+[data]
+NAME              = lux
+BASE_URL          = https://github.com/wallscope/olympics-rdf
+GET_DATA_CMD      = curl -sLo olympics.zip -C - ${BASE_URL}/raw/master/data/olympics-nt-nodup.zip && unzip -q -o olympics.zip && rm olympics.zip
+DESCRIPTION       = LUX Data as NT
+TEXT_DESCRIPTION  = LUX in QLever
+
+
+[index]
+INPUT_FILES     = lux_*.nt.gz
+CAT_INPUT_FILES = zcat ${INPUT_FILES}
+SETTINGS_JSON   = { "ascii-prefixes-only": true, "num-triples-per-batch": 300000 }
+TEXT_INDEX      = from_literals 
+STXXL_MEMORY    = 40G
+
+[server]
+HOST_NAME          = localhost
+PORT               = 7010
+ACCESS_TOKEN       = ${data:NAME}_7643543846_Ct9wQMy9jQAV
+MEMORY_FOR_QUERIES = 40G
+CACHE_MAX_SIZE     = 20G
+TIMEOUT            = 60s
+
+[runtime]
+SYSTEM = docker
+IMAGE  = docker.io/adfreiburg/qlever:latest
+
+[ui]
+UI_CONFIG = lux
