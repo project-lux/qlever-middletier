@@ -1,5 +1,5 @@
-from . import LuxLeaf, LuxBoolean, LuxRelationship
-from .SPARQLQueryBuilder import *
+from luxql import LuxLeaf, LuxBoolean, LuxRelationship
+from SPARQLQueryBuilder import *
 import shlex
 import unicodedata
 from string import whitespace, punctuation

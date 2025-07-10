@@ -1,4 +1,5 @@
 
+# Installing Qlever natively on Linux
 
 ## Setup the machine
 
@@ -12,6 +13,9 @@ apt-get install -y libboost1.81-dev libboost-program-options1.81-dev libboost-io
 
 ### For Ubuntu 24:
 apt-get install -y libboost1.83-dev libboost-program-options1.83-dev libboost-iostreams1.83-dev libboost-url1.83-dev
+
+
+### For Yale filesystem layout:
 
 mkdir /data-io2/data
 mkdir /data-io2/qlever
@@ -57,7 +61,7 @@ cd ../..
 mkdir bin
 cp qlever/build/IndexBuilderMain qlever/build/ServerMain qlever/build/PrintIndexVersionMain qlever/build/VocabularyMergerMain qlever/build/spatialjoin bin/
 
-// scp the triples from a machine that has them
+// scp the triples from a machine that have them
 
 
 

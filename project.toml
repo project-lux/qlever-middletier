@@ -1,0 +1,7 @@
+[build-system]
+requires = ["setuptools>=42", "requests", "psycopg2-binary","ujson","ply","fastapi","uvicorn","aiohttp"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qleverlux"
+version = "0.5.0"

@@ -3,7 +3,7 @@
 import os
 import json
 from luxql import JsonReader, LuxConfig
-from luxql.sparql import SparqlTranslator
+from sparql import SparqlTranslator
 from argparse import ArgumentParser
 import getpass
 

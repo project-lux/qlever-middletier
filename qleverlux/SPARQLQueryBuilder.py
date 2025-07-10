@@ -7,7 +7,7 @@ Created by Panos Mitzias (http://www.pmitzias.com)
 Updates: Rob Sanderson (robert.sanderson@yale.edu)
 """
 
-from .SPARQLSyntaxTerms import *
+from SPARQLSyntaxTerms import *
 
 
 class SPARQLGraphPattern(AbstractTerm):

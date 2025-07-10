@@ -1,0 +1,7 @@
+psycopg2-binary
+ujson
+ply
+fastapi
+requests
+uvicorn
+aiohttp
