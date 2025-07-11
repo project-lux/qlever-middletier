@@ -273,13 +273,17 @@ class SparqlTranslator:
 
         return sparql
 
-    def translate_facet(self, query, facet, scope=None, limit=25, offset=0):
+    def translate_facet(self, query, facet, scope=None, limit=None, offset=0):
         self.calculate_scores = True
         self.counter = 0
         gb = GroupBy(["?facet"])
         ob = OrderBy(["?facetCount"], True)
 
-        sparql = SelectQuery(limit=limit, offset=offset)
+        if limit is None:
+            sparql = SelectQuery(offset=offset)
+        else:
+            sparql = SelectQuery(limit=limit, offset=offset)
+
         for pfx, uri in self.prefixes.items():
             sparql.add_prefix(prefix=Prefix(pfx, uri))
         sparql.add_variables(["?facet", "(COUNT(?facet) AS ?facetCount)"])

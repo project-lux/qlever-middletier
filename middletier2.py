@@ -88,7 +88,7 @@ async def fetch_qlever_sparql(q):
                             elif dt.endswith("decimal"):
                                 r2.append(float(val[1:-1]))
                             else:
-                                r2.append(val)
+                                r2.append(val[1:-1])
                         else:
                             r2.append(i)
                     results["results"].append(r2)
@@ -176,7 +176,7 @@ async def do_search(scope, q, page=1, pageLength=PAGE_LENGTH, sort=""):
     }
     # FIXME: do next and prev
 
-    for r in res["results"][offset : offset + pageLength]:
+    for r in res["results"][offset % 60 : offset % 60 + pageLength]:
         js["orderedItems"].append(
             {
                 "id": r[0].replace(f"{DATA_URI}data/", f"{MY_URI}data/"),
@@ -222,6 +222,7 @@ async def do_search_match(q={}):
 async def do_facet(scope, q={}, name="", page=1):
     await asyncio.sleep(0.1)
     offset = (int(page) - 1) * PAGE_LENGTH
+    soffset = (offset // 60) * 60
     q = q.replace(MY_URI, DATA_URI)
     jq = json.loads(q)
     parsed = rdr.read(jq, scope)
@@ -258,12 +259,12 @@ async def do_facet(scope, q={}, name="", page=1):
     if ":" not in pred and pred != "a":
         pred = f"lux:{pred}"
 
-    spq = st.translate_facet(parsed, pred)
+    spq = st.translate_facet(parsed, pred, offset=soffset)
     qt = spq.get_text()
     res = await fetch_qlever_sparql(qt)
-    # return JSONResponse(res)
+    js["partOf"]["totalItems"] = res["total"] + soffset
 
-    for r in res["results"][offset : offset + PAGE_LENGTH]:
+    for r in res["results"][offset % 60 : offset % 60 + PAGE_LENGTH]:
         # Need to know type of facet (per datatype below)
         # and what query to AND based on the predicate
         # e.g:

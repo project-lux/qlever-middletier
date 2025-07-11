@@ -457,6 +457,7 @@ async def do_hal_links(scope, identifier):
             continue
         qt = spq.get_text()
         qt = qt.replace("URI-HERE", uri)
+        print(qt)
         res = await fetch_sparql(qt)
         ttl = int(res[0]["count"]["value"])
         if ttl > 0:
