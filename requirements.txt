@@ -3,6 +3,7 @@ ujson
 ply
 fastapi
 requests
-uvicorn
+hypercorn
 aiohttp
 async_lru
+uvloop

@@ -325,7 +325,7 @@ async def do_related_list(scope, name, uri, page=1):
     for name, spq in related_list_sparql[scope].items():
         qry = spq.replace("URI-HERE", uri)
         res = await fetch_qlever_sparql(qry)
-        for row in res:
+        for row in res["results"]:
             what = row[0]
             ct = int(row[1])
             try:
