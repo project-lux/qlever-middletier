@@ -3,14 +3,13 @@
 import os
 import json
 from luxql import JsonReader, LuxConfig
-from sparql import SparqlTranslator
+from qleverlux.sparql import SparqlTranslator
 from argparse import ArgumentParser
 import getpass
 
 cfg = LuxConfig()
 rdr = JsonReader(cfg)
 st = SparqlTranslator(cfg)
-
 
 parser = ArgumentParser()
 
@@ -28,7 +27,7 @@ parser.add_argument("--user", type=str, help="Postgres username", default=user)
 parser.add_argument("--db", type=str, help="Postgres database", default=user)
 parser.add_argument("--table", type=str, help="Postgres records table", default=table)
 
-parser.add_argument("--loglevel", type=str, help="Log level for uvicorn", default="info")
+parser.add_argument("--loglevel", "--log-level", type=str, help="Log level for uvicorn", default="info")
 parser.add_argument("--sparql", type=str, help="SPARQL endpoint URL", default=sparql)
 
 parser.add_argument("--port", type=int, help="Port for uvicorn", default=port)

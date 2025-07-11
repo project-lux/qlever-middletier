@@ -2,25 +2,30 @@ import os
 import copy
 import json
 
-import uvicorn
 import aiohttp
 import urllib
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
-from functools import lru_cache
+from async_lru import alru_cache
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
-from middletier_config import cfg, rdr, st, sorts, facets, args
-from middletier_config import hal_link_templates, hal_queries, sparql_hal_queries
-from middletier_config import related_list_names, related_list_queries, related_list_sparql
-from middletier_config import MY_URI, SPARQL_ENDPOINT, PAGE_LENGTH, DATA_URI, PG_TABLE
-from middletier_config import ENGLISH, PRIMARY, RESULTS_FIELDS, PORTAL_SOURCE
+import asyncio
+import uvloop
+from hypercorn.config import Config as HyperConfig
+from hypercorn.asyncio import serve as hypercorn_serve
 
-from boolean_query_parser import BooleanQueryParser
+
+from qleverlux.middletier_config import cfg, rdr, st, sorts, facets, args
+from qleverlux.middletier_config import hal_link_templates, hal_queries, sparql_hal_queries
+from qleverlux.middletier_config import related_list_names, related_list_queries, related_list_sparql
+from qleverlux.middletier_config import MY_URI, SPARQL_ENDPOINT, PAGE_LENGTH, DATA_URI, PG_TABLE
+from qleverlux.middletier_config import ENGLISH, PRIMARY, RESULTS_FIELDS, PORTAL_SOURCE
+
+from qleverlux.boolean_query_parser import BooleanQueryParser
 
 conn = psycopg2.connect(user=args.user, dbname=args.db)
 
@@ -55,31 +60,7 @@ if not os.path.exists("hal_cache"):
     os.makedirs("hal_cache")
 
 
-async def fetch_sparql(spq):
-    if type(spq) is str:
-        q = spq
-    else:
-        q = spq.get_text()
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                SPARQL_ENDPOINT,
-                data={"query": q},
-                headers={"Accept": "application/sparql-results+json"},
-            ) as response:
-                ret = await response.json()
-                if "results" in ret:
-                    results = [r for r in ret["results"]["bindings"]]
-                else:
-                    results = []
-    except Exception as e:
-        print(q)
-        print(e)
-        results = []
-    return results
-
-
-@lru_cache(maxsize=500)
+@alru_cache(maxsize=500)
 async def fetch_qlever_sparql(q):
     results = {"total": 0, "results": []}
     try:
@@ -93,7 +74,7 @@ async def fetch_qlever_sparql(q):
                 results["total"] = ret.get("resultSizeTotal", 0)
                 results["time"] = ret.get("time", {}).get("total", "unknown")
                 results["variables"] = ret.get("selected", [])
-                for r in ret:
+                for r in ret["res"]:
                     r2 = []
                     for i in r:
                         if i[0] == "<" and i[-1] == ">":
@@ -101,9 +82,9 @@ async def fetch_qlever_sparql(q):
                         elif "^^<" in i and i[-1] == ">":
                             val, dt = i[:-1].rsplit("^^<", 1)
                             if dt.endswith("int"):
-                                r2.append(int(val))
+                                r2.append(int(val[1:-1]))
                             elif dt.endswith("decimal"):
-                                r2.append(float(val))
+                                r2.append(float(val[1:-1]))
                             else:
                                 r2.append(val)
                         else:
@@ -122,8 +103,36 @@ async def do_get_config():
     return JSONResponse(content=cfg.lux_config)
 
 
+def build_multi_query():
+    if "OR" in jq:
+        if "memberOf" in jq["OR"][0] and "memberOf" in jq["OR"][1]:
+            test_uri = jq["OR"][0]["memberOf"]["id"]
+            qt = f"PREFIX lux: <https://lux.collections.yale.edu/ns/>\nSELECT ?uri WHERE {{\
+?uri lux:itemMemberOfSet|lux:setMemberOfSet <{test_uri}> .\
+?uri lux:setSortIdentifier|lux:itemSortIdentifier ?sortId .}}\
+ORDER BY ASC(?sortId)\
+LIMIT {PAGE_LENGTH}"
+
+
+# Temporarily need:
+# FILTER(STRLEN(?sortId) >= 8)
+# FILTER(!CONTAINS(?sortId, " "))
+
+
+def make_sparql_query(scope, q, page=1, pageLength=PAGE_LENGTH, sort="relevance", order="DESC"):
+    offset = (page - 1) * pageLength
+    soffset = (offset // 60) * 60
+
+    q = q.replace(MY_URI, DATA_URI)
+    jq = json.loads(q)
+    parsed = rdr.read(jq, scope)
+    spq = st.translate_search(parsed, scope=scope, offset=soffset, sort=sort, order=order)
+    qt = spq.get_text()
+    return qt
+
+
 @app.get("/api/search/{scope}")
-async def do_search(scope, q={}, page=1, pageLength=PAGE_LENGTH, sort=""):
+async def do_search(scope, q, page=1, pageLength=PAGE_LENGTH, sort=""):
     page = int(page)
     pageLength = int(pageLength)
     offset = (page - 1) * pageLength
@@ -139,38 +148,15 @@ async def do_search(scope, q={}, page=1, pageLength=PAGE_LENGTH, sort=""):
         sort = "relevance"
         ascdesc = "DESC"
     pred = sorts[scope].get(sort, "relevance")
-    q = q.replace(MY_URI, DATA_URI)
-    jq = json.loads(q)
+    uq = urllib.parse.quote(q)
 
     if scope == "multi":
         # Just write the queries sensibly
-        if "OR" in jq:
-            if "memberOf" in jq["OR"][0] and "memberOf" in jq["OR"][1]:
-                test_uri = jq["OR"][0]["memberOf"]["id"]
-                qt = f"PREFIX lux: <https://lux.collections.yale.edu/ns/>\nSELECT ?uri WHERE {{\
-    ?uri lux:itemMemberOfSet|lux:setMemberOfSet <{test_uri}> .\
-    ?uri lux:setSortIdentifier|lux:itemSortIdentifier ?sortId .}}\
-    ORDER BY ASC(?sortId)\
-    LIMIT {PAGE_LENGTH}"
-
-    # Temporarily need:
-    # FILTER(STRLEN(?sortId) >= 8)
-    # FILTER(!CONTAINS(?sortId, " "))
-
+        qt = ""
     else:
-        parsed = rdr.read(jq, scope)
-        spq = st.translate_search(parsed, scope=scope, limit=pageLength, offset=offset, sort=pred, order=ascdesc)
-        qt = spq.get_text()
-        spq2 = st.translate_search_count(parsed, scope=scope)
-        qt2 = spq2.get_text()
+        qt = make_sparql_query(scope, q, page, pageLength, pred, ascdesc)
 
-    res = await fetch_sparql(qt)
-    ttl_res = await fetch_sparql(qt2)
-    try:
-        ttl = ttl_res[0]["count"]["value"]
-    except Exception:
-        ttl = 0
-    uq = urllib.parse.quote(q)
+    res = await fetch_qlever_sparql(qt)
 
     js = {
         "@context": "https://linked.art/ns/v1/search.json",
@@ -181,16 +167,16 @@ async def do_search(scope, q={}, page=1, pageLength=PAGE_LENGTH, sort=""):
             "type": "OrderedCollection",
             "label": {"en": ["Search Results"]},
             "summary": {"en": ["Description of Search Results"]},
-            "totalItems": ttl,
+            "totalItems": res["total"],
         },
         "orderedItems": [],
     }
-    # do next and prev
+    # FIXME: do next and prev
 
-    for r in res:
+    for r in res["results"][offset : offset + pageLength]:
         js["orderedItems"].append(
             {
-                "id": r["uri"]["value"].replace(f"{DATA_URI}data/", f"{MY_URI}data/"),
+                "id": r[0].replace(f"{DATA_URI}data/", f"{MY_URI}data/"),
                 "type": "Object",
             }
         )
@@ -199,8 +185,6 @@ async def do_search(scope, q={}, page=1, pageLength=PAGE_LENGTH, sort=""):
 
 @app.get("/api/search-estimate/{scope}")
 async def do_search_estimate(scope, q={}, page=1):
-    q = q.replace(MY_URI, DATA_URI)
-    jq = json.loads(q)
     uq = urllib.parse.quote(q)
     js = {
         "@context": "https://linked.art/ns/v1/search.json",
@@ -210,15 +194,9 @@ async def do_search_estimate(scope, q={}, page=1):
         "summary": {"en": ["Description of Search Results"]},
         "totalItems": 0,
     }
-    try:
-        parsed = rdr.read(jq, scope)
-    except ValueError as e:
-        return JSONResponse(content=js)
-    spq2 = st.translate_search_count(parsed, scope=scope)
-    qt2 = spq2.get_text()
-    ttl_res = await fetch_sparql(qt2)
-    ttl = ttl_res[0]["count"]["value"]
-    js["totalItems"] = int(ttl)
+    qt = make_sparql_query(scope, q)
+    res = await fetch_qlever_sparql(qt)
+    js["totalItems"] = res["total"]
     return JSONResponse(content=js)
 
 
@@ -226,17 +204,11 @@ async def do_search_estimate(scope, q={}, page=1):
 async def do_search_match(q={}):
     scope = q["_scope"]
     del q["_scope"]
-
-    q = q.replace(MY_URI, DATA_URI)
-    jq = json.loads(q)
-    parsed = rdr.read(jq, scope)
-    spq2 = st.translate_search_count(parsed, scope=scope)
-    qt2 = spq2.get_text()
-    ttl_res = await fetch_sparql(qt2)
-    ttl = ttl_res[0]["count"]["value"]
+    qt = make_sparql_query(scope, q)
+    res = await fetch_qlever_sparql(qt)
     js = {
         "unnamed": {
-            "hasOneOrMoreResult": 1 if ttl > 0 else 0,
+            "hasOneOrMoreResult": 1 if res["total"] > 0 else 0,
             "isRelatedList": False,
         }
     }
@@ -245,6 +217,8 @@ async def do_search_match(q={}):
 
 @app.get("/api/facets/{scope}")
 async def do_facet(scope, q={}, name="", page=1):
+    await asyncio.sleep(0.1)
+    offset = (int(page) - 1) * PAGE_LENGTH
     q = q.replace(MY_URI, DATA_URI)
     jq = json.loads(q)
     parsed = rdr.read(jq, scope)
@@ -280,53 +254,33 @@ async def do_facet(scope, q={}, name="", page=1):
                 pred = pname2
     if ":" not in pred and pred != "a":
         pred = f"lux:{pred}"
-    # print(f"{name} {pname} {pname2} {pred}")
 
     spq = st.translate_facet(parsed, pred)
-    res = await fetch_sparql(spq)
-    if res:
-        spq2 = st.translate_facet_count(parsed, pred)
-        res2 = await fetch_sparql(spq2)
-        if res2 and "count" in res2[0]:
-            ttl = int(res2[0]["count"]["value"])
-            js["partOf"]["totalItems"] = ttl
-        else:
-            ttl = 0
+    qt = spq.get_text()
+    res = await fetch_qlever_sparql(qt)
+    # return JSONResponse(res)
 
-    for r in res:
+    for r in res["results"][offset : offset + PAGE_LENGTH]:
         # Need to know type of facet (per datatype below)
         # and what query to AND based on the predicate
         # e.g:
         # AND: [(query), {"rel": {"id": "val"}}]
-
-        if r["facet"]["type"] == "uri":
-            clause = {pname2: {"id": r["facet"]["value"]}}
+        #
+        val = r[0]
+        ct = r[1]
+        if type(val) is str and val.startswith("http"):
+            # is a URI
             if pred == "a":
-                val = r["facet"]["value"]
-                if val.startswith(DATA_URI):
-                    continue
-                else:
-                    val = val.replace("https://linked.art/ns/terms/", "")
+                val = val.replace("https://linked.art/ns/terms/", "")
             else:
                 val = (
-                    r["facet"]["value"]
-                    .replace(f"{DATA_URI}data/", f"{MY_URI}data/")
+                    val.replace(f"{DATA_URI}data/", f"{MY_URI}data/")
                     .replace("https://lux.collections.yale.edu/ns/", "")
                     .replace("https://linked.art/ns/terms/", "")
                 )
-
-        elif r["facet"]["datatype"].endswith("int") or r["facet"]["datatype"].endswith("decimal"):
-            val = int(r["facet"]["value"])
-            clause = {pname2: val}
-        elif r["facet"]["datatype"].endswith("float"):
-            val = float(r["facet"]["value"])
-            clause = {pname2: val}
-
-        elif r["facet"]["datatype"].endswith("dateTime"):
-            val = r["facet"]["value"]
-            clause = {pname2: val}
+            clause = {pname2: {"id": val}}
         else:
-            raise ValueError(r)
+            clause = {pname2: val}
 
         nq = {"AND": [clause, jq]}
         qstr = urllib.parse.quote(json.dumps(nq, separators=(",", ":")))
@@ -335,7 +289,7 @@ async def do_facet(scope, q={}, name="", page=1):
                 "id": f"{MY_URI}api/search-estimate/{scope}?q={qstr}",
                 "type": "OrderedCollection",
                 "value": val,
-                "totalItems": int(r["facetCount"]["value"]),
+                "totalItems": ct,
             }
         )
     return JSONResponse(content=js)
@@ -370,10 +324,10 @@ async def do_related_list(scope, name, uri, page=1):
     cts = {}
     for name, spq in related_list_sparql[scope].items():
         qry = spq.replace("URI-HERE", uri)
-        res = await fetch_sparql(qry)
+        res = await fetch_qlever_sparql(qry)
         for row in res:
-            what = row["uri"]["value"]
-            ct = int(row["count"]["value"])
+            what = row[0]
+            ct = int(row[1])
             try:
                 cts[what] += ct
             except KeyError:
@@ -457,8 +411,8 @@ async def do_hal_links(scope, identifier):
             continue
         qt = spq.get_text()
         qt = qt.replace("URI-HERE", uri)
-        res = await fetch_sparql(qt)
-        ttl = int(res[0]["count"]["value"])
+        res = await fetch_qlever_sparql(qt)
+        ttl = int(res["total"])
         if ttl > 0:
             jq = hal_queries[hscope][hal]
             jqs = json.dumps(jq, separators=(",", ":"))
@@ -538,10 +492,10 @@ async def do_get_record(scope, identifier, profile=None):
 async def do_stats():
     """Fetch counts of each class"""
     spq = "SELECT ?class (COUNT(?class) as ?count) {?what a ?class}  GROUP  BY  ?class"
-    res = await fetch_sparql(spq)
+    res = await fetch_qlever_sparql(spq)
     vals = {}
-    for r in res:
-        vals[r["class"]["value"].rsplit("/")[-1].lower()] = int(r["count"]["value"])
+    for r in res["results"]:
+        vals[r[0].rsplit("/")[-1].lower()] = r[1]
     cts = {}
     for s in cfg.scopes:
         cts[s] = vals[s]
@@ -607,5 +561,13 @@ BIND(geof:centroid(?coords) AS ?centroid)
 
 # --- Main Execution ---
 if __name__ == "__main__":
-    print("Starting uvicorn server...")
-    uvicorn.run(app, host="0.0.0.0", port=args.port, log_level=args.loglevel)
+    print("Starting hypercorn https/2 server...")
+    uvloop.install()
+    hconfig = HyperConfig()
+    hconfig.bind = [f"0.0.0.0:{args.port}"]
+    hconfig.loglevel = args.loglevel
+    hconfig.accesslog = "-"
+    hconfig.errorlog = "-"
+    hconfig.certfile = "files/localhost+2.pem"
+    hconfig.keyfile = "files/localhost+2-key.pem"
+    asyncio.run(hypercorn_serve(app, hconfig))

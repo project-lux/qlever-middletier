@@ -1,5 +1,5 @@
 from luxql import LuxLeaf, LuxBoolean, LuxRelationship
-from SPARQLQueryBuilder import *
+from qleverlux.SPARQLQueryBuilder import *
 import shlex
 import unicodedata
 from string import whitespace, punctuation
@@ -13,19 +13,20 @@ class SparqlTranslator:
         self.counter = 0
         self.scored = []
         self.prefixes = {
-            "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
+            # "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
+            # "la": "https://linked.art/ns/terms/",
             "xsd": "http://www.w3.org/2001/XMLSchema#",
-            "la": "https://linked.art/ns/terms/",
-            "lux": "https://lux.collections.yale.edu/ns/",
+            "geo": "http://www.opengis.net/ont/geosparql#",
+            "geof": "http://www.opengis.net/def/function/geosparql/",
+            "qlss": "https://qlever.cs.uni-freiburg.de/spatialSearch/",
             "textSearch": "https://qlever.cs.uni-freiburg.de/textSearch/",
+            "lux": "https://lux.collections.yale.edu/ns/",
         }
 
         self.remove_diacritics = False
-        self.min_word_chars = 4
+        self.min_word_chars = 0
         # self.padding_char2 = "Þ"
         self.padding_char = b"\xc3\xbe".decode("utf-8")
-
-        # assert self.padding_char == self.padding_char2
 
         self.anywhere_field = "text"
         self.id_field = "id"
@@ -171,13 +172,17 @@ class SparqlTranslator:
         # elt+ is one or more
         # elt? is zero or one
 
-    def translate_search(self, query, scope=None, limit=25, offset=0, sort="", order="", sortDefault="ZZZZZZZZZZ"):
+    def translate_search(self, query, scope=None, limit=None, offset=0, sort="", order="", sortDefault="ZZZZZZZZZZ"):
         # Implement translation logic here
         self.counter = 0
         self.scored = []
         self.calculate_scores = False
         self.calculate_scores = True  # always calculate scores for now until cache key is fixed
-        sparql = SelectQuery(limit=limit, offset=offset)
+        if limit is None:
+            sparql = SelectQuery(offset=offset)
+        else:
+            sparql = SelectQuery(limit=limit, offset=offset)
+
         for pfx, uri in self.prefixes.items():
             sparql.add_prefix(Prefix(pfx, uri))
         if sort and sort != "relevance":
