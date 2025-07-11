@@ -78,7 +78,6 @@ async def fetch_qlever_sparql(q):
                     r2 = []
                     for i in r:
                         if i is None:
-                            print(r)
                             r2.append(None)
                         elif i[0] == "<" and i[-1] == ">":
                             r2.append(i[1:-1])
@@ -97,7 +96,7 @@ async def fetch_qlever_sparql(q):
     except Exception as e:
         print(q)
         print(e)
-        raise
+        # raise
         results["error"] = str(e)
     return results
 
@@ -416,7 +415,7 @@ async def do_hal_links(scope, identifier):
         qt = spq.get_text()
         qt = qt.replace("URI-HERE", uri)
         res = await fetch_qlever_sparql(qt)
-        ttl = int(res["total"])
+        ttl = res["results"][0][0]
         if ttl > 0:
             jq = hal_queries[hscope][hal]
             jqs = json.dumps(jq, separators=(",", ":"))
@@ -572,6 +571,6 @@ if __name__ == "__main__":
     hconfig.loglevel = args.loglevel
     hconfig.accesslog = "-"
     hconfig.errorlog = "-"
-    hconfig.certfile = "files/qleverlux.pem"
-    hconfig.keyfile = "files/qleverlux-key.pem"
+    hconfig.certfile = f"files/{args.cert}.pem"
+    hconfig.keyfile = f"files/{args.cert}-key.pem"
     asyncio.run(hypercorn_serve(app, hconfig))

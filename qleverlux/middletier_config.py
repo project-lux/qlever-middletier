@@ -18,10 +18,11 @@ table = "lux_data_cache"
 sparql = "http://localhost:7010/sparql"
 port = 5000
 uri_host = "localhost"
-protocol = "http"
+protocol = "https"
 path = "/"
 pageLength = 20
 data_uri = "https://lux.collections.yale.edu/"
+cert_name = "qleverlux"
 
 parser.add_argument("--user", type=str, help="Postgres username", default=user)
 parser.add_argument("--db", type=str, help="Postgres database", default=user)
@@ -35,9 +36,11 @@ parser.add_argument("--host", type=str, help="Host for URI substitution", defaul
 parser.add_argument("--protocol", type=str, help="Protocol for URI substitution", default=protocol)
 parser.add_argument("--path", type=str, help="Path for URI substitution", default=path)
 parser.add_argument("--data-uri", type=str, help="Data URI for URI substitution", default=data_uri)
+parser.add_argument("--cert", "--certs", type=str, help="prefix for cert files", default=cert_name)
 
 parser.add_argument("--pageLength", type=int, help="Page length for pagination", default=20)
 parser.add_argument("--portal", type=str, help="Which source unit, if any, to filter for", default="")
+
 
 args, rest = parser.parse_known_args()
 
