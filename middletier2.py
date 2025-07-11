@@ -77,7 +77,10 @@ async def fetch_qlever_sparql(q):
                 for r in ret["res"]:
                     r2 = []
                     for i in r:
-                        if i[0] == "<" and i[-1] == ">":
+                        if i is None:
+                            print(r)
+                            r2.append(None)
+                        elif i[0] == "<" and i[-1] == ">":
                             r2.append(i[1:-1])
                         elif "^^<" in i and i[-1] == ">":
                             val, dt = i[:-1].rsplit("^^<", 1)
