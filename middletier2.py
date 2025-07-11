@@ -568,6 +568,6 @@ if __name__ == "__main__":
     hconfig.loglevel = args.loglevel
     hconfig.accesslog = "-"
     hconfig.errorlog = "-"
-    hconfig.certfile = "files/localhost+2.pem"
-    hconfig.keyfile = "files/localhost+2-key.pem"
+    hconfig.certfile = "files/qleverlux.pem"
+    hconfig.keyfile = "files/qleverlux-key.pem"
     asyncio.run(hypercorn_serve(app, hconfig))
