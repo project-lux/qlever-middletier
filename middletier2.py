@@ -94,6 +94,7 @@ async def fetch_qlever_sparql(q):
     except Exception as e:
         print(q)
         print(e)
+        raise
         results["error"] = str(e)
     return results
 
