@@ -32,6 +32,7 @@ parser.add_argument("--loglevel", "--log-level", type=str, help="Log level for u
 parser.add_argument("--sparql", type=str, help="SPARQL endpoint URL", default=sparql)
 
 parser.add_argument("--port", type=int, help="Port for uvicorn", default=port)
+parser.add_argument("--port-replace", type=int, help="Port for replacement", default=-1)
 parser.add_argument("--host", type=str, help="Host for URI substitution", default=uri_host)
 parser.add_argument("--protocol", type=str, help="Protocol for URI substitution", default=protocol)
 parser.add_argument("--path", type=str, help="Path for URI substitution", default=path)
@@ -44,7 +45,16 @@ parser.add_argument("--portal", type=str, help="Which source unit, if any, to fi
 
 args, rest = parser.parse_known_args()
 
-MY_URI = f"{args.protocol}://{args.host}:{args.port}{args.path}"
+# Allow an upstream load balancer to have a different port
+if args.port_replace > -1:
+    if args.port_replace:
+        port = f":{args.port_replace}"
+    else:
+        port = ""
+else:
+    port = f":{args.port}"
+
+MY_URI = f"{args.protocol}://{args.host}{port}{args.path}"
 SPARQL_ENDPOINT = args.sparql
 PAGE_LENGTH = args.pageLength
 DATA_URI = args.data_uri

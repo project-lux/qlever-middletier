@@ -83,12 +83,13 @@ async def fetch_qlever_sparql(q):
                             r2.append(i[1:-1])
                         elif "^^<" in i and i[-1] == ">":
                             val, dt = i[:-1].rsplit("^^<", 1)
+                            val = val[1:-1]
                             if dt.endswith("int"):
-                                r2.append(int(val[1:-1]))
+                                r2.append(int(val))
                             elif dt.endswith("decimal"):
-                                r2.append(float(val[1:-1]))
+                                r2.append(float(val))
                             else:
-                                r2.append(val[1:-1])
+                                r2.append(val)
                         else:
                             r2.append(i)
                     results["results"].append(r2)
@@ -106,26 +107,25 @@ async def do_get_config():
     return JSONResponse(content=cfg.lux_config)
 
 
-def build_multi_query():
+def build_multi_query(jq):
     if "OR" in jq:
         if "memberOf" in jq["OR"][0] and "memberOf" in jq["OR"][1]:
             test_uri = jq["OR"][0]["memberOf"]["id"]
-            qt = f"PREFIX lux: <https://lux.collections.yale.edu/ns/>\nSELECT ?uri WHERE {{\
-?uri lux:itemMemberOfSet|lux:setMemberOfSet <{test_uri}> .\
-?uri lux:setSortIdentifier|lux:itemSortIdentifier ?sortId .}}\
-ORDER BY ASC(?sortId)\
-LIMIT {PAGE_LENGTH}"
-
-
-# Temporarily need:
-# FILTER(STRLEN(?sortId) >= 8)
-# FILTER(!CONTAINS(?sortId, " "))
+            qt = f"""
+PREFIX lux: <https://lux.collections.yale.edu/ns/>\nSELECT ?uri WHERE {{
+?uri lux:itemMemberOfSet|lux:setMemberOfSet <{test_uri}> .
+?uri lux:setSortIdentifier|lux:itemSortIdentifier ?sortId .
+FILTER(STRLEN(?sortId) >= 8)
+FILTER(!CONTAINS(?sortId, " "))
+}}
+ORDER BY ASC(?sortId)
+LIMIT {PAGE_LENGTH}"""
+            return qt
 
 
 def make_sparql_query(scope, q, page=1, pageLength=PAGE_LENGTH, sort="relevance", order="DESC"):
     offset = (page - 1) * pageLength
     soffset = (offset // 60) * 60
-
     q = q.replace(MY_URI, DATA_URI)
     jq = json.loads(q)
     parsed = rdr.read(jq, scope)
@@ -265,11 +265,6 @@ async def do_facet(scope, q={}, name="", page=1):
     js["partOf"]["totalItems"] = res["total"] + soffset
 
     for r in res["results"][offset % 60 : offset % 60 + PAGE_LENGTH]:
-        # Need to know type of facet (per datatype below)
-        # and what query to AND based on the predicate
-        # e.g:
-        # AND: [(query), {"rel": {"id": "val"}}]
-        #
         val = r[0]
         ct = r[1]
         if type(val) is str and val.startswith("http"):
@@ -320,9 +315,6 @@ async def do_related_list(scope, name, uri, page=1):
         "value": "",
         "name": "",
     }
-    # scope is the type of records to find
-    # name gives related list type (relatedToAgent)
-    # uri is the anchoring entity
 
     all_res = {}
     cts = {}
@@ -553,10 +545,8 @@ SELECT ?where ?centroid WHERE {
               qlss:bindDistance ?dist_left_right ;
               qlss:payload ?where, ?coords .
     {
-      # Any subquery, that selects ?right_geometry, ?payloadA and ?payloadB
-?where lux:placeDefinedBy ?coords .
-BIND(geof:centroid(?coords) AS ?centroid)
-
+      ?where lux:placeDefinedBy ?coords .
+      BIND(geof:centroid(?coords) AS ?centroid)
     }
   }
 }
