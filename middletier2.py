@@ -292,8 +292,8 @@ def make_simple_record(uri):
             if "part" in cre:
                 who = []
                 for part in cre["part"]:
-                    if "carried_out_by" in cre:
-                        who = [make_simple_reference(x["id"])[0] for x in cre["carried_out_by"]]
+                    if "carried_out_by" in part:
+                        who = [make_simple_reference(x["id"])[0] for x in part["carried_out_by"]]
                 if "creator" in outrec:
                     outrec["creator"].extend(who)
                 elif who:
