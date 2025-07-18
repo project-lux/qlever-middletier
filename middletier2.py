@@ -206,7 +206,7 @@ async def do_basic_name_search(scope: scopeEnum, name: str):
     """
 
     q = {"_scope": scope.value, "name": name, "_complete": True}
-    qt = make_sparql_query(scope.value, q)
+    qt = make_sparql_query(scope.value, json.dumps(q))
     res = await fetch_qlever_sparql(qt)
 
     recs = []
