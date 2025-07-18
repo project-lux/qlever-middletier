@@ -217,7 +217,7 @@ async def do_basic_name_search(scope: scopeEnum, name: str):
             outrec["classifications"] = []
             for cxn in rec["classified_as"]:
                 if "id" in cxn:
-                    outrec["classifications"].append(make_simple_reference(cxn["id"][0]))
+                    outrec["classifications"].append(make_simple_reference(cxn["id"])[0])
         if "referred_to_by" in rec:
             outrec["descriptions"] = []
             for stmt in rec["referred_to_by"]:
@@ -226,16 +226,16 @@ async def do_basic_name_search(scope: scopeEnum, name: str):
                     desc["classifications"] = []
                     for cxn in stmt["classified_as"]:
                         if "id" in cxn:
-                            desc["classifications"].append(make_simple_reference(cxn["id"][0]))
+                            desc["classifications"].append(make_simple_reference(cxn["id"])[0])
                 outrec["descriptions"].append(desc)
         if "part_of" in rec:
             outrec["part_of"] = []
             for parent in rec["part_of"]:
-                outrec["part_of"].append(make_simple_reference(parent["id"][0]))
+                outrec["part_of"].append(make_simple_reference(parent["id"])[0])
         elif "broader" in rec:
             outrec["part_of"] = []
             for parent in rec["broader"]:
-                outrec["part_of"].append(make_simple_reference(parent["id"][0]))
+                outrec["part_of"].append(make_simple_reference(parent["id"])[0])
 
         recs.append(outrec)
 
