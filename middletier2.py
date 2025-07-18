@@ -296,7 +296,7 @@ def make_simple_record(uri):
                         who = [make_simple_reference(x["id"])[0] for x in cre["carried_out_by"]]
                 if "creator" in outrec:
                     outrec["creator"].extend(who)
-                else:
+                elif who:
                     outrec["creator"] = who
 
         if "encountered_by" in rec:
