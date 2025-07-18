@@ -190,6 +190,7 @@ def make_simple_reference(identifier):
     rec = fetch_record_from_cache(identifier)
     if not rec:
         return None
+    outrec = {}
     outrec["id"] = identifier
     outrec["type"] = rec["type"]
     outrec["name"] = get_primary_name(rec["identified_by"])["content"]
