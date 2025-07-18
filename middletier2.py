@@ -81,6 +81,11 @@ class profileEnum(str, Enum):
     RESULTS = "results"
 
 
+class orderEnum(str, Enum):
+    ASC = "ASC"
+    DESC = "DESC"
+
+
 app = FastAPI()
 origins = ["*"]
 app.add_middleware(
@@ -171,8 +176,30 @@ def make_sparql_query(scope, q, page=1, pageLength=PAGE_LENGTH, sort="relevance"
     return qt
 
 
-@app.get("/api/search/{scope}")
-async def do_search(scope, q, page=1, pageLength=PAGE_LENGTH, sort=""):
+@app.get("/api/search/{scope}", operation_id="search")
+async def do_search(
+    scope: scopeEnum,
+    q: dict,
+    page: int = 1,
+    pageLength: int = PAGE_LENGTH,
+    sort: str = "relevance",
+    order: orderEnum = "DESC",
+):
+    """
+    Given a search query in the q parameter, perform the search against the database and return the results.
+
+    Parameters:
+        - scope (scopeEnum): The scope of the search.
+        - q (dict): The search query.
+        - page (int): The page number for pagination of results
+        - pageLength (int): The number of results per page
+        - sort (str): How to sort the results, default by relevance to the query
+        - order (orderEnum): The direction of the sort, ASC or DESC
+
+    Returns:
+        - dict: The search results in the ActivityStreams CollectionPage format
+    """
+
     page = int(page)
     pageLength = int(pageLength)
     offset = (page - 1) * pageLength
@@ -404,11 +431,11 @@ async def do_translate(scope: scopeEnum, q: str):
     Translate a simple search query into a JSON query equivalent.
 
     Parameters:
-        scope (scopeEnum): The scope for the query
-        q (str): The simple search query
+        - scope (scopeEnum): The scope for the query
+        - q (str): The simple search query
 
     Returns:
-        dict: The JSON query equivalent of the given query
+        - dict: The JSON query equivalent of the given query
 
     """
 
@@ -491,12 +518,12 @@ async def do_get_record(scope: classEnum, identifier: UUID, profile: profileEnum
     Retrieve an individual record from the database.
 
     Parameters:
-    - scope (str): The class of the record.
-    - identifier (str): A UUID, the identifier of the record.
-    - profile (str, optional): The profile of the record. Defaults to no profile, otherwise "name" of "results"
+        - scope (str): The class of the record.
+        - identifier (str): A UUID, the identifier of the record.
+        - profile (str, optional): The profile of the record. Defaults to no profile, otherwise "name" of "results"
 
     Returns:
-    - dict: The record.
+        - dict: The record.
     """
     # Check postgres cache
     cursor = conn.cursor(cursor_factory=RealDictCursor)
@@ -588,7 +615,7 @@ if __name__ == "__main__":
         name="LUX MCP Server",
         describe_all_responses=True,
         describe_full_response_schema=True,
-        include_operations=["get_statistics", "get_record", "translate_string_query"],
+        include_operations=["get_statistics", "get_record", "translate_string_query", "search"],
     )
     mcp.mount()
     asyncio.run(hypercorn_serve(app, hconfig))
