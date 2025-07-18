@@ -327,7 +327,7 @@ async def do_basic_name_search(scope: scopeEnum, name: str):
 @app.get("/api/basic/get/{identifier}", operation_id="get_by_id")
 async def do_basic_fetch(identifier: UUID):
     """
-    Fetch a single entity by its identifier.
+    Fetch a single entity by its identifier from `id` within a record
 
     Parameters:
         - name (str): The name of the entity to search for
