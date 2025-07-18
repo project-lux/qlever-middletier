@@ -190,7 +190,7 @@ async def do_search(
 
     Parameters:
         - scope (scopeEnum): The scope of the search.
-        - q (dict): The search query.
+        - q (url encoded dict): The search query.
         - page (int): The page number for pagination of results
         - pageLength (int): The number of results per page
         - sort (str): How to sort the results, default by relevance to the query
@@ -285,8 +285,20 @@ async def do_search_match(q={}):
     return JSONResponse(content=js)
 
 
-@app.get("/api/facets/{scope}")
-async def do_facet(scope, q={}, name="", page=1):
+@app.get("/api/facets/{scope}", operation_id="facet")
+async def do_facet(scope: scopeEnum, q: str, name: str, page: int = 1):
+    """
+    Retrieve facet values for a given facet name and query.
+
+    Parameters:
+        scope (scopeEnum): The scope of the search
+        q (url encoded dict): The query
+        name (str): The name of the facet
+        page (int): The page number, defaults to 1
+
+    Returns:
+        - dict: The JSON response containing the facet values as an ActivityStream CollectionPage
+    """
     await asyncio.sleep(0.1)
     offset = (int(page) - 1) * PAGE_LENGTH
     soffset = (offset // 60) * 60
@@ -619,7 +631,7 @@ if __name__ == "__main__":
         name="LUX MCP Server",
         describe_all_responses=True,
         describe_full_response_schema=True,
-        include_operations=["get_statistics", "get_record", "translate_string_query", "search"],
+        include_operations=["get_statistics", "get_record", "translate_string_query", "search", "facet"],
     )
     mcp.mount()
     asyncio.run(hypercorn_serve(app, hconfig))
