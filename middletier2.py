@@ -257,6 +257,63 @@ async def do_basic_name_search(scope: scopeEnum, name: str):
                     outrec["part_of"].append(make_simple_reference(parent["id"])[0])
                 except Exception:
                     continue
+        if rec["type"] == "Person":
+            if "born" in rec:
+                # split into birthDate and birthPlace
+                if "timespan" in rec["born"]:
+                    if "begin_of_the_begin" in rec["born"]["timespan"]:
+                        outrec["birthDate"] = rec["born"]["timespan"]["begin_of_the_begin"]
+                if "took_place_at" in rec["born"]:
+                    outrec["birthPlace"] = make_simple_reference(rec["born"]["took_place_at"][0]["id"])[0]
+            if "died" in rec:
+                # split into deathDate and deathPlace
+                if "timespan" in rec["died"]:
+                    if "begin_of_the_begin" in rec["died"]["timespan"]:
+                        outrec["deathDate"] = rec["died"]["timespan"]["begin_of_the_begin"]
+                if "took_place_at" in rec["died"]:
+                    outrec["deathPlace"] = make_simple_reference(rec["died"]["took_place_at"][0]["id"])[0]
+        elif rec["type"] == "Group":
+            if "formed_by" in rec:
+                # split into birthDate and birthPlace
+                if "timespan" in rec["formed_by"]:
+                    if "begin_of_the_begin" in rec["formed_by"]["timespan"]:
+                        outrec["foundingDate"] = rec["formed_by"]["timespan"]["begin_of_the_begin"]
+                if "took_place_at" in rec["formed_by"]:
+                    outrec["foundingPlace"] = make_simple_reference(rec["formed_by"]["took_place_at"][0]["id"])[0]
+                if "carried_out_by" in rec["formed_by"]:
+                    outrec["founder"] = make_simple_reference(rec["formed_by"]["carried_out_by"][0]["id"])[0]
+
+            if "dissolved_by" in rec:
+                # split into deathDate and deathPlace
+                if "timespan" in rec["dissolved_by"]:
+                    if "begin_of_the_begin" in rec["dissolved_by"]["timespan"]:
+                        outrec["dissolutionDate"] = rec["dissolved_by"]["timespan"]["begin_of_the_begin"]
+                if "took_place_at" in rec["dissolved_by"]:
+                    outrec["dissolutionPlace"] = make_simple_reference(rec["dissolved_by"]["took_place_at"][0]["id"])[
+                        0
+                    ]
+                if "carried_out_by" in rec["dissolved_by"]:
+                    outrec["dissolver"] = make_simple_reference(rec["dissolved_by"]["carried_out_by"][0]["id"])[0]
+        elif rec["type"] == "HumanMadeObject":
+            # produced_by
+            # encountered_by
+            # made_of
+            # carries/shows -- embed this
+            # ignore: dimensions, current_owner etc
+            pass
+        elif rec["type"] in ["LinguisticObject", "VisualItem"]:
+            # about, etc
+            # embed the HMO somehow? Would require a search...
+            pass
+
+        if "member_of" in rec:
+            outrec["member_of"] = []
+            for parent in rec["member_of"]:
+                try:
+                    outrec["memberOf"].append(make_simple_reference(parent["id"])[0])
+                except Exception:
+                    continue
+
         recs.append(outrec)
 
     return recs
