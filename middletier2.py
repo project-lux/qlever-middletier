@@ -277,12 +277,53 @@ def make_simple_record(uri):
             if "carried_out_by" in rec["dissolved_by"]:
                 outrec["dissolver"] = make_simple_reference(rec["dissolved_by"]["carried_out_by"][0]["id"])[0]
     elif rec["type"] == "HumanMadeObject":
-        # produced_by
-        # encountered_by
         # made_of
         # carries/shows -- embed this
         # ignore: dimensions, current_owner etc
-        pass
+
+        if "produced_by" in rec:
+            cre = rec["produced_by"]
+            if "timespan" in cre:
+                outrec["creationDate"] = cre["timespan"]["begin_of_the_begin"]
+            if "took_place_at" in cre:
+                outrec["creationPlace"] = make_simple_reference(cre["took_place_at"][0]["id"])[0]
+            if "carried_out_by" in cre:
+                outrec["creator"] = [make_simple_reference(x["id"])[0] for x in cre["carried_out_by"]]
+            if "part" in cre:
+                who = []
+                for part in cre["part"]:
+                    if "carried_out_by" in cre:
+                        who = [make_simple_reference(x["id"])[0] for x in cre["carried_out_by"]]
+                if "creator" in outrec:
+                    outrec["creator"].extend(who)
+                else:
+                    outrec["creator"] = who
+
+        if "encountered_by" in rec:
+            cre = rec["encountered_by"]
+            if "timespan" in cre:
+                outrec["discoveryDate"] = cre["timespan"]["begin_of_the_begin"]
+            if "took_place_at" in cre:
+                outrec["discoveryPlace"] = make_simple_reference(cre["took_place_at"][0]["id"])[0]
+            if "carried_out_by" in cre:
+                outrec["discoverer"] = [make_simple_reference(x["id"])[0] for x in cre["carried_out_by"]]
+            if "part" in cre:
+                who = []
+                for part in cre["part"]:
+                    if "carried_out_by" in cre:
+                        who = [make_simple_reference(x["id"])[0] for x in cre["carried_out_by"]]
+                if "discoverer" in outrec:
+                    outrec["discoverer"].extend(who)
+                else:
+                    outrec["discoverer"] = who
+
+        if "made_of" in rec:
+            outrec["material"] = [make_simple_reference(x["id"])[0] for x in rec["made_of"]]
+        if "carries" in rec:
+            outrec["carries"] = [make_simple_reference(x["id"])[0] for x in rec["carries"]]
+        if "shows" in rec:
+            outrec["shows"] = [make_simple_reference(x["id"])[0] for x in rec["shows"]]
+
     elif rec["type"] in ["LinguisticObject", "VisualItem"]:
         # about, etc
         # embed the HMO somehow? Would require a search...
@@ -292,9 +333,10 @@ def make_simple_record(uri):
         outrec["member_of"] = []
         for parent in rec["member_of"]:
             try:
-                outrec["memberOf"].append(make_simple_reference(parent["id"])[0])
+                outrec["member_of"].append(make_simple_reference(parent["id"])[0])
             except Exception:
                 continue
+
     return outrec
 
 
