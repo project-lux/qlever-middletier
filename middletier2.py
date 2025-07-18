@@ -169,7 +169,15 @@ def make_sparql_query(scope, q, page=1, pageLength=PAGE_LENGTH, sort="relevance"
     offset = (page - 1) * pageLength
     soffset = (offset // 60) * 60
     q = q.replace(MY_URI, DATA_URI)
-    jq = json.loads(q)
+    try:
+        jq = json.loads(q)
+    except Exception:
+        qp = query_parser.parse(q)
+        # now translate AST into JSON query
+        qjs = qp.to_json()
+        k = list(qjs.keys())[0]
+        jq = {"_scope": scope}
+        jq[k] = qjs[k]
     parsed = rdr.read(jq, scope)
     spq = st.translate_search(parsed, scope=scope, offset=soffset, sort=sort, order=order)
     qt = spq.get_text()
@@ -215,9 +223,6 @@ async def do_search(
         sort = "relevance"
         ascdesc = "DESC"
     pred = sorts[scope].get(sort, "relevance")
-    print(q)
-    if type(q) is dict:
-        q = json.dumps(q)
     uq = urllib.parse.quote(q)
 
     if scope == "multi":
