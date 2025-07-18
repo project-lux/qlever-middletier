@@ -189,7 +189,7 @@ def make_simple_reference(uri):
     identifier = uri.rsplit("/", 1)[-1]
     rec = fetch_record_from_cache(identifier)
     outrec["type"] = rec["type"]
-    outrec["name"] = get_primary_name(rec["identified_by"])
+    outrec["name"] = get_primary_name(rec["identified_by"])["content"]
     return outrec, rec
 
 
