@@ -526,6 +526,7 @@ async def do_get_record(scope: classEnum, identifier: UUID, profile: profileEnum
         - dict: The record.
     """
     # Check postgres cache
+    identifier = str(identifier)
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     qry = f"SELECT * FROM {PG_TABLE} WHERE identifier = %s"
     params = (identifier,)
