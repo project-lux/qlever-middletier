@@ -353,6 +353,7 @@ async def do_basic_name_search(scope: scopeEnum, name: str):
         - List[Entity]: A list of entities matching the name.
     """
     name = name.lower()
+    name = name.replace("-", " ")
     q = {"_scope": scope.value, "name": f'"{name}"', "_complete": True}
     qt = make_sparql_query(scope.value, json.dumps(q))
     res = await fetch_qlever_sparql(qt)
