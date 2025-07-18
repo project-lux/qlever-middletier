@@ -184,6 +184,64 @@ def make_sparql_query(scope, q, page=1, pageLength=PAGE_LENGTH, sort="relevance"
     return qt
 
 
+def make_simple_reference(uri):
+    outrec = {"id": uri}
+    identifier = uri.rsplit("/", 1)[-1]
+    rec = fetch_record_from_cache(identifier)
+    outrec["type"] = rec["type"]
+    outrec["name"] = get_primary_name(rec["identified_by"])
+    return outrec, rec
+
+
+@app.get("/api/basic/{scope}", operation_id="search_by_name")
+async def do_basic_name_search(scope: scopeEnum, name: str):
+    """
+    Search for the top 20 entities in the given scope by their exact name.
+
+    Parameters:
+        - name (str): The name of the entity to search for
+
+    Returns:
+        - List[Entity]: A list of entities matching the name.
+    """
+
+    q = {"_scope": scope.value, "name": name, "_complete": True}
+    qt = make_sparql_query(scope.value, q)
+    res = await fetch_qlever_sparql(qt)
+
+    recs = []
+    for r in res["results"][:20]:
+        uri = r[0]
+        outrec, rec = make_simple_reference(uri)
+        if "classified_as" in rec:
+            outrec["classifications"] = []
+            for cxn in rec["classified_as"]:
+                if "id" in cxn:
+                    outrec["classifications"].append(make_simple_reference(cxn["id"][0]))
+        if "referred_to_by" in rec:
+            outrec["descriptions"] = []
+            for stmt in rec["referred_to_by"]:
+                desc = {"content": stmt["content"]}
+                if "classified_as" in stmt:
+                    desc["classifications"] = []
+                    for cxn in stmt["classified_as"]:
+                        if "id" in cxn:
+                            desc["classifications"].append(make_simple_reference(cxn["id"][0]))
+                outrec["descriptions"].append(desc)
+        if "part_of" in rec:
+            outrec["part_of"] = []
+            for parent in rec["part_of"]:
+                outrec["part_of"].append(make_simple_reference(parent["id"][0]))
+        elif "broader" in rec:
+            outrec["part_of"] = []
+            for parent in rec["broader"]:
+                outrec["part_of"].append(make_simple_reference(parent["id"][0]))
+
+        recs.append(outrec)
+
+    return recs
+
+
 @app.get("/api/search/{scope}", operation_id="search")
 async def do_search(
     scope: scopeEnum,
@@ -535,6 +593,18 @@ def get_primary_name(names):
     return candidates[0] if candidates else None
 
 
+def fetch_record_from_cache(identifier):
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    qry = f"SELECT * FROM {PG_TABLE} WHERE identifier = %s"
+    params = (identifier,)
+    cursor.execute(qry, params)
+    row = cursor.fetchone()
+    if row:
+        return row["data"]
+    else:
+        return None
+
+
 @app.get("/data/{scope}/{identifier}", operation_id="get_record")
 async def do_get_record(scope: classEnum, identifier: UUID, profile: profileEnum = None):
     """
@@ -554,14 +624,8 @@ async def do_get_record(scope: classEnum, identifier: UUID, profile: profileEnum
         profile = profile.value
     identifier = str(identifier)
     scope = str(scope)
-    cursor = conn.cursor(cursor_factory=RealDictCursor)
-    qry = f"SELECT * FROM {PG_TABLE} WHERE identifier = %s"
-    params = (identifier,)
-    cursor.execute(qry, params)
-    row = cursor.fetchone()
-    if row:
-        js = row["data"]
-
+    js = fetch_record_from_cache(identifier)
+    if js:
         if not profile:
             links = {
                 "curies": [
@@ -643,7 +707,14 @@ if __name__ == "__main__":
         name="LUX MCP Server",
         describe_all_responses=False,
         describe_full_response_schema=False,
-        include_operations=["get_statistics", "get_record", "translate_string_query", "search", "facet"],
+        include_operations=[
+            "get_statistics",
+            "get_record",
+            "translate_string_query",
+            "search",
+            "facet",
+            "search_by_name",
+        ],
     )
     mcp.mount()
     asyncio.run(hypercorn_serve(app, hconfig))
