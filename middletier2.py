@@ -221,6 +221,10 @@ async def do_basic_name_search(scope: scopeEnum, name: str):
         if "referred_to_by" in rec:
             outrec["descriptions"] = []
             for stmt in rec["referred_to_by"]:
+                if "language" in stmt:
+                    langs = [x.get("equivalent", [{"id": None}])[0]["id"] for x in stmt.get("language", [])]
+                    if ENGLISH not in langs:
+                        continue
                 desc = {"content": stmt["content"]}
                 if "classified_as" in stmt:
                     desc["classifications"] = []
