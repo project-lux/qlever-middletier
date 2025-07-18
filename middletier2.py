@@ -179,7 +179,7 @@ def make_sparql_query(scope, q, page=1, pageLength=PAGE_LENGTH, sort="relevance"
 @app.get("/api/search/{scope}", operation_id="search")
 async def do_search(
     scope: scopeEnum,
-    q: dict,
+    q: str,
     page: int = 1,
     pageLength: int = PAGE_LENGTH,
     sort: str = "relevance",
