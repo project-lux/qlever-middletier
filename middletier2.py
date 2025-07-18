@@ -812,6 +812,7 @@ if __name__ == "__main__":
             "search",
             "facet",
             "search_by_name",
+            "get_by_id",
         ],
     )
     mcp.mount()
