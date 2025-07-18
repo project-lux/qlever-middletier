@@ -215,6 +215,9 @@ async def do_search(
         sort = "relevance"
         ascdesc = "DESC"
     pred = sorts[scope].get(sort, "relevance")
+    print(q)
+    if type(q) is dict:
+        q = json.dumps(q)
     uq = urllib.parse.quote(q)
 
     if scope == "multi":
