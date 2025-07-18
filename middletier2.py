@@ -188,6 +188,8 @@ def make_simple_reference(uri):
     outrec = {"id": uri}
     identifier = uri.rsplit("/", 1)[-1]
     rec = fetch_record_from_cache(identifier)
+    if not rec:
+        return None
     outrec["type"] = rec["type"]
     outrec["name"] = get_primary_name(rec["identified_by"])["content"]
     return outrec, rec
@@ -212,12 +214,18 @@ async def do_basic_name_search(scope: scopeEnum, name: str):
     recs = []
     for r in res["results"][:20]:
         uri = r[0]
-        outrec, rec = make_simple_reference(uri)
+        try:
+            outrec, rec = make_simple_reference(uri)
+        except Exception:
+            continue
         if "classified_as" in rec:
             outrec["classifications"] = []
             for cxn in rec["classified_as"]:
                 if "id" in cxn:
-                    outrec["classifications"].append(make_simple_reference(cxn["id"])[0])
+                    try:
+                        outrec["classifications"].append(make_simple_reference(cxn["id"])[0])
+                    except Exception:
+                        continue
         if "referred_to_by" in rec:
             outrec["descriptions"] = []
             for stmt in rec["referred_to_by"]:
@@ -230,17 +238,25 @@ async def do_basic_name_search(scope: scopeEnum, name: str):
                     desc["classifications"] = []
                     for cxn in stmt["classified_as"]:
                         if "id" in cxn:
-                            desc["classifications"].append(make_simple_reference(cxn["id"])[0])
+                            try:
+                                desc["classifications"].append(make_simple_reference(cxn["id"])[0])
+                            except Exception:
+                                continue
                 outrec["descriptions"].append(desc)
         if "part_of" in rec:
             outrec["part_of"] = []
             for parent in rec["part_of"]:
-                outrec["part_of"].append(make_simple_reference(parent["id"])[0])
+                try:
+                    outrec["part_of"].append(make_simple_reference(parent["id"])[0])
+                except Exception:
+                    continue
         elif "broader" in rec:
             outrec["part_of"] = []
             for parent in rec["broader"]:
-                outrec["part_of"].append(make_simple_reference(parent["id"])[0])
-
+                try:
+                    outrec["part_of"].append(make_simple_reference(parent["id"])[0])
+                except Exception:
+                    continue
         recs.append(outrec)
 
     return recs
