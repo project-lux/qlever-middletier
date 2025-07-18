@@ -172,8 +172,8 @@ def make_sparql_query(scope, q, page=1, pageLength=PAGE_LENGTH, sort="relevance"
     try:
         jq = json.loads(q)
     except Exception:
+        # fall back to trying to parse simple text query
         qp = query_parser.parse(q)
-        # now translate AST into JSON query
         qjs = qp.to_json()
         k = list(qjs.keys())[0]
         jq = {"_scope": scope}
@@ -208,6 +208,8 @@ async def do_search(
         - dict: The search results in the ActivityStreams CollectionPage format
     """
 
+    scope = scope.value
+    order = order.value
     page = int(page)
     pageLength = int(pageLength)
     offset = (page - 1) * pageLength
@@ -305,6 +307,7 @@ async def do_facet(scope: scopeEnum, q: str, name: str, page: int = 1):
         - dict: The JSON response containing the facet values as an ActivityStream CollectionPage
     """
     await asyncio.sleep(0.1)
+    scope = scope.value
     offset = (int(page) - 1) * PAGE_LENGTH
     soffset = (offset // 60) * 60
     q = q.replace(MY_URI, DATA_URI)
@@ -460,7 +463,7 @@ async def do_translate(scope: scopeEnum, q: str):
     """
 
     # take simple search in text and return json query equivalent
-
+    scope = scope.value
     js = {"_scope": scope}
     try:
         qp = query_parser.parse(q)
@@ -546,7 +549,10 @@ async def do_get_record(scope: classEnum, identifier: UUID, profile: profileEnum
         - dict: The record.
     """
     # Check postgres cache
+    scope = scope.value
+    profile = profile.value
     identifier = str(identifier)
+    scope = str(scope)
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     qry = f"SELECT * FROM {PG_TABLE} WHERE identifier = %s"
     params = (identifier,)
