@@ -466,9 +466,14 @@ class SparqlTranslator:
             elif query.field == "identifier":
                 # do exact match on the string
                 pred = f"lux:{scope}Identifier"
-                parent.add_triples([Triple(query.var, pred, f'"{query.value}"')])
+                parent.add_triples([Triple(query.var, pred, f'"{query.value.lower()}"')])
             elif query.field == "recordType":
                 parent.add_triples([Triple(query.var, "a", f"lux:{query.value}")])
+            elif query.field == self.name_field and query.complete:
+                pred = f"lux:{scope}Name"
+                val = query.value.lower()
+                val = val.replace('"', "")
+                parent.add_triples([Triple(query.var, pred, f'"{val}"')])
             else:
                 self.do_text_search(query, parent, scope)
 
