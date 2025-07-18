@@ -550,7 +550,8 @@ async def do_get_record(scope: classEnum, identifier: UUID, profile: profileEnum
     """
     # Check postgres cache
     scope = scope.value
-    profile = profile.value
+    if profile is not None:
+        profile = profile.value
     identifier = str(identifier)
     scope = str(scope)
     cursor = conn.cursor(cursor_factory=RealDictCursor)
