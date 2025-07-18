@@ -184,15 +184,117 @@ def make_sparql_query(scope, q, page=1, pageLength=PAGE_LENGTH, sort="relevance"
     return qt
 
 
-def make_simple_reference(uri):
-    outrec = {"id": uri}
-    identifier = uri.rsplit("/", 1)[-1]
+def make_simple_reference(identifier):
+    if identifier.startswith("http"):
+        identifier = identifier.rsplit("/", 1)[-1]
     rec = fetch_record_from_cache(identifier)
     if not rec:
         return None
+    outrec["id"] = identifier
     outrec["type"] = rec["type"]
     outrec["name"] = get_primary_name(rec["identified_by"])["content"]
     return outrec, rec
+
+
+def make_simple_record(uri):
+    try:
+        outrec, rec = make_simple_reference(uri)
+    except Exception:
+        return None
+    if "classified_as" in rec:
+        outrec["classifications"] = []
+        for cxn in rec["classified_as"]:
+            if "id" in cxn:
+                try:
+                    outrec["classifications"].append(make_simple_reference(cxn["id"])[0])
+                except Exception:
+                    continue
+    if "referred_to_by" in rec:
+        outrec["descriptions"] = []
+        for stmt in rec["referred_to_by"]:
+            if "language" in stmt:
+                langs = [x.get("equivalent", [{"id": None}])[0]["id"] for x in stmt.get("language", [])]
+                if ENGLISH not in langs:
+                    continue
+            desc = {"content": stmt["content"]}
+            if "classified_as" in stmt:
+                desc["classifications"] = []
+                for cxn in stmt["classified_as"]:
+                    if "id" in cxn:
+                        try:
+                            desc["classifications"].append(make_simple_reference(cxn["id"])[0])
+                        except Exception:
+                            continue
+            outrec["descriptions"].append(desc)
+    if "part_of" in rec:
+        outrec["part_of"] = []
+        for parent in rec["part_of"]:
+            try:
+                outrec["part_of"].append(make_simple_reference(parent["id"])[0])
+            except Exception:
+                continue
+    elif "broader" in rec:
+        outrec["part_of"] = []
+        for parent in rec["broader"]:
+            try:
+                outrec["part_of"].append(make_simple_reference(parent["id"])[0])
+            except Exception:
+                continue
+    if rec["type"] == "Person":
+        if "born" in rec:
+            # split into birthDate and birthPlace
+            if "timespan" in rec["born"]:
+                if "begin_of_the_begin" in rec["born"]["timespan"]:
+                    outrec["birthDate"] = rec["born"]["timespan"]["begin_of_the_begin"]
+            if "took_place_at" in rec["born"]:
+                outrec["birthPlace"] = make_simple_reference(rec["born"]["took_place_at"][0]["id"])[0]
+        if "died" in rec:
+            # split into deathDate and deathPlace
+            if "timespan" in rec["died"]:
+                if "begin_of_the_begin" in rec["died"]["timespan"]:
+                    outrec["deathDate"] = rec["died"]["timespan"]["begin_of_the_begin"]
+            if "took_place_at" in rec["died"]:
+                outrec["deathPlace"] = make_simple_reference(rec["died"]["took_place_at"][0]["id"])[0]
+    elif rec["type"] == "Group":
+        if "formed_by" in rec:
+            # split into birthDate and birthPlace
+            if "timespan" in rec["formed_by"]:
+                if "begin_of_the_begin" in rec["formed_by"]["timespan"]:
+                    outrec["foundingDate"] = rec["formed_by"]["timespan"]["begin_of_the_begin"]
+            if "took_place_at" in rec["formed_by"]:
+                outrec["foundingPlace"] = make_simple_reference(rec["formed_by"]["took_place_at"][0]["id"])[0]
+            if "carried_out_by" in rec["formed_by"]:
+                outrec["founder"] = make_simple_reference(rec["formed_by"]["carried_out_by"][0]["id"])[0]
+
+        if "dissolved_by" in rec:
+            # split into deathDate and deathPlace
+            if "timespan" in rec["dissolved_by"]:
+                if "begin_of_the_begin" in rec["dissolved_by"]["timespan"]:
+                    outrec["dissolutionDate"] = rec["dissolved_by"]["timespan"]["begin_of_the_begin"]
+            if "took_place_at" in rec["dissolved_by"]:
+                outrec["dissolutionPlace"] = make_simple_reference(rec["dissolved_by"]["took_place_at"][0]["id"])[0]
+            if "carried_out_by" in rec["dissolved_by"]:
+                outrec["dissolver"] = make_simple_reference(rec["dissolved_by"]["carried_out_by"][0]["id"])[0]
+    elif rec["type"] == "HumanMadeObject":
+        # produced_by
+        # encountered_by
+        # made_of
+        # carries/shows -- embed this
+        # ignore: dimensions, current_owner etc
+        pass
+    elif rec["type"] in ["LinguisticObject", "VisualItem"]:
+        # about, etc
+        # embed the HMO somehow? Would require a search...
+        pass
+
+    if "member_of" in rec:
+        outrec["member_of"] = []
+        for parent in rec["member_of"]:
+            try:
+                outrec["memberOf"].append(make_simple_reference(parent["id"])[0])
+            except Exception:
+                continue
+    return outrec
 
 
 @app.get("/api/basic/{scope}", operation_id="search_by_name")
@@ -214,109 +316,27 @@ async def do_basic_name_search(scope: scopeEnum, name: str):
     recs = []
     for r in res["results"][:20]:
         uri = r[0]
-        try:
-            outrec, rec = make_simple_reference(uri)
-        except Exception:
-            continue
-        if "classified_as" in rec:
-            outrec["classifications"] = []
-            for cxn in rec["classified_as"]:
-                if "id" in cxn:
-                    try:
-                        outrec["classifications"].append(make_simple_reference(cxn["id"])[0])
-                    except Exception:
-                        continue
-        if "referred_to_by" in rec:
-            outrec["descriptions"] = []
-            for stmt in rec["referred_to_by"]:
-                if "language" in stmt:
-                    langs = [x.get("equivalent", [{"id": None}])[0]["id"] for x in stmt.get("language", [])]
-                    if ENGLISH not in langs:
-                        continue
-                desc = {"content": stmt["content"]}
-                if "classified_as" in stmt:
-                    desc["classifications"] = []
-                    for cxn in stmt["classified_as"]:
-                        if "id" in cxn:
-                            try:
-                                desc["classifications"].append(make_simple_reference(cxn["id"])[0])
-                            except Exception:
-                                continue
-                outrec["descriptions"].append(desc)
-        if "part_of" in rec:
-            outrec["part_of"] = []
-            for parent in rec["part_of"]:
-                try:
-                    outrec["part_of"].append(make_simple_reference(parent["id"])[0])
-                except Exception:
-                    continue
-        elif "broader" in rec:
-            outrec["part_of"] = []
-            for parent in rec["broader"]:
-                try:
-                    outrec["part_of"].append(make_simple_reference(parent["id"])[0])
-                except Exception:
-                    continue
-        if rec["type"] == "Person":
-            if "born" in rec:
-                # split into birthDate and birthPlace
-                if "timespan" in rec["born"]:
-                    if "begin_of_the_begin" in rec["born"]["timespan"]:
-                        outrec["birthDate"] = rec["born"]["timespan"]["begin_of_the_begin"]
-                if "took_place_at" in rec["born"]:
-                    outrec["birthPlace"] = make_simple_reference(rec["born"]["took_place_at"][0]["id"])[0]
-            if "died" in rec:
-                # split into deathDate and deathPlace
-                if "timespan" in rec["died"]:
-                    if "begin_of_the_begin" in rec["died"]["timespan"]:
-                        outrec["deathDate"] = rec["died"]["timespan"]["begin_of_the_begin"]
-                if "took_place_at" in rec["died"]:
-                    outrec["deathPlace"] = make_simple_reference(rec["died"]["took_place_at"][0]["id"])[0]
-        elif rec["type"] == "Group":
-            if "formed_by" in rec:
-                # split into birthDate and birthPlace
-                if "timespan" in rec["formed_by"]:
-                    if "begin_of_the_begin" in rec["formed_by"]["timespan"]:
-                        outrec["foundingDate"] = rec["formed_by"]["timespan"]["begin_of_the_begin"]
-                if "took_place_at" in rec["formed_by"]:
-                    outrec["foundingPlace"] = make_simple_reference(rec["formed_by"]["took_place_at"][0]["id"])[0]
-                if "carried_out_by" in rec["formed_by"]:
-                    outrec["founder"] = make_simple_reference(rec["formed_by"]["carried_out_by"][0]["id"])[0]
-
-            if "dissolved_by" in rec:
-                # split into deathDate and deathPlace
-                if "timespan" in rec["dissolved_by"]:
-                    if "begin_of_the_begin" in rec["dissolved_by"]["timespan"]:
-                        outrec["dissolutionDate"] = rec["dissolved_by"]["timespan"]["begin_of_the_begin"]
-                if "took_place_at" in rec["dissolved_by"]:
-                    outrec["dissolutionPlace"] = make_simple_reference(rec["dissolved_by"]["took_place_at"][0]["id"])[
-                        0
-                    ]
-                if "carried_out_by" in rec["dissolved_by"]:
-                    outrec["dissolver"] = make_simple_reference(rec["dissolved_by"]["carried_out_by"][0]["id"])[0]
-        elif rec["type"] == "HumanMadeObject":
-            # produced_by
-            # encountered_by
-            # made_of
-            # carries/shows -- embed this
-            # ignore: dimensions, current_owner etc
-            pass
-        elif rec["type"] in ["LinguisticObject", "VisualItem"]:
-            # about, etc
-            # embed the HMO somehow? Would require a search...
-            pass
-
-        if "member_of" in rec:
-            outrec["member_of"] = []
-            for parent in rec["member_of"]:
-                try:
-                    outrec["memberOf"].append(make_simple_reference(parent["id"])[0])
-                except Exception:
-                    continue
-
-        recs.append(outrec)
+        outrec = make_simple_record(uri)
+        if outrec is not None:
+            recs.append(outrec)
 
     return recs
+
+
+@app.get("/api/basic/get/{identifier}", operation_id="get_by_id")
+async def do_basic_fetch(identifier: UUID):
+    """
+    Fetch a single entity by its identifier.
+
+    Parameters:
+        - name (str): The name of the entity to search for
+
+    Returns:
+        - List[Entity]: A list of entities matching the name.
+    """
+    identifier = str(identifier)
+    outrec = make_simple_record(identifier)
+    return outrec
 
 
 @app.get("/api/search/{scope}", operation_id="search")
