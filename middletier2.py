@@ -642,7 +642,7 @@ if __name__ == "__main__":
         app,
         name="LUX MCP Server",
         describe_all_responses=True,
-        describe_full_response_schema=True,
+        describe_full_response_schema=False,
         include_operations=["get_statistics", "get_record", "translate_string_query", "search", "facet"],
     )
     mcp.mount()
