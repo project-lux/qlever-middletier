@@ -265,7 +265,7 @@ def make_simple_record(uri):
             if "took_place_at" in rec["formed_by"]:
                 outrec["foundingPlace"] = make_simple_reference(rec["formed_by"]["took_place_at"][0]["id"])[0]
             if "carried_out_by" in rec["formed_by"]:
-                outrec["founder"] = make_simple_reference(rec["formed_by"]["carried_out_by"][0]["id"])[0]
+                outrec["founder"] = [make_simple_reference(x["id"])[0] for x in rec["formed_by"]["carried_out_by"]]
 
         if "dissolved_by" in rec:
             # split into deathDate and deathPlace
