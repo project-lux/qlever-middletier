@@ -14,11 +14,15 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi_mcp import FastApiMCP
 
+from pydantic import BaseModel
+from typing import List, Optional
+from enum import Enum
+from uuid import UUID
+
 import asyncio
 import uvloop
 from hypercorn.config import Config as HyperConfig
 from hypercorn.asyncio import serve as hypercorn_serve
-
 
 from qleverlux.middletier_config import cfg, rdr, st, sorts, facets, args
 from qleverlux.middletier_config import hal_link_templates, hal_queries, sparql_hal_queries
@@ -27,6 +31,7 @@ from qleverlux.middletier_config import MY_URI, SPARQL_ENDPOINT, PAGE_LENGTH, DA
 from qleverlux.middletier_config import ENGLISH, PRIMARY, RESULTS_FIELDS, PORTAL_SOURCE
 
 from qleverlux.boolean_query_parser import BooleanQueryParser
+
 
 conn = psycopg2.connect(user=args.user, dbname=args.db)
 
@@ -43,6 +48,37 @@ conn = psycopg2.connect(user=args.user, dbname=args.db)
 # * Allow fields and relationships in the text representation (not done)
 # * Allow variables in the queries (done)
 #
+
+
+class scopeEnum(str, Enum):
+    ITEM = "item"
+    WORK = "work"
+    AGENT = "agent"
+    PLACE = "place"
+    CONCEPT = "concept"
+    SET = "set"
+    EVENT = "event"
+
+
+class classEnum(str, Enum):
+    OBJECT = "object"
+    DIGITAL = "digital"
+    TEXT = "text"
+    VISUAL = "visual"
+    PLACE = "place"
+    PERSON = "person"
+    GROUP = "group"
+    SET = "set"
+    CONCEPT = "concept"
+    EVENT = "event"
+    PERIOD = "period"
+    ACTIVITY = "activity"
+
+
+class profileEnum(str, Enum):
+    DEFAULT = None
+    NAME = "name"
+    RESULTS = "results"
 
 
 app = FastAPI()
@@ -103,7 +139,7 @@ async def fetch_qlever_sparql(q):
     return results
 
 
-@app.get("/api/advanced-search-config")
+@app.get("/api/advanced-search-config", operation_id="get_advanced_search_config")
 async def do_get_config():
     return JSONResponse(content=cfg.lux_config)
 
@@ -362,8 +398,20 @@ async def do_related_list(scope, name, uri, page=1):
     return JSONResponse(content=js)
 
 
-@app.get("/api/translate/{scope}")
-async def do_translate(scope, q={}):
+@app.get("/api/translate/{scope}", operation_id="translate_string_query")
+async def do_translate(scope: scopeEnum, q: str):
+    """
+    Translate a simple search query into a JSON query equivalent.
+
+    Parameters:
+        scope (scopeEnum): The scope for the query
+        q (str): The simple search query
+
+    Returns:
+        dict: The JSON query equivalent of the given query
+
+    """
+
     # take simple search in text and return json query equivalent
 
     js = {"_scope": scope}
@@ -437,8 +485,19 @@ def get_primary_name(names):
     return candidates[0] if candidates else None
 
 
-@app.get("/data/{scope}/{identifier}")
-async def do_get_record(scope, identifier, profile=None):
+@app.get("/data/{scope}/{identifier}", operation_id="get_record")
+async def do_get_record(scope: classEnum, identifier: UUID, profile: profileEnum = None):
+    """
+    Retrieve an individual record from the database.
+
+    Parameters:
+    - scope (str): The class of the record.
+    - identifier (str): A UUID, the identifier of the record.
+    - profile (str, optional): The profile of the record. Defaults to no profile, otherwise "name" of "results"
+
+    Returns:
+    - dict: The record.
+    """
     # Check postgres cache
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     qry = f"SELECT * FROM {PG_TABLE} WHERE identifier = %s"
@@ -485,10 +544,23 @@ async def do_get_record(scope, identifier, profile=None):
         return JSONResponse(content={}, status_code=404)
 
 
-@app.get("/api/stats")
+class SearchScopes(BaseModel):
+    searchScopes: dict[str, int]
+
+
+class StatisticsResponse(BaseModel):
+    estimates: SearchScopes
+
+
+@app.get("/api/stats", response_model=StatisticsResponse, operation_id="get_statistics")
 async def do_stats():
-    """Fetch counts of each class"""
-    spq = "SELECT ?class (COUNT(?class) as ?count) {?what a ?class}  GROUP  BY  ?class"
+    """
+    Get counts of each class in the database.
+
+    Returns a dictionary of estimates in estimates.searchScopes where the key is the class and the value is the count.
+    """
+
+    spq = "SELECT ?class (COUNT(?class) as ?count) {?what a ?class} GROUP BY ?class"
     res = await fetch_qlever_sparql(spq)
     vals = {}
     for r in res["results"]:
@@ -498,60 +570,6 @@ async def do_stats():
         cts[s] = vals[s]
     js = {"estimates": {"searchScopes": cts}}
     return JSONResponse(content=js)
-
-
-geo_search = """
-PREFIX lux: <https://lux.collections.yale.edu/ns/>
-PREFIX ogc: <http://www.opengis.net/rdf#>
-PREFIX osmrel: <https://www.openstreetmap.org/relation/>
-PREFIX geo: <http://www.opengis.net/ont/geosparql#>
-PREFIX osmkey: <https://www.openstreetmap.org/wiki/Key:>
-PREFIX geof: <http://www.opengis.net/def/function/geosparql/>
-PREFIX qlss: <https://qlever.cs.uni-freiburg.de/spatialSearch/>
-
-SELECT ?where ?coords WHERE {
-  BIND( "POINT(174.763336 -36.848461)"^^geo:wktLiteral AS ?akl )
-
-  SERVICE qlss: {
-    _:config  qlss:algorithm qlss:s2 ;
-              qlss:left ?akl ;
-              qlss:right ?coords ;
-              qlss:numNearestNeighbors 20 ;
-              qlss:maxDistance 5000 ;
-              qlss:bindDistance ?dist_left_right ;
-              qlss:payload ?where  .
-    {
-      ?where lux:placeDefinedBy ?coords .
-    }
-  }
-}
-"""
-
-geo_search2 = """
-PREFIX lux: <https://lux.collections.yale.edu/ns/>
-PREFIX ogc: <http://www.opengis.net/rdf#>
-PREFIX osmrel: <https://www.openstreetmap.org/relation/>
-PREFIX geo: <http://www.opengis.net/ont/geosparql#>
-PREFIX osmkey: <https://www.openstreetmap.org/wiki/Key:>
-PREFIX geof: <http://www.opengis.net/def/function/geosparql/>
-PREFIX qlss: <https://qlever.cs.uni-freiburg.de/spatialSearch/>
-SELECT ?where ?centroid WHERE {
-  BIND( "POINT (-1.5 53.608273)"^^geo:wktLiteral AS ?akl )
-  SERVICE qlss: {
-    _:config qlss:algorithm qlss:s2 ;
-              qlss:left ?akl ;
-              qlss:right ?centroid ;
-              qlss:numNearestNeighbors 10000 ;
-              qlss:maxDistance 70000 ;
-              qlss:bindDistance ?dist_left_right ;
-              qlss:payload ?where, ?coords .
-    {
-      ?where lux:placeDefinedBy ?coords .
-      BIND(geof:centroid(?coords) AS ?centroid)
-    }
-  }
-}
-"""
 
 
 # --- Main Execution ---
@@ -565,6 +583,12 @@ if __name__ == "__main__":
     hconfig.errorlog = "-"
     hconfig.certfile = f"files/{args.cert}.pem"
     hconfig.keyfile = f"files/{args.cert}-key.pem"
-    mcp = FastApiMCP(app, name="LUX MCP Server", describe_all_responses=True, describe_full_response_schema=True)
+    mcp = FastApiMCP(
+        app,
+        name="LUX MCP Server",
+        describe_all_responses=True,
+        describe_full_response_schema=True,
+        include_operations=["get_statistics", "get_record", "translate_string_query"],
+    )
     mcp.mount()
     asyncio.run(hypercorn_serve(app, hconfig))
