@@ -320,9 +320,9 @@ def make_simple_record(uri):
         if "made_of" in rec:
             outrec["material"] = [make_simple_reference(x["id"])[0] for x in rec["made_of"]]
         if "carries" in rec:
-            outrec["carries"] = [make_simple_record(x["id"])[0] for x in rec["carries"]]
+            outrec["carries"] = [make_simple_record(x["id"]) for x in rec["carries"]]
         if "shows" in rec:
-            outrec["shows"] = [make_simple_record(x["id"])[0] for x in rec["shows"]]
+            outrec["shows"] = [make_simple_record(x["id"]) for x in rec["shows"]]
 
     elif rec["type"] in ["LinguisticObject", "VisualItem"]:
         # about, etc
