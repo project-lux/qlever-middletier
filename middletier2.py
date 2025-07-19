@@ -351,6 +351,7 @@ async def do_basic_name_search(scope: scopeEnum, name: str):
     """
     Search for the top 20 entities in the given scope by their exact name.
     The `id` fields of references within the records can be used with the get_by_id tool to retrieve their full records.
+    Use this tool to get started and then follow the identifiers to other records.
 
     Parameters:
         - name (str): The name of the entity to search for
@@ -377,13 +378,13 @@ async def do_basic_name_search(scope: scopeEnum, name: str):
 @app.get("/api/basic/get/{identifier}", operation_id="get_by_id")
 async def do_basic_fetch(identifier: UUID):
     """
-    Fetch a single entity by its identifier from `id` within a record
+    Fetch a single entity by its identifier from `id` within a record.
 
     Parameters:
         - identifier (UUID): The identifier of the entity to fetch
 
     Returns:
-        - Entity: The description of the entity.
+        - Entity: The description of the entity, including links to other entities
     """
     identifier = str(identifier)
     outrec = make_simple_record(identifier)
