@@ -135,26 +135,30 @@ class UnaryOp(ASTNode):
 
 
 class Term(ASTNode):
-    def __init__(self, value, field=None):
+    def __init__(self, value, fields=[]):
         self.value = value
-        self.field = field
+        self.fields = fields
 
     def __repr__(self):
-        if self.field:
-            return f"Term({self.field}:{self.value})"
+        if self.fields:
+            f = "->".join(self.fields)
+            return f"Term({f}:{self.value})"
         return f"Term({self.value})"
 
     def __str__(self):
-        field_prefix = f"{self.field}:" if self.field else ""
-        if " " in self.value:
-            return f'{field_prefix}"{self.value}"'
+        if self.fields:
+            f = "->".join(self.fields) + ":"
         else:
-            return f"{field_prefix}{self.value}"
+            f = ""
+        if " " in self.value:
+            return f'{f}"{self.value}"'
+        else:
+            return f"{f}{self.value}"
 
     def to_json(self):
         result = {"text": str(self)}
-        if self.field:
-            result["field"] = self.field
+        if self.fields:
+            result["fields"] = self.fields
         return result
 
 
@@ -241,12 +245,33 @@ def p_term_quoted(p):
 
 def p_term_field_word(p):
     """term : WORD COLON WORD"""
-    p[0] = Term(p[3], field=p[1])
+    p[0] = Term(p[3], fields=[p[1]])
 
 
 def p_term_field_quoted(p):
     """term : WORD COLON QUOTED_STRING"""
-    p[0] = Term(p[3], field=p[1])
+    p[0] = Term(p[3], fields=[p[1]])
+
+
+def p_term_field_chain_word(p):
+    """term : field_chain COLON WORD"""
+    p[0] = Term(p[3], fields=p[1])
+
+
+def p_term_field_chain_quoted(p):
+    """term : field_chain COLON QUOTED_STRING"""
+    p[0] = Term(p[3], fields=p[1])
+
+
+def p_field_chain_single(p):
+    """field_chain : WORD"""
+    p[0] = [p[1]]
+
+
+def p_field_chain_multiple(p):
+    """field_chain : field_chain ARROW WORD"""
+    p[1].append(p[3])
+    p[0] = p[1]
 
 
 def p_error(p):
@@ -350,29 +375,33 @@ def print_ast(node, indent=0):
     spaces = "  " * indent
 
     if isinstance(node, Term):
-        if node.field:
-            print(f"{spaces}Term: '{node.field} : {node.value}'")
+        if node.fields:
+            field_chain = "->".join(node.fields)
+            print(f"{spaces}Term: '{field_chain} : {node.value}'")
         else:
             print(f"{spaces}Term: '{node.value}'")
 
     elif isinstance(node, TermList):
         if len(node.terms) == 1:
             term = node.terms[0]
-            if term.field:
-                print(f"{spaces}Term: '{term.field} : {term.value}'")
+            if term.fields:
+                field_chain = "->".join(term.fields)
+                print(f"{spaces}Term: '{field_chain} : {term.value}'")
             else:
                 print(f"{spaces}Term: '{term.value}'")
         else:
             term_strs = []
             for term in node.terms:
-                if term.field:
-                    term_strs.append(f"{term.field} : {term.value}")
+                if term.fields:
+                    field_chain = "->".join(term.fields)
+                    term_strs.append(f"{field_chain} : {term.value}")
                 else:
                     term_strs.append(term.value)
             print(f"{spaces}TermList: {term_strs}")
             for term in node.terms:
-                if term.field:
-                    print(f"{spaces}  Term: '{term.field} : {term.value}'")
+                if term.fields:
+                    field_chain = "->".join(term.fields)
+                    print(f"{spaces}  Term: '{field_chain} : {term.value}'")
                 else:
                     print(f"{spaces}  Term: '{term.value}'")
 
@@ -400,6 +429,10 @@ if __name__ == "__main__":
         "title:a title:b AND content:c",  # Multiple terms for same field
         '(title:fish OR author:gibson) AND content:"neural network"',
         "classification->name:painting AND shows->depicts->encountered->classification:fossil",
+        "author->name:Rob OR about->broader->broader:paintings",
+        'creator->person->name:"John Doe" AND subject->classification->broader:art',
+        'NOT creator->name:Smith AND (about->type:book OR format->medium:"digital")',
+        'a->b:simple AND complex->chain->with->many->levels:"complex value"',
     ]
 
     for query in test_queries:
@@ -411,3 +444,16 @@ if __name__ == "__main__":
             print("AST:")
             print_ast(ast)
         print("-" * 50)
+
+    # Test Term.__str__ method with field chains
+    print("\nTesting Term.__str__ method with field chains:")
+    test_terms = [
+        Term("value", fields=["field"]),
+        Term("Rob", fields=["author", "name"]),
+        Term("paintings", fields=["about", "broader", "broader"]),
+        Term("complex value", fields=["complex", "chain", "with", "many", "levels"]),
+        Term("simple", fields=[]),
+    ]
+
+    for term in test_terms:
+        print(f"Term: {term}")
