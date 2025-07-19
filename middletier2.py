@@ -328,9 +328,12 @@ def make_simple_record(uri):
             outrec["shows"] = [make_simple_record(x["id"]) for x in rec["shows"]]
 
     elif rec["type"] in ["LinguisticObject", "VisualItem"]:
-        # about, etc
+        # about, represents
         # embed the HMO somehow? Would require a search...
-        pass
+        if "about" in rec:
+            outrec["about"] = [make_simple_reference(x["id"])[0] for x in rec["about"]]
+        if "represents" in rec:
+            outrec["represents"] = [make_simple_reference(x["id"])[0] for x in rec["represents"]]
 
     if "member_of" in rec:
         outrec["member_of"] = []
