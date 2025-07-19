@@ -227,6 +227,9 @@ def make_simple_record(uri):
                         except Exception:
                             continue
             outrec["descriptions"].append(desc)
+        # Arbitrarily limit descriptions to 5
+        if len(outrec["descriptions"]) > 5:
+            outrec["descriptions"] = outrec["descriptions"][:5]
     if "part_of" in rec:
         outrec["part_of"] = []
         for parent in rec["part_of"]:
