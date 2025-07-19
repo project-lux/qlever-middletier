@@ -19,6 +19,7 @@ Examples:
     Supported query formats:
         - Simple terms: a, hello
         - Field terms: title:fish, author:"John Doe"
+        - Comparitors for terms: name>X OR name<B
         - Term lists: a b c, title:hello "world test" foo
         - Quoted terms: "hello world", "machine learning"
         - Boolean operations: title:a AND author:b, x OR y, NOT title:z
@@ -29,6 +30,9 @@ Examples:
 Author: Generated for luxql project
 License: Same as parent project
 """
+
+# This doesn't work:
+# creator->(name:Rob AND name:Sanderson)
 
 import ply.lex as lex
 import ply.yacc as yacc
@@ -156,10 +160,16 @@ class Term(ASTNode):
             return f"{f}{self.value}"
 
     def to_json(self):
-        result = {"text": str(self)}
         if self.fields:
-            result["fields"] = self.fields
-        return result
+            result = {}
+            top = result
+            for f in self.fields[:-1]:
+                result[f] = {}
+                result = result[f]
+            result[self.fields[-1]] = str(self.value)
+            return top
+        else:
+            return {"text": str(self.value)}
 
 
 class TermList(ASTNode):
