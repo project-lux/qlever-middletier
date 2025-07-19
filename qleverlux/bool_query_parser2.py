@@ -304,9 +304,6 @@ class BooleanQueryParser:
     Example:
         parser = BooleanQueryParser()
         ast = parser.parse('title:python author:gibson "machine learning" OR tags:scala')
-        if ast:
-            result = evaluate_ast(ast, {"title": {"python": True}, "author": {"gibson": True}, ...})
-            print(result)
     """
 
     def __init__(self):
