@@ -1,0 +1,23 @@
+{
+  "scopes": {
+    "item": {
+      "description": "Entries in the item scope are either physical objects (class: HumanMadeObject) or digital files (class: DigitalObject)",
+      "classes": {
+        "HumanMadeObject": {
+          "description": "",
+          "properties": {}
+        },
+        "DigitalObject": {
+          "description": "",
+          "properties": {}
+        }
+      }
+    },
+    "work": {},
+    "agent": {},
+    "place": {},
+    "concept": {},
+    "set": {},
+    "event": {}
+  }
+}

@@ -52,7 +52,7 @@ conn = psycopg2.connect(user=args.user, dbname=args.db)
 
 class scopeEnum(str, Enum):
     ITEM = "item"
-    # WORK = "work"
+    WORK = "work"
     AGENT = "agent"
     PLACE = "place"
     CONCEPT = "concept"
@@ -389,6 +389,11 @@ async def do_basic_fetch(identifier: UUID):
     identifier = str(identifier)
     outrec = make_simple_record(identifier)
     return outrec
+
+@app.get("/api/basic/explain", operation_id="get_schema")
+async def do_explain_schema():
+
+
 
 
 @app.get("/api/search/{scope}", operation_id="search")
