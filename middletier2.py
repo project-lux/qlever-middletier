@@ -390,10 +390,10 @@ async def do_basic_fetch(identifier: UUID):
     outrec = make_simple_record(identifier)
     return outrec
 
+
 @app.get("/api/basic/explain", operation_id="get_schema")
 async def do_explain_schema():
-
-
+    pass
 
 
 @app.get("/api/search/{scope}", operation_id="search")
