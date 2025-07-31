@@ -4,6 +4,17 @@
 
 hal_cache/*
 files/*.pem
+files/*.nt.gz
+files/lux.index.*
+files/lux.index-log.txt
+files/lux.internal.*
+files/lux.meta-data.json
+files/lux.server-log.txt
+files/lux.text.index
+files/lux.text.vocabulary
+files/lux.ui-db.sqlite3
+files/lux.vocabulary.*
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

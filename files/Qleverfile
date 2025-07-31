@@ -17,7 +17,7 @@ INPUT_FILES       = lux_*.nt.gz
 CAT_INPUT_FILES   = zcat ${INPUT_FILES}
 SETTINGS_JSON     = { "ascii-prefixes-only": true, "num-triples-per-batch": 300000 }
 TEXT_INDEX        = from_literals
-STXXL_MEMORY      = 40G
+STXXL_MEMORY      = 14G
 PARALLEL_PARSING  = true
 ULIMIT            = 256000
 
@@ -25,14 +25,14 @@ ULIMIT            = 256000
 HOST_NAME          = localhost
 PORT               = 7010
 ACCESS_TOKEN       = ${data:NAME}_106043e3_0421_4fe0a36d_72830178aa0e
-MEMORY_FOR_QUERIES = 40G
-CACHE_MAX_SIZE     = 30G
+MEMORY_FOR_QUERIES = 14G
+CACHE_MAX_SIZE     = 10G
 NUM_THREADS        = 16
 TIMEOUT            = 60s
 
 [runtime]
 SYSTEM = docker
-IMAGE  = docker.io/adfreiburg/qlever:latest
+IMAGE  = qlever:latest
 
 [ui]
 UI_CONFIG = lux
