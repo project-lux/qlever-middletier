@@ -835,7 +835,10 @@ async def do_stats():
     Returns a dictionary of estimates in estimates.searchScopes where the key is the class and the value is the count.
     """
 
-    spq = "SELECT ?class (COUNT(?class) as ?count) {?what a ?class} GROUP BY ?class"
+    if st.portal is not None:
+        spq = f"SELECT ?class COUNT(?class) as ?count) WHERE {{?what a ?class ; lux:source lux:{st.portal} . }} GROUP BY ?class"
+    else:
+        spq = "SELECT ?class (COUNT(?class) as ?count) {?what a ?class} GROUP BY ?class"
     res = await fetch_qlever_sparql(spq)
     vals = {}
     for r in res["results"]:
