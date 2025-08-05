@@ -845,7 +845,7 @@ async def do_stats():
         vals[r[0].rsplit("/")[-1].lower()] = r[1]
     cts = {}
     for s in cfg.scopes:
-        cts[s] = vals[s]
+        cts[s] = vals.get(s, 0)
     js = {"estimates": {"searchScopes": cts}}
     return JSONResponse(content=js)
 
