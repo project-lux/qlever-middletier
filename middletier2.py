@@ -836,7 +836,7 @@ async def do_stats():
     """
 
     if st.portal is not None:
-        spq = f"SELECT ?class COUNT(?class) as ?count) WHERE {{?what a ?class ; lux:source lux:{st.portal} . }} GROUP BY ?class"
+        spq = f"PREFIX lux: <https://lux.collections.yale.edu/ns/> SELECT ?class COUNT(?class) as ?count WHERE {{?what a ?class ; lux:source lux:{st.portal} . }} GROUP BY ?class"
     else:
         spq = "SELECT ?class (COUNT(?class) as ?count) {?what a ?class} GROUP BY ?class"
     res = await fetch_qlever_sparql(spq)
