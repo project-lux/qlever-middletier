@@ -30,8 +30,9 @@ from qleverlux.middletier_config import related_list_names, related_list_queries
 from qleverlux.middletier_config import MY_URI, SPARQL_ENDPOINT, PAGE_LENGTH, DATA_URI, PG_TABLE
 from qleverlux.middletier_config import ENGLISH, PRIMARY, RESULTS_FIELDS, PORTAL_SOURCE
 
-from qleverlux.boolean_query_parser import BooleanQueryParser
+from qleverlux.bool_query_parser2 import BooleanQueryParser
 
+# FIXME: This should go to config (obviously)
 st.portal = "YPM"
 
 conn = psycopg2.connect(user=args.user, dbname=args.db)
