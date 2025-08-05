@@ -32,6 +32,7 @@ from qleverlux.middletier_config import ENGLISH, PRIMARY, RESULTS_FIELDS, PORTAL
 
 from qleverlux.boolean_query_parser import BooleanQueryParser
 
+st.portal = "YPM"
 
 conn = psycopg2.connect(user=args.user, dbname=args.db)
 
