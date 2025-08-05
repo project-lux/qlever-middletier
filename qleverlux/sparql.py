@@ -12,6 +12,7 @@ class SparqlTranslator:
         self.config = config
         self.counter = 0
         self.scored = []
+        self.portal = None
         self.prefixes = {
             # "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
             # "la": "https://linked.art/ns/terms/",
@@ -172,7 +173,9 @@ class SparqlTranslator:
         # elt+ is one or more
         # elt? is zero or one
 
-    def translate_search(self, query, scope=None, limit=None, offset=0, sort="", order="", sortDefault="ZZZZZZZZZZ"):
+    def translate_search(
+        self, query, scope=None, limit=None, offset=0, sort="", order="", sortDefault="ZZZZZZZZZZ", portal=None
+    ):
         # Implement translation logic here
         self.counter = 0
         self.scored = []
@@ -192,6 +195,12 @@ class SparqlTranslator:
             self.calculate_scores = True
 
         where = Pattern()
+
+        if portal is not None:
+            self.portal = portal
+            t = Triple("?uri", "lux:source", f"lux:{portal}")
+            where.add_triples([t])
+
         if scope is not None and scope != "any":
             t = Triple("?uri", "a", f"lux:{scope.title()}")
             where.add_triples([t])
@@ -223,7 +232,7 @@ class SparqlTranslator:
         sparql.set_where_pattern(where)
         return sparql
 
-    def translate_search_count(self, query, scope=None):
+    def translate_search_count(self, query, scope=None, portal=None):
         # Implement translation logic here
         self.counter = 0
         self.calculate_scores = True
@@ -234,6 +243,11 @@ class SparqlTranslator:
         if scope is not None and scope != "any":
             t = Triple("?uri", "a", f"lux:{scope.title()}")
             where.add_triples([t])
+        if portal is not None:
+            self.portal = portal
+            t = Triple("?uri", "lux:source", f"lux:{portal}")
+            where.add_triples([t])
+
         query.var = f"?uri"
         self.translate_query(query, where)
         sparql.add_group_by(GroupBy(["?uri"]))
@@ -251,7 +265,7 @@ class SparqlTranslator:
 
         return top
 
-    def translate_search_related(self, query, scope=None):
+    def translate_search_related(self, query, scope=None, portal=None):
         self.counter = 0
         self.scored = []
         self.calculate_scores = True
@@ -262,6 +276,12 @@ class SparqlTranslator:
 
         where = Pattern()
         query.var = f"?uri"
+
+        if portal is not None:
+            self.portal = portal
+            t = Triple("?uri", "lux:source", f"lux:{portal}")
+            where.add_triples([t])
+
         self.translate_query(query, where)
         where.add_filter(Filter("?uri != <URI-HERE>"))
 
@@ -273,7 +293,7 @@ class SparqlTranslator:
 
         return sparql
 
-    def translate_facet(self, query, facet, scope=None, limit=None, offset=0):
+    def translate_facet(self, query, facet, scope=None, limit=None, offset=0, portal=None):
         self.calculate_scores = True
         self.counter = 0
         gb = GroupBy(["?facet"])
@@ -294,6 +314,11 @@ class SparqlTranslator:
         if scope is not None and scope != "any":
             t = Triple("?uri", "a", f"lux:{scope.title()}")
             where.add_triples([t])
+        if portal is not None:
+            self.portal = portal
+            t = Triple("?uri", "lux:source", f"lux:{portal}")
+            where.add_triples([t])
+
         query.var = "?uri"
         self.translate_query(query, where)
         inner.set_where_pattern(where)
@@ -307,7 +332,7 @@ class SparqlTranslator:
         sparql.set_where_pattern(outer)
         return sparql
 
-    def translate_facet_count(self, query, facet):
+    def translate_facet_count(self, query, facet, portal=None):
         """
         PREFIX lux: <https://lux.collections.yale.edu/ns/>
         SELECT (COUNT(?facet) AS ?count) WHERE {
@@ -338,6 +363,11 @@ class SparqlTranslator:
         inner2 = SelectQuery(distinct=True)
         inner2.add_variables(["?uri"])
         where = Pattern()
+
+        if portal is not None:
+            self.portal = portal
+            t = Triple("?uri", "lux:source", f"lux:{portal}")
+            where.add_triples([t])
 
         query.var = "?uri"
         self.translate_query(query, where)
@@ -427,6 +457,10 @@ class SparqlTranslator:
         else:
             parent.add_triples([Triple(query.var, pred, query.children[0].var)])
             self.translate_query(query.children[0], parent)
+
+            if self.portal is not None:
+                t = Triple(query.children[0].var, "lux:source", f"lux:{self.portal}")
+                parent.add_triples([t])
 
     def get_leaf_predicate(self, field, scope):
         if field in ["height", "width", "depth", "weight", "dimension"]:
@@ -642,7 +676,13 @@ COALESCE(?score_text_{self.counter}{wx}, 0) * {self.text_weight}",
         cfvar = f"?cf{n}{self.counter}{wx}"
         fldvar = f"?fld{n}{self.counter}{wx}"
 
-        opt1.add_triples([Triple(query.var, f"lux:{scope}Any/lux:primaryName", fldvar)])
+        if self.portal is None:
+            opt1.add_triples([Triple(query.var, f"lux:{scope}Any/lux:primaryName", fldvar)])
+        else:
+            fldvar2 = f"{fldvar}P"
+            opt1.add_triples([Triple(query.var, f"lux:{scope}Any", fldvar2)])
+            opt1.add_triples([Triple(fldvar2, f"lux:primaryName", fldvar)])
+            opt1.add_triples([Triple(fldvar2, f"lux:source", f"lux:{self.portal}")])
 
         svc = Pattern(service="textSearch")
         strips.append(Triple(tsvar, "textSearch:contains", cfvar))
