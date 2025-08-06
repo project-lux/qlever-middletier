@@ -314,6 +314,7 @@ def make_simple_record(uri):
 
         if "encountered_by" in rec:
             cre = rec["encountered_by"]
+            print(cre)
             if "timespan" in cre:
                 dt = cre["timespan"].get("begin_of_the_begin", cre["timespan"].get("end_of_the_end", None))
                 if dt is not None:
