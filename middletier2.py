@@ -33,7 +33,7 @@ from qleverlux.middletier_config import ENGLISH, PRIMARY, RESULTS_FIELDS, PORTAL
 from qleverlux.bool_query_parser2 import BooleanQueryParser
 
 # FIXME: This should go to config (obviously)
-st.portal = "YPM"
+# st.portal = "YPM"
 
 conn = psycopg2.connect(user=args.user, dbname=args.db)
 
@@ -102,6 +102,9 @@ query_parser = BooleanQueryParser()
 
 if not os.path.exists("hal_cache"):
     os.makedirs("hal_cache")
+
+
+# SPARQL API to Qlever
 
 
 @alru_cache(maxsize=500)
@@ -184,6 +187,9 @@ def make_sparql_query(scope, q, page=1, pageLength=PAGE_LENGTH, sort="relevance"
     spq = st.translate_search(parsed, scope=scope, offset=soffset, sort=sort, order=order)
     qt = spq.get_text()
     return qt
+
+
+# Simple API for MCP
 
 
 def make_simple_reference(identifier):
@@ -347,15 +353,32 @@ def make_simple_record(uri):
 
     return outrec
 
+    ITEM = "item"
+    WORK = "work"
+    AGENT = "agent"
+    PLACE = "place"
+    CONCEPT = "concept"
+    SET = "set"
+    EVENT = "event"
 
-@app.get("/api/basic/{scope}", operation_id="search_by_name")
+
+@app.get("/api/basic/search_by_name", operation_id="search_by_name")
 async def do_basic_name_search(scope: scopeEnum, name: str):
     """
     Search for the top 20 entities in the given scope by their exact name.
     The `id` fields of references within the records can be used with the get_by_id tool to retrieve their full records.
     Use this tool to get started and then follow the identifiers to other records.
+    Scope Meanings:
+        - item: Physical or digital objects in the collections, including fossils, artworks, books, manuscripts, etc.
+        - work: Intellectual works with subjects, language, etc.
+        - agent: People, organizations, etc.
+        - place: Locations, cities, countries, etc.
+        - concept: Concepts, ideas, etc.
+        - set: Collections or sets of other entities, including items and sets
+        - event: Events, exhibitions, time periods etc.
 
     Parameters:
+        - scope (str): The scope of the search. MUST be one of: item, work, agent, place, concept, set, event
         - name (str): The name of the entity to search for
 
     Returns:
@@ -377,7 +400,7 @@ async def do_basic_name_search(scope: scopeEnum, name: str):
     return recs
 
 
-@app.get("/api/basic/get/{identifier}", operation_id="get_by_id")
+@app.get("/api/basic/get", operation_id="get_by_id")
 async def do_basic_fetch(identifier: UUID):
     """
     Fetch a single entity by its identifier from `id` within a record.
@@ -396,6 +419,9 @@ async def do_basic_fetch(identifier: UUID):
 @app.get("/api/basic/explain", operation_id="get_schema")
 async def do_explain_schema():
     pass
+
+
+# Real API for LUX
 
 
 @app.get("/api/search/{scope}", operation_id="search")
