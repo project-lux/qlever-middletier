@@ -879,7 +879,7 @@ async def do_stats():
 # --- Main Execution ---
 if __name__ == "__main__":
     print("Starting hypercorn https/2 server...")
-    uvloop.install()
+    # uvloop.install()
     hconfig = HyperConfig()
     hconfig.bind = [f"0.0.0.0:{args.port}"]
     hconfig.loglevel = args.loglevel
