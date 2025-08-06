@@ -916,5 +916,5 @@ if __name__ == "__main__":
             "get_by_id",
         ],
     )
-    mcp.mount()
+    mcp.mount_http()
     asyncio.run(hypercorn_serve(app, hconfig))
