@@ -391,11 +391,18 @@ async def do_basic_name_search(scope: scopeEnum, name: str):
     """
     name = name.lower()
     name = name.replace("-", " ")
-    # q = {"_scope": scope.value, "name": f'"{name}"', "_complete": True}
-    q = {"_scope": scope.value, "name": f'"{name}"'}
+    q = {"_scope": scope.value, "name": f'"{name}"', "_complete": True}
     qt = make_sparql_query(scope.value, json.dumps(q))
-
     res = await fetch_qlever_sparql(qt)
+
+    if not res["results"]:
+        q = {"_scope": scope.value, "name": f'"{name}"'}
+        qt = make_sparql_query(scope.value, json.dumps(q))
+        res = await fetch_qlever_sparql(qt)
+        if not res["results"]:
+            q = {"_scope": scope.value, "name": f"{name}"}
+            qt = make_sparql_query(scope.value, json.dumps(q))
+            res = await fetch_qlever_sparql(qt)
 
     recs = []
     for r in res["results"][:20]:
