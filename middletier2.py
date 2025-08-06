@@ -313,7 +313,9 @@ def make_simple_record(uri):
         if "encountered_by" in rec:
             cre = rec["encountered_by"]
             if "timespan" in cre:
-                outrec["discoveryDate"] = cre["timespan"]["begin_of_the_begin"]
+                dt = cre["timespan"].get("begin_of_the_begin", cre["timespan"].get("end_of_the_end", None))
+                if dt is not None:
+                    outrec["discoveryDate"] = dt
             if "took_place_at" in cre:
                 outrec["discoveryPlace"] = make_simple_reference(cre["took_place_at"][0]["id"])[0]
             if "carried_out_by" in cre:
