@@ -313,25 +313,25 @@ def make_simple_record(uri):
                     outrec["creator"] = who
 
         if "encountered_by" in rec:
-            cre = rec["encountered_by"]
-            print(cre)
-            if "timespan" in cre:
-                dt = cre["timespan"].get("begin_of_the_begin", cre["timespan"].get("end_of_the_end", None))
-                if dt is not None:
-                    outrec["discoveryDate"] = dt
-            if "took_place_at" in cre:
-                outrec["discoveryPlace"] = make_simple_reference(cre["took_place_at"][0]["id"])[0]
-            if "carried_out_by" in cre:
-                outrec["discoverer"] = [make_simple_reference(x["id"])[0] for x in cre["carried_out_by"]]
-            if "part" in cre:
-                who = []
-                for part in cre["part"]:
-                    if "carried_out_by" in cre:
-                        who = [make_simple_reference(x["id"])[0] for x in cre["carried_out_by"]]
-                if "discoverer" in outrec:
-                    outrec["discoverer"].extend(who)
-                else:
-                    outrec["discoverer"] = who
+            cres = rec["encountered_by"]
+            for cre in cres:
+                if "timespan" in cre:
+                    dt = cre["timespan"].get("begin_of_the_begin", cre["timespan"].get("end_of_the_end", None))
+                    if dt is not None:
+                        outrec["discoveryDate"] = dt
+                if "took_place_at" in cre:
+                    outrec["discoveryPlace"] = make_simple_reference(cre["took_place_at"][0]["id"])[0]
+                if "carried_out_by" in cre:
+                    outrec["discoverer"] = [make_simple_reference(x["id"])[0] for x in cre["carried_out_by"]]
+                if "part" in cre:
+                    who = []
+                    for part in cre["part"]:
+                        if "carried_out_by" in cre:
+                            who = [make_simple_reference(x["id"])[0] for x in cre["carried_out_by"]]
+                    if "discoverer" in outrec:
+                        outrec["discoverer"].extend(who)
+                    else:
+                        outrec["discoverer"] = who
 
         if "made_of" in rec:
             outrec["material"] = [make_simple_reference(x["id"])[0] for x in rec["made_of"]]
