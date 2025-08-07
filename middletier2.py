@@ -15,8 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi_mcp import FastApiMCP
 
 from pydantic import BaseModel
-from typing import List, Optional
-from enum import Enum
+from enum import StrEnum
 from uuid import UUID
 
 import asyncio
@@ -28,13 +27,15 @@ from qleverlux.middletier_config import cfg, rdr, st, sorts, facets, args
 from qleverlux.middletier_config import hal_link_templates, hal_queries, sparql_hal_queries
 from qleverlux.middletier_config import related_list_names, related_list_queries, related_list_sparql
 from qleverlux.middletier_config import MY_URI, SPARQL_ENDPOINT, PAGE_LENGTH, DATA_URI, PG_TABLE
-from qleverlux.middletier_config import ENGLISH, PRIMARY, RESULTS_FIELDS, PORTAL_SOURCE
+from qleverlux.middletier_config import ENGLISH, PRIMARY, RESULTS_FIELDS
 
 from qleverlux.bool_query_parser2 import BooleanQueryParser
 
 # FIXME: This should go to config (obviously)
 # st.portal = "YPM"
 
+
+# FIXME: Test if the connection has been closed and reopen it
 conn = psycopg2.connect(user=args.user, dbname=args.db)
 
 ### To do
@@ -52,7 +53,7 @@ conn = psycopg2.connect(user=args.user, dbname=args.db)
 #
 
 
-class scopeEnum(str, Enum):
+class scopeEnum(StrEnum):
     ITEM = "item"
     WORK = "work"
     AGENT = "agent"
@@ -62,7 +63,7 @@ class scopeEnum(str, Enum):
     EVENT = "event"
 
 
-class classEnum(str, Enum):
+class classEnum(StrEnum):
     OBJECT = "object"
     DIGITAL = "digital"
     TEXT = "text"
@@ -77,13 +78,13 @@ class classEnum(str, Enum):
     ACTIVITY = "activity"
 
 
-class profileEnum(str, Enum):
+class profileEnum(StrEnum):
     DEFAULT = None
     NAME = "name"
     RESULTS = "results"
 
 
-class orderEnum(str, Enum):
+class orderEnum(StrEnum):
     ASC = "ASC"
     DESC = "DESC"
 
