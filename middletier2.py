@@ -33,7 +33,7 @@ from qleverlux.middletier_config import ENGLISH, PRIMARY, RESULTS_FIELDS, PORTAL
 from qleverlux.boolean_query_parser import BooleanQueryParser
 
 
-conn = psycopg2.connect(user=args.user, dbname=args.db)
+conn = psycopg2.connect(user="ubuntu", dbname="ubuntu", host="localhost", port=5432, password="ubuntu")
 
 ### To do
 #
@@ -854,8 +854,8 @@ if __name__ == "__main__":
     hconfig.loglevel = args.loglevel
     hconfig.accesslog = "-"
     hconfig.errorlog = "-"
-    hconfig.certfile = f"files/{args.cert}.pem"
-    hconfig.keyfile = f"files/{args.cert}-key.pem"
+    # hconfig.certfile = f"files/{args.cert}.pem"
+    # hconfig.keyfile = f"files/{args.cert}-key.pem"
     mcp = FastApiMCP(
         app,
         name="LUX MCP Server",

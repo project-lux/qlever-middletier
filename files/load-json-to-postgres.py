@@ -6,7 +6,7 @@ import ujson as json
 import psycopg2
 from psycopg2.extras import RealDictCursor, Json
 
-conn = psycopg2.connect(user="ubuntu", dbname="ubuntu")
+conn = psycopg2.connect(user="ubuntu", dbname="ubuntu", host="localhost", port=5432, password="ubuntu")
 table = "lux_data_cache"
 
 
@@ -52,9 +52,9 @@ if "--init" in sys.argv:
     print("Made table")
     sys.exit(0)
 
-
-my_slice = int(sys.argv[1])
-max_slice = 12
+# use my_slice and max_slice to process only some of the files
+# my_slice = int(sys.argv[1])
+# max_slice = 12
 files = [x for x in os.listdir(".") if x.endswith(".jsonl.gz")]
 use_gzip = True
 if not files:
@@ -62,7 +62,8 @@ if not files:
     use_gzip = False
 files.sort()
 
-for f in files[my_slice::max_slice]:
+# uncomment below to process a slice of the files
+for f in files:#[my_slice::max_slice]:
     print(f)
     if use_gzip:
         opener = gzip.open

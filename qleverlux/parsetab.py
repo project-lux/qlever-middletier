@@ -6,7 +6,7 @@ _tabversion = '3.10'
 
 _lr_method = 'LALR'
 
-_lr_signature = 'leftORleftANDrightNOTAND LPAREN NOT OR QUOTED_STRING RPAREN WORDquery : expressionexpression : expression AND expression\n    | expression OR expressionexpression : NOT expressionexpression : LPAREN expression RPARENexpression : term_listterm_list : termterm_list : term_list termterm : WORDterm : QUOTED_STRING'
+_lr_signature = 'leftORleftANDrightNOTAND LPAREN NOT OR QUOTED_STRING RPAREN WORDquery : expressionexpression : expression AND expression\n| expression OR expressionexpression : NOT expressionexpression : LPAREN expression RPARENexpression : term_listterm_list : termterm_list : term_list termterm : WORDterm : QUOTED_STRING'
     
 _lr_action_items = {'NOT':([0,3,4,9,10,],[3,3,3,3,3,]),'LPAREN':([0,3,4,9,10,],[4,4,4,4,4,]),'WORD':([0,3,4,5,6,7,8,9,10,13,],[7,7,7,7,-7,-9,-10,7,7,-8,]),'QUOTED_STRING':([0,3,4,5,6,7,8,9,10,13,],[8,8,8,8,-7,-9,-10,8,8,-8,]),'$end':([1,2,5,6,7,8,11,13,14,15,16,],[0,-1,-6,-7,-9,-10,-4,-8,-2,-3,-5,]),'AND':([2,5,6,7,8,11,12,13,14,15,16,],[9,-6,-7,-9,-10,-4,9,-8,-2,9,-5,]),'OR':([2,5,6,7,8,11,12,13,14,15,16,],[10,-6,-7,-9,-10,-4,10,-8,-2,-3,-5,]),'RPAREN':([5,6,7,8,11,12,13,14,15,16,],[-6,-7,-9,-10,-4,16,-8,-2,-3,-5,]),}
 

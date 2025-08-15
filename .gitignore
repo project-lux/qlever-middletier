@@ -14,6 +14,7 @@ files/lux.text.index
 files/lux.text.vocabulary
 files/lux.ui-db.sqlite3
 files/lux.vocabulary.*
+files/*.jsonl.gz
 
 
 # Byte-compiled / optimized / DLL files
