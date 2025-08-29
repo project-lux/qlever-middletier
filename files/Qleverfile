@@ -31,8 +31,7 @@ NUM_THREADS        = 16
 TIMEOUT            = 60s
 
 [runtime]
-SYSTEM = docker
-IMAGE  = qlever:latest
+SYSTEM = native
 
 [ui]
 UI_CONFIG = lux
