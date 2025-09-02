@@ -33,7 +33,7 @@ from qleverlux.middletier_config import ENGLISH, PRIMARY, RESULTS_FIELDS, PORTAL
 from qleverlux.boolean_query_parser import BooleanQueryParser
 
 
-conn = psycopg2.connect(user="ubuntu", dbname="ubuntu", host="localhost", port=5432, password="ubuntu")
+conn = psycopg2.connect(user="ubuntu", dbname="ubuntu")
 
 ### To do
 #
