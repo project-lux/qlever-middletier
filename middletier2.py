@@ -12,7 +12,7 @@ from async_lru import alru_cache
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi_mcp import FastApiMCP
+#from fastapi_mcp import FastApiMCP
 
 from pydantic import BaseModel
 from typing import List, Optional
@@ -856,20 +856,20 @@ if __name__ == "__main__":
     hconfig.errorlog = "-"
     # hconfig.certfile = f"files/{args.cert}.pem"
     # hconfig.keyfile = f"files/{args.cert}-key.pem"
-    mcp = FastApiMCP(
-        app,
-        name="LUX MCP Server",
-        describe_all_responses=False,
-        describe_full_response_schema=False,
-        include_operations=[
-            "get_statistics",
-            "get_record",
-            "translate_string_query",
-            "search",
-            "facet",
-            "search_by_name",
-            "get_by_id",
-        ],
-    )
-    mcp.mount()
+    # mcp = FastApiMCP(
+    #     app,
+    #     name="LUX MCP Server",
+    #     describe_all_responses=False,
+    #     describe_full_response_schema=False,
+    #     include_operations=[
+    #         "get_statistics",
+    #         "get_record",
+    #         "translate_string_query",
+    #         "search",
+    #         "facet",
+    #         "search_by_name",
+    #         "get_by_id",
+    #     ],
+    # )
+    # mcp.mount()
     asyncio.run(hypercorn_serve(app, hconfig))
