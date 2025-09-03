@@ -27,7 +27,7 @@ from qleverlux.middletier_config import cfg, rdr, st, sorts, facets, args
 from qleverlux.middletier_config import hal_link_templates, hal_queries, sparql_hal_queries
 from qleverlux.middletier_config import related_list_names, related_list_queries, related_list_sparql
 from qleverlux.middletier_config import MY_URI, SPARQL_ENDPOINT, PAGE_LENGTH, DATA_URI, PG_TABLE
-from qleverlux.middletier_config import ENGLISH, PRIMARY, RESULTS_FIELDS
+from qleverlux.middletier_config import ENGLISH, PRIMARY, RESULTS_FIELDS, FACET_DELAY
 
 from qleverlux.bool_query_parser2 import BooleanQueryParser
 
@@ -79,7 +79,7 @@ class classEnum(StrEnum):
 
 
 class profileEnum(StrEnum):
-    DEFAULT = None
+    DEFAULT = ""
     NAME = "name"
     RESULTS = "results"
 
@@ -107,6 +107,8 @@ if not os.path.exists("hal_cache"):
 
 # SPARQL API to Qlever
 
+SPARQL_RESPONSE_COUNT = 20
+
 
 @alru_cache(maxsize=500)
 async def fetch_qlever_sparql(q):
@@ -115,7 +117,7 @@ async def fetch_qlever_sparql(q):
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 SPARQL_ENDPOINT,
-                data={"query": q, "send": 60},
+                data={"query": q, "send": SPARQL_RESPONSE_COUNT},
                 headers={"Accept": "application/qlever-results+json"},
             ) as response:
                 ret = await response.json()
@@ -177,6 +179,7 @@ def make_sparql_query(scope, q, page=1, pageLength=PAGE_LENGTH, sort="relevance"
     q = q.replace(MY_URI, DATA_URI)
     try:
         jq = json.loads(q)
+        assert type(jq) is dict
     except Exception:
         # fall back to trying to parse simple text query
         qp = query_parser.parse(q)
@@ -185,7 +188,11 @@ def make_sparql_query(scope, q, page=1, pageLength=PAGE_LENGTH, sort="relevance"
         jq = {"_scope": scope}
         jq[k] = qjs[k]
     parsed = rdr.read(jq, scope)
-    spq = st.translate_search(parsed, scope=scope, offset=soffset, sort=sort, order=order)
+    try:
+        spq = st.translate_search(parsed, scope=scope, offset=soffset, sort=sort, order=order)
+    except Exception as e:
+        print(f"Error translating search: {e}")
+        return None
     qt = spq.get_text()
     return qt
 
@@ -502,6 +509,7 @@ async def do_search(
             "totalItems": res["total"],
         },
         "orderedItems": [],
+        "_timing": res["time"],
     }
     # FIXME: do next and prev
 
@@ -529,19 +537,24 @@ async def do_search_estimate(scope, q={}, page=1):
     qt = make_sparql_query(scope, q)
     res = await fetch_qlever_sparql(qt)
     js["totalItems"] = res["total"]
+    js["_timing"] = res["time"]
     return JSONResponse(content=js)
 
 
 @app.get("/api/search-will-match")
 async def do_search_match(q={}):
+    if type(q) is str:
+        q = json.loads(q)
     scope = q["_scope"]
     del q["_scope"]
+    q = json.dumps(q)
     qt = make_sparql_query(scope, q)
     res = await fetch_qlever_sparql(qt)
     js = {
         "unnamed": {
             "hasOneOrMoreResult": 1 if res["total"] > 0 else 0,
             "isRelatedList": False,
+            "_timing": res["time"],
         }
     }
     return JSONResponse(content=js)
@@ -561,7 +574,8 @@ async def do_facet(scope: scopeEnum, q: str, name: str, page: int = 1):
     Returns:
         - dict: The JSON response containing the facet values as an ActivityStream CollectionPage
     """
-    await asyncio.sleep(0.1)
+    if FACET_DELAY:
+        await asyncio.sleep(FACET_DELAY / 1000)
     scope = scope.value
     offset = (int(page) - 1) * PAGE_LENGTH
     soffset = (offset // 60) * 60
@@ -605,6 +619,7 @@ async def do_facet(scope: scopeEnum, q: str, name: str, page: int = 1):
     qt = spq.get_text()
     res = await fetch_qlever_sparql(qt)
     js["partOf"]["totalItems"] = res["total"] + soffset
+    js["_timing"] = res["time"]
 
     for r in res["results"][offset % 60 : offset % 60 + PAGE_LENGTH]:
         val = r[0]
@@ -663,6 +678,7 @@ async def do_related_list(scope, name, uri, page=1):
     for name, spq in related_list_sparql[scope].items():
         qry = spq.replace("URI-HERE", uri)
         res = await fetch_qlever_sparql(qry)
+        _timing = res["time"]
         for row in res["results"]:
             what = row[0]
             ct = int(row[1])
@@ -917,5 +933,5 @@ if __name__ == "__main__":
             "get_by_id",
         ],
     )
-    mcp.mount_http()
+    # mcp.mount_http()
     asyncio.run(hypercorn_serve(app, hconfig))

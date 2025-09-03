@@ -9,7 +9,6 @@ import getpass
 
 cfg = LuxConfig()
 rdr = JsonReader(cfg)
-st = SparqlTranslator(cfg)
 
 parser = ArgumentParser()
 
@@ -41,8 +40,8 @@ parser.add_argument("--cert", "--certs", type=str, help="prefix for cert files",
 
 parser.add_argument("--pageLength", type=int, help="Page length for pagination", default=20)
 parser.add_argument("--portal", type=str, help="Which source unit, if any, to filter for", default="")
-
-
+parser.add_argument("--facet-delay", type=int, help="Delay in milliseconds for facets", default=100)
+parser.add_argument("--use-stopwords", action="store_true", help="Use stopwords")
 args, rest = parser.parse_known_args()
 
 # Allow an upstream load balancer to have a different port
@@ -60,6 +59,7 @@ PAGE_LENGTH = args.pageLength
 DATA_URI = args.data_uri
 PG_TABLE = args.table
 PORTAL_SOURCE = args.portal
+FACET_DELAY = args.facet_delay
 
 ENGLISH = "http://vocab.getty.edu/aat/300388277"
 PRIMARY = "http://vocab.getty.edu/aat/300404670"
@@ -79,6 +79,109 @@ RESULTS_FIELDS = [
     "timespan",
     "carried_out_by",
 ]
+
+STOPWORDS = [
+    "a",
+    "about",
+    "actually",
+    "almost",
+    "also",
+    "although",
+    "always",
+    "am",
+    "an",
+    "and",
+    "any",
+    "are",
+    "as",
+    "at",
+    "be",
+    "became",
+    "become",
+    "but",
+    "by",
+    "can",
+    "could",
+    "did",
+    "do",
+    "does",
+    "each",
+    "either",
+    "else",
+    "for",
+    "from",
+    "had",
+    "has",
+    "have",
+    "he",
+    "her",
+    "hers",
+    "hence",
+    "him",
+    "his",
+    "how",
+    "i",
+    "if",
+    "in",
+    "into",
+    "is",
+    "it",
+    "its",
+    "just",
+    "like",
+    "may",
+    "maybe",
+    "me",
+    "might",
+    "mine",
+    "must",
+    "my",
+    "mine",
+    "must",
+    "my",
+    "neither",
+    "nor",
+    "not",
+    "of",
+    "oh",
+    "ok",
+    "out",
+    "over",
+    "she",
+    "the",
+    "them",
+    "these",
+    "those",
+    "under",
+    "when",
+    "where",
+    "whereas",
+    "wherever",
+    "whenever",
+    "whether",
+    "which",
+    "while",
+    "who",
+    "whom",
+    "whoever",
+    "whose",
+    "why",
+    "will",
+    "with",
+    "within",
+    "without",
+    "would",
+    "yes",
+    "yet",
+    "you",
+    "your",
+    "yours",
+]
+
+st = SparqlTranslator(cfg)
+if args.use_stopwords:
+    st.set_stopwords(STOPWORDS)
+
 
 with open("config/config_facets.json") as fh:
     facets = json.load(fh)

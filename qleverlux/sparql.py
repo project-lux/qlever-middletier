@@ -24,6 +24,7 @@ class SparqlTranslator:
             "lux": "https://lux.collections.yale.edu/ns/",
         }
 
+        self.stopwords = {}
         self.remove_diacritics = False
         self.min_word_chars = 0
         # self.padding_char2 = "Þ"
@@ -172,6 +173,12 @@ class SparqlTranslator:
         # elt* is zero or more
         # elt+ is one or more
         # elt? is zero or one
+
+    def set_stopwords(self, stopwords):
+        if type(stopwords) is list:
+            self.stopwords = dict(zip(stopwords, [1] * len(stopwords)))
+        elif type(stopwords) is dict:
+            self.stopwords = stopwords
 
     def translate_search(self, query, scope=None, limit=None, offset=0, sort="", order="", sortDefault="ZZZZZZZZZZ"):
         # Implement translation logic here
@@ -569,7 +576,15 @@ class SparqlTranslator:
         except:
             raise
         phrases = [w for w in shwords if " " in w]
-        words = val.replace('"', "").split()
+        words1 = val.replace('"', "").split()
+        words = []
+        for w in words1:
+            if w not in self.stopwords:
+                words.append(w)
+
+        if not words:
+            # all words were stopwords, search as phrase?
+            raise ValueError("No valid words found")
 
         if self.min_word_chars > 1:
             words = [
