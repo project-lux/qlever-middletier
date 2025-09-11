@@ -3,7 +3,7 @@ config:
     name: lux
     slug: lux
     sortKey: 1
-    baseUrl: http://localhost:7010
+    baseUrl: http://10.5.156.83:7010
     apiToken: ''
     isDefault: true
     isNoSlugMode: 'False'

@@ -854,8 +854,8 @@ if __name__ == "__main__":
     hconfig.loglevel = args.loglevel
     hconfig.accesslog = "-"
     hconfig.errorlog = "-"
-    # hconfig.certfile = f"files/{args.cert}.pem"
-    # hconfig.keyfile = f"files/{args.cert}-key.pem"
+    hconfig.certfile = f"/data-io2/lux-frontend/client/cert/cert.pem"
+    hconfig.keyfile = f"/data-io2/lux-frontend/client/cert/key.pem"
     # mcp = FastApiMCP(
     #     app,
     #     name="LUX MCP Server",

@@ -17,8 +17,8 @@ user = getpass.getuser()
 table = "lux_data_cache"
 sparql = "http://localhost:7010/sparql"
 port = 5000
-uri_host = "localhost"
-protocol = "http"
+uri_host = "qleverlux.collections.yale.edu"
+protocol = "https"
 path = "/"
 pageLength = 20
 data_uri = "https://lux.collections.yale.edu/"
@@ -54,7 +54,7 @@ if args.port_replace > -1:
 else:
     port = f":{args.port}"
 
-MY_URI = f"{args.protocol}://{args.host}{port}{args.path}"
+MY_URI = f"{args.protocol}://{args.host}{args.path}"
 SPARQL_ENDPOINT = args.sparql
 PAGE_LENGTH = args.pageLength
 DATA_URI = args.data_uri
