@@ -12,7 +12,6 @@ from async_lru import alru_cache
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi_mcp import FastApiMCP
 
 from pydantic import BaseModel
 from enum import StrEnum
@@ -34,23 +33,15 @@ from qleverlux.bool_query_parser2 import BooleanQueryParser
 # FIXME: This should go to config (obviously)
 # st.portal = "YPM"
 
-
-# FIXME: Test if the connection has been closed and reopen it
+query_parser = BooleanQueryParser()
+# Create a connection to the PostgreSQL database
 conn = psycopg2.connect(user=args.user, dbname=args.db)
 
-### To do
-#
-# * run the multi scope set queries (sparql in comments below)
-# * figure out how to create the related list per-entry queries
-# * Add a "no" option for hasDigitalImage
-# * get "quoted string" for anywhere to match in ref name
-#
+if not os.path.exists("hal_cache"):
+    os.makedirs("hal_cache")
 
-### Extensions
-#
-# * Allow fields and relationships in the text representation (not done)
-# * Allow variables in the queries (done)
-#
+# FIXME: Should be in config
+SPARQL_RESPONSE_COUNT = 20
 
 
 class scopeEnum(StrEnum):
@@ -90,24 +81,13 @@ class orderEnum(StrEnum):
 
 
 app = FastAPI()
-origins = ["*"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-query_parser = BooleanQueryParser()
-
-if not os.path.exists("hal_cache"):
-    os.makedirs("hal_cache")
-
-
-# SPARQL API to Qlever
-
-SPARQL_RESPONSE_COUNT = 20
 
 
 @alru_cache(maxsize=500)
@@ -195,255 +175,6 @@ def make_sparql_query(scope, q, page=1, pageLength=PAGE_LENGTH, sort="relevance"
         return None
     qt = spq.get_text()
     return qt
-
-
-# Simple API for MCP
-
-
-def make_simple_reference(identifier):
-    if identifier.startswith("http"):
-        identifier = identifier.rsplit("/", 1)[-1]
-    rec = fetch_record_from_cache(identifier)
-    if not rec:
-        return None
-    outrec = {}
-    outrec["id"] = identifier
-    outrec["type"] = rec["type"]
-    outrec["name"] = get_primary_name(rec["identified_by"])["content"]
-    return outrec, rec
-
-
-def make_simple_record(uri):
-    try:
-        outrec, rec = make_simple_reference(uri)
-    except Exception:
-        return None
-    if "classified_as" in rec:
-        outrec["classifications"] = []
-        for cxn in rec["classified_as"]:
-            if "id" in cxn:
-                try:
-                    outrec["classifications"].append(make_simple_reference(cxn["id"])[0])
-                except Exception:
-                    continue
-    if "referred_to_by" in rec:
-        outrec["descriptions"] = []
-        for stmt in rec["referred_to_by"]:
-            if "language" in stmt:
-                langs = [x.get("equivalent", [{"id": None}])[0]["id"] for x in stmt.get("language", [])]
-                if ENGLISH not in langs:
-                    continue
-            desc = {"content": stmt["content"]}
-            if "classified_as" in stmt:
-                desc["classifications"] = []
-                for cxn in stmt["classified_as"]:
-                    if "id" in cxn:
-                        try:
-                            desc["classifications"].append(make_simple_reference(cxn["id"])[0])
-                        except Exception:
-                            continue
-            outrec["descriptions"].append(desc)
-        # Arbitrarily limit descriptions to 5
-        if len(outrec["descriptions"]) > 5:
-            outrec["descriptions"] = outrec["descriptions"][:5]
-    if "part_of" in rec:
-        outrec["part_of"] = []
-        for parent in rec["part_of"]:
-            try:
-                outrec["part_of"].append(make_simple_reference(parent["id"])[0])
-            except Exception:
-                continue
-    elif "broader" in rec:
-        outrec["part_of"] = []
-        for parent in rec["broader"]:
-            try:
-                outrec["part_of"].append(make_simple_reference(parent["id"])[0])
-            except Exception:
-                continue
-    if rec["type"] == "Person":
-        if "born" in rec:
-            # split into birthDate and birthPlace
-            if "timespan" in rec["born"]:
-                if "begin_of_the_begin" in rec["born"]["timespan"]:
-                    outrec["birthDate"] = rec["born"]["timespan"]["begin_of_the_begin"]
-            if "took_place_at" in rec["born"]:
-                outrec["birthPlace"] = make_simple_reference(rec["born"]["took_place_at"][0]["id"])[0]
-        if "died" in rec:
-            # split into deathDate and deathPlace
-            if "timespan" in rec["died"]:
-                if "begin_of_the_begin" in rec["died"]["timespan"]:
-                    outrec["deathDate"] = rec["died"]["timespan"]["begin_of_the_begin"]
-            if "took_place_at" in rec["died"]:
-                outrec["deathPlace"] = make_simple_reference(rec["died"]["took_place_at"][0]["id"])[0]
-    elif rec["type"] == "Group":
-        if "formed_by" in rec:
-            # split into birthDate and birthPlace
-            if "timespan" in rec["formed_by"]:
-                if "begin_of_the_begin" in rec["formed_by"]["timespan"]:
-                    outrec["foundingDate"] = rec["formed_by"]["timespan"]["begin_of_the_begin"]
-            if "took_place_at" in rec["formed_by"]:
-                outrec["foundingPlace"] = make_simple_reference(rec["formed_by"]["took_place_at"][0]["id"])[0]
-            if "carried_out_by" in rec["formed_by"]:
-                outrec["founder"] = [make_simple_reference(x["id"])[0] for x in rec["formed_by"]["carried_out_by"]]
-
-        if "dissolved_by" in rec:
-            # split into deathDate and deathPlace
-            if "timespan" in rec["dissolved_by"]:
-                if "begin_of_the_begin" in rec["dissolved_by"]["timespan"]:
-                    outrec["dissolutionDate"] = rec["dissolved_by"]["timespan"]["begin_of_the_begin"]
-            if "took_place_at" in rec["dissolved_by"]:
-                outrec["dissolutionPlace"] = make_simple_reference(rec["dissolved_by"]["took_place_at"][0]["id"])[0]
-            if "carried_out_by" in rec["dissolved_by"]:
-                outrec["dissolver"] = make_simple_reference(rec["dissolved_by"]["carried_out_by"][0]["id"])[0]
-    elif rec["type"] == "HumanMadeObject":
-        # made_of
-        # carries/shows -- embed this
-        # ignore: dimensions, current_owner etc
-
-        if "produced_by" in rec:
-            cre = rec["produced_by"]
-            if "timespan" in cre:
-                dt = cre["timespan"].get("begin_of_the_begin", cre["timespan"].get("end_of_the_end", None))
-                if dt is not None:
-                    outrec["creationDate"] = dt
-            if "took_place_at" in cre:
-                outrec["creationPlace"] = make_simple_reference(cre["took_place_at"][0]["id"])[0]
-            if "carried_out_by" in cre:
-                outrec["creator"] = [make_simple_reference(x["id"])[0] for x in cre["carried_out_by"]]
-            if "part" in cre:
-                who = []
-                for part in cre["part"]:
-                    if "carried_out_by" in part:
-                        who = [make_simple_reference(x["id"])[0] for x in part["carried_out_by"]]
-                if "creator" in outrec:
-                    outrec["creator"].extend(who)
-                elif who:
-                    outrec["creator"] = who
-
-        if "encountered_by" in rec:
-            cres = rec["encountered_by"]
-            for cre in cres:
-                if "timespan" in cre:
-                    dt = cre["timespan"].get("begin_of_the_begin", cre["timespan"].get("end_of_the_end", None))
-                    if dt is not None:
-                        outrec["discoveryDate"] = dt
-                if "took_place_at" in cre:
-                    outrec["discoveryPlace"] = make_simple_reference(cre["took_place_at"][0]["id"])[0]
-                if "carried_out_by" in cre:
-                    outrec["discoverer"] = [make_simple_reference(x["id"])[0] for x in cre["carried_out_by"]]
-                if "part" in cre:
-                    who = []
-                    for part in cre["part"]:
-                        if "carried_out_by" in cre:
-                            who = [make_simple_reference(x["id"])[0] for x in cre["carried_out_by"]]
-                    if "discoverer" in outrec:
-                        outrec["discoverer"].extend(who)
-                    else:
-                        outrec["discoverer"] = who
-
-        if "made_of" in rec:
-            outrec["material"] = [make_simple_reference(x["id"])[0] for x in rec["made_of"]]
-        if "carries" in rec:
-            outrec["carries"] = [make_simple_record(x["id"]) for x in rec["carries"]]
-        if "shows" in rec:
-            outrec["shows"] = [make_simple_record(x["id"]) for x in rec["shows"]]
-
-    elif rec["type"] in ["LinguisticObject", "VisualItem"]:
-        # about, represents
-        # embed the HMO somehow? Would require a search...
-        if "about" in rec:
-            outrec["about"] = [make_simple_reference(x["id"])[0] for x in rec["about"]]
-        if "represents" in rec:
-            outrec["represents"] = [make_simple_reference(x["id"])[0] for x in rec["represents"]]
-
-    if "member_of" in rec:
-        outrec["member_of"] = []
-        for parent in rec["member_of"]:
-            try:
-                outrec["member_of"].append(make_simple_reference(parent["id"])[0])
-            except Exception:
-                continue
-
-    return outrec
-
-    ITEM = "item"
-    WORK = "work"
-    AGENT = "agent"
-    PLACE = "place"
-    CONCEPT = "concept"
-    SET = "set"
-    EVENT = "event"
-
-
-@app.get("/api/basic/search_by_name", operation_id="search_by_name")
-async def do_basic_name_search(scope: scopeEnum, name: str):
-    """
-    Search for the top 20 entities in the given scope by their exact name.
-    The `id` fields of references within the records can be used with the get_by_id tool to retrieve their full records.
-    Use this tool to get started and then follow the identifiers to other records.
-    Scope Meanings:
-        - item: Physical or digital objects in the collections, including fossils, artworks, books, manuscripts, etc.
-        - work: Intellectual works with subjects, language, etc.
-        - agent: People, organizations, etc.
-        - place: Locations, cities, countries, etc.
-        - concept: Concepts, ideas, etc.
-        - set: Collections or sets of other entities, including items and sets
-        - event: Events, exhibitions, time periods etc.
-
-    Parameters:
-        - scope (str): The scope of the search. MUST be one of: item, work, agent, place, concept, set, event
-        - name (str): The name of the entity to search for
-
-    Returns:
-        - List[Entity]: A list of entities matching the name.
-    """
-    name = name.lower()
-    name = name.replace("-", " ")
-    q = {"_scope": scope.value, "name": f'"{name}"', "_complete": True}
-    qt = make_sparql_query(scope.value, json.dumps(q))
-    res = await fetch_qlever_sparql(qt)
-
-    if not res["results"]:
-        q = {"_scope": scope.value, "name": f'"{name}"'}
-        qt = make_sparql_query(scope.value, json.dumps(q))
-        res = await fetch_qlever_sparql(qt)
-        if not res["results"]:
-            q = {"_scope": scope.value, "name": f"{name}"}
-            qt = make_sparql_query(scope.value, json.dumps(q))
-            res = await fetch_qlever_sparql(qt)
-
-    recs = []
-    for r in res["results"][:20]:
-        uri = r[0]
-        outrec = make_simple_record(uri)
-        if outrec is not None:
-            recs.append(outrec)
-
-    return recs
-
-
-@app.get("/api/basic/get", operation_id="get_by_id")
-async def do_basic_fetch(identifier: UUID):
-    """
-    Fetch a single entity by its identifier from `id` within a record.
-
-    Parameters:
-        - identifier (UUID): The identifier of the entity to fetch
-
-    Returns:
-        - Entity: The description of the entity, including links to other entities
-    """
-    identifier = str(identifier)
-    outrec = make_simple_record(identifier)
-    return outrec
-
-
-@app.get("/api/basic/explain", operation_id="get_schema")
-async def do_explain_schema():
-    pass
-
-
-# Real API for LUX
 
 
 @app.get("/api/search/{scope}", operation_id="search")
@@ -807,11 +538,24 @@ def get_primary_name(names):
 
 
 def fetch_record_from_cache(identifier):
-    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    global conn
     qry = f"SELECT * FROM {PG_TABLE} WHERE identifier = %s"
     params = (identifier,)
-    cursor.execute(qry, params)
-    row = cursor.fetchone()
+    try:
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute(qry, params)
+        row = cursor.fetchone()
+    except:
+        # try re-connecting to the database
+        try:
+            conn = psycopg2.connect(user=args.user, dbname=args.db)
+        except psycopg2.OperationalError as e:
+            print(f"Error connecting to database: {e}")
+            return None
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute(qry, params)
+        row = cursor.fetchone()
+
     if row:
         return row["data"]
     else:
@@ -896,6 +640,7 @@ async def do_stats():
         spq = f"PREFIX lux: <https://lux.collections.yale.edu/ns/> SELECT ?class (COUNT(?class) as ?count) WHERE {{?what a ?class ; lux:source lux:{st.portal} . }} GROUP BY ?class"
     else:
         spq = "SELECT ?class (COUNT(?class) as ?count) {?what a ?class} GROUP BY ?class"
+    # This will always be in the ALRU cache
     res = await fetch_qlever_sparql(spq)
     vals = {}
     for r in res["results"]:
@@ -907,9 +652,7 @@ async def do_stats():
     return JSONResponse(content=js)
 
 
-# --- Main Execution ---
-if __name__ == "__main__":
-    print("Starting hypercorn https/2 server...")
+async def main():
     uvloop.install()
     hconfig = HyperConfig()
     hconfig.bind = [f"0.0.0.0:{args.port}"]
@@ -918,20 +661,16 @@ if __name__ == "__main__":
     hconfig.errorlog = "-"
     hconfig.certfile = f"files/{args.cert}.pem"
     hconfig.keyfile = f"files/{args.cert}-key.pem"
-    mcp = FastApiMCP(
-        app,
-        name="LUX MCP Server",
-        describe_all_responses=False,
-        describe_full_response_schema=False,
-        include_operations=[
-            "get_statistics",
-            "get_record",
-            "translate_string_query",
-            "search",
-            "facet",
-            "search_by_name",
-            "get_by_id",
-        ],
-    )
-    # mcp.mount_http()
-    asyncio.run(hypercorn_serve(app, hconfig))
+    hconfig.queue_size = 200
+    hconfig.backlog = 200
+    hconfig.read_timeout = 120
+    hconfig.max_app_queue_size = 50
+    hconfig.worker_class = "asyncio"
+    # hconfig.workers = 10
+    await hypercorn_serve(app, hconfig)
+
+
+# --- Main Execution ---
+if __name__ == "__main__":
+    print("Starting hypercorn https/2 server...")
+    asyncio.run(main())
