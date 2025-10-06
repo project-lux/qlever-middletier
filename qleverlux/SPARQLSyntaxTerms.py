@@ -33,7 +33,7 @@ class Prefix(AbstractTerm):
         """
         try:
             return "PREFIX %s: <%s>\n" % (self.prefix, self.namespace)
-        except Exception as e:
+        except Exception:
             print("Error 1 @ Prefix.get_text()")
             return ""
 
@@ -57,7 +57,7 @@ class Triple(AbstractTerm):
         """
         try:
             return "%s %s %s . \n" % (self.subject, self.predicate, self.object)
-        except Exception as e:
+        except Exception:
             print("Error 1 @ Triple.get_text()")
             return ""
 
@@ -77,7 +77,7 @@ class Filter(AbstractTerm):
         """
         try:
             return "FILTER (%s)" % (self.expression,)
-        except Exception as e:
+        except Exception:
             print("Error 1 @ Filter.get_text()")
             return ""
 
@@ -97,7 +97,7 @@ class Having(AbstractTerm):
         """
         try:
             return "HAVING (%s)" % (self.expression,)
-        except Exception as e:
+        except Exception:
             print("Error 1 @ Filter.get_text()")
             return ""
 
@@ -126,7 +126,7 @@ class Binding(AbstractTerm):
 
             return "BIND (%s AS %s)" % (value_text, self.variable)
 
-        except Exception as e:
+        except Exception:
             print("Error 1 @ Binding.get_text()")
             return ""
 
@@ -153,7 +153,7 @@ class Bound(AbstractTerm):
 
             return "BOUND (%s)" % (variable_text,)
 
-        except Exception as e:
+        except Exception:
             print("Error 1 @ Bound.get_text()")
             return ""
 
@@ -196,7 +196,7 @@ class IfClause(AbstractTerm):
 
             return "IF (%s, %s, %s)" % (condition_text, true_value_text, false_value_text)
 
-        except Exception as e:
+        except Exception:
             print("Error 1 @ IfClause.get_text()")
             return ""
 
@@ -217,7 +217,7 @@ class GroupBy(AbstractTerm):
         try:
             return "GROUP BY %s" % (" ".join(self.variables),)
 
-        except Exception as e:
+        except Exception:
             print("Error 1 @ GroupBy.get_text()")
             return ""
 
@@ -242,7 +242,7 @@ class OrderBy(AbstractTerm):
             order_text = " ".join(self.variables)
             return "%s(%s)" % (self.order, order_text)
 
-        except Exception as e:
+        except Exception:
             print("Error 1 @ OrderBy.get_text()")
             return ""
 
@@ -268,7 +268,7 @@ class Values(AbstractTerm):
         try:
             enclosed_values = [in_brackets(value) for value in self.values]
             return "VALUES %s {%s}" % (self.name, " ".join(enclosed_values))
-        except Exception as e:
+        except Exception:
             print("Error 1 @ Values.get_text()")
             return ""
 
@@ -301,6 +301,6 @@ class Variable(AbstractTerm):
         """
         try:
             return "?%s" % self.name
-        except Exception as e:
+        except Exception:
             print("Error 1 @ Variable.get_text()")
             return ""

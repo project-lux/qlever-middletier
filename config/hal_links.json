@@ -1,0 +1,522 @@
+{
+  "lux:agentAgentMemberOf": {
+    "queryName": "agentsMemberOfGroup",
+    "template": "{searchUriHost}/api/search/agent?q={q}",
+    "scope": "agent"
+  },
+  "lux:agentCreatedPublishedInfluencedWork": {
+    "queryName": "worksCreatedPublishedInfluencedByAgent",
+    "template": "{searchUriHost}/api/search/work?q={q}",
+    "scope": "agent"
+  },
+  "lux:agentEventsCarriedOut": {
+    "queryName": "eventsCarriedOutByAgent",
+    "template": "{searchUriHost}/api/search/event?q={q}&sort=eventStartDate:asc",
+    "scope": "agent"
+  },
+  "lux:agentEventsUsingProducedObjects": {
+    "queryName": "eventsUsingAgentsProducedObjects",
+    "template": "{searchUriHost}/api/search/event?q={q}&sort=eventStartDate:asc",
+    "scope": "agent"
+  },
+  "lux:agentFoundedByAgent": {
+    "queryName": "agentsFoundedByAgent",
+    "template": "{searchUriHost}/api/search/agent?q={q}&sort=anySortName:asc",
+    "scope": "agent"
+  },
+  "lux:agentInfluencedConcepts": {
+    "queryName": "conceptsInfluencedByAgent",
+    "template": "{searchUriHost}/api/search/concept?q={q}",
+    "scope": "agent"
+  },
+  "lux:agentItemEncounteredTime": {
+    "queryName": "itemsEncounteredByAgent",
+    "template": "{searchUriHost}/api/facets/item?q={q}&name=itemEncounteredDate",
+    "scope": "agent"
+  },
+  "lux:agentItemMadeTime": {
+    "queryName": "itemsProducedByAgent",
+    "template": "{searchUriHost}/api/facets/item?q={q}&name=itemProductionDate",
+    "scope": "agent"
+  },
+  "lux:agentMadeDiscoveredInfluencedItem": {
+    "queryName": "itemsProducedEncounteredInfluencedByAgent",
+    "template": "{searchUriHost}/api/search/item?q={q}",
+    "scope": "agent"
+  },
+  "lux:agentRelatedAgents": {
+    "queryName": "-",
+    "template": "{searchUriHost}/api/related-list/agent?&name=relatedToAgent&uri={id}",
+    "scope": "agent"
+  },
+  "lux:agentRelatedConcepts": {
+    "queryName": "-",
+    "template": "{searchUriHost}/api/related-list/concept?&name=relatedToAgent&uri={id}",
+    "scope": "agent"
+  },
+  "lux:agentRelatedItemTypes": {
+    "queryName": "itemsProducedByAgent",
+    "template": "{searchUriHost}/api/facets/item?q={q}&name=itemTypeId",
+    "scope": "agent"
+  },
+  "lux:agentRelatedMaterials": {
+    "queryName": "itemsProducedByAgent",
+    "template": "{searchUriHost}/api/facets/item?q={q}&name=itemMaterialId",
+    "scope": "agent"
+  },
+  "lux:agentRelatedPlaces": {
+    "queryName": "-",
+    "template": "{searchUriHost}/api/related-list/place?&name=relatedToAgent&uri={id}",
+    "scope": "agent"
+  },
+  "lux:agentRelatedSubjects": {
+    "queryName": "worksCreatedByAgent",
+    "template": "{searchUriHost}/api/facets/work?q={q}&name=workAboutConceptId",
+    "scope": "agent"
+  },
+  "lux:agentRelatedWorkTypes": {
+    "queryName": "worksCreatedByAgent",
+    "template": "{searchUriHost}/api/facets/work?q={q}&name=workTypeId",
+    "scope": "agent"
+  },
+  "lux:agentSetAboutTime": {
+    "queryName": "setAboutAgent",
+    "template": "{searchUriHost}/api/facets/set?q={q}&name=setCreationOrPublicationDate",
+    "scope": "agent"
+  },
+  "lux:agentSetTypes": {
+    "queryName": "setsRelatedToAgent",
+    "template": "{searchUriHost}/api/facets/set?q={q}&name=setTypeId",
+    "scope": "agent"
+  },
+  "lux:agentWorkAbout": {
+    "queryName": "worksAboutAgent",
+    "template": "{searchUriHost}/api/search/work?q={q}",
+    "scope": "agent"
+  },
+  "lux:agentWorkCreatedTime": {
+    "queryName": "worksCreatedPublishedInfluencedByAgent",
+    "template": "{searchUriHost}/api/facets/work?q={q}&name=workCreationDate",
+    "scope": "agent"
+  },
+  "lux:agentWorkPublishedTime": {
+    "queryName": "worksCreatedPublishedInfluencedByAgent",
+    "template": "{searchUriHost}/api/facets/work?q={q}&name=workPublicationDate",
+    "scope": "agent"
+  },
+  "lux:conceptChildren": {
+    "queryName": "childrenOfConcept",
+    "template": "{searchUriHost}/api/search/concept?q={q}",
+    "scope": "concept"
+  },
+  "lux:conceptInfluencedConcepts": {
+    "queryName": "conceptsInfluencedByConcept",
+    "template": "{searchUriHost}/api/search/concept?q={q}",
+    "scope": "concept"
+  },
+  "lux:conceptItemEncounteredTime": {
+    "queryName": "itemsOfTypeOrMaterial",
+    "template": "{searchUriHost}/api/facets/item?q={q}&name=itemEncounteredDate",
+    "scope": "concept"
+  },
+  "lux:conceptItemMadeTime": {
+    "queryName": "itemsOfTypeOrMaterial",
+    "template": "{searchUriHost}/api/facets/item?q={q}&name=itemProductionDate",
+    "scope": "concept"
+  },
+  "lux:conceptItemTypes": {
+    "queryName": "itemsOfTypeOrMaterial",
+    "template": "{searchUriHost}/api/facets/item?q={q}&name=itemTypeId",
+    "scope": "concept"
+  },
+  "lux:conceptRelatedAgents": {
+    "queryName": "-",
+    "template": "{searchUriHost}/api/related-list/agent?&name=relatedToConcept&uri={id}",
+    "scope": "concept"
+  },
+  "lux:conceptRelatedConcepts": {
+    "queryName": "-",
+    "template": "{searchUriHost}/api/related-list/concept?&name=relatedToConcept&uri={id}",
+    "scope": "concept"
+  },
+  "lux:conceptRelatedItems": {
+    "queryName": "itemsOfTypeOrMaterial",
+    "template": "{searchUriHost}/api/search/item?q={q}",
+    "scope": "concept"
+  },
+  "lux:conceptRelatedPlaces": {
+    "queryName": "-",
+    "template": "{searchUriHost}/api/related-list/place?name=relatedToConcept&uri={id}",
+    "scope": "concept"
+  },
+  "lux:conceptRelatedWorks": {
+    "queryName": "worksRelatedToConcept",
+    "template": "{searchUriHost}/api/search/work?q={q}",
+    "scope": "concept"
+  },
+  "lux:conceptWorkCreatedTime": {
+    "queryName": "worksRelatedToConcept",
+    "template": "{searchUriHost}/api/facets/work?q={q}&name=workCreationDate",
+    "scope": "concept"
+  },
+  "lux:conceptWorkPublishedTime": {
+    "queryName": "worksRelatedToConcept",
+    "template": "{searchUriHost}/api/facets/work?q={q}&name=workPublicationDate",
+    "scope": "concept"
+  },
+  "lux:conceptWorkTypes": {
+    "queryName": "worksRelatedToConcept",
+    "template": "{searchUriHost}/api/facets/work?q={q}&name=workTypeId",
+    "scope": "concept"
+  },
+  "lux:departmentItems": {
+    "queryName": "itemsForDepartment",
+    "template": "{searchUriHost}/api/search/item?q={q}",
+    "scope": "agent"
+  },
+  "lux:eventCausedWorks": {
+    "queryName": "worksCausedByEvent",
+    "template": "{searchUriHost}/api/search/work?q={q}",
+    "scope": "event"
+  },
+  "lux:eventConceptsInfluencedBy": {
+    "queryName": "conceptsSubjectsForPeriod",
+    "template": "{searchUriHost}/api/search/concept?q={q}",
+    "scope": "event"
+  },
+  "lux:eventIncludedItems": {
+    "queryName": "itemsForEvent",
+    "template": "{searchUriHost}/api/search/item?q={q}",
+    "scope": "event"
+  },
+  "lux:eventItemMaterials": {
+    "queryName": "itemsForEvent",
+    "template": "{searchUriHost}/api/facets/item?q={q}&name=itemMaterialId",
+    "scope": "event"
+  },
+  "lux:eventObjectTypesUsed": {
+    "queryName": "itemsForEvent",
+    "template": "{searchUriHost}/api/facets/item?q={q}&name=itemTypeId",
+    "scope": "event"
+  },
+  "lux:eventObjectTypesAbout": {
+    "queryName": "itemsAboutEvent",
+    "template": "{searchUriHost}/api/facets/item?q={q}&name=itemTypeId",
+    "scope": "event"
+  },
+  "lux:eventRelatedAgents": {
+    "queryName": "-",
+    "template": "{searchUriHost}/api/related-list/agent?name=relatedToEvent&uri={id}",
+    "scope": "event"
+  },
+  "lux:eventRelatedConcepts": {
+    "queryName": "-",
+    "template": "{searchUriHost}/api/related-list/concept?name=relatedToEvent&uri={id}",
+    "scope": "event"
+  },
+  "lux:eventRelatedPlaces": {
+    "queryName": "-",
+    "template": "{searchUriHost}/api/related-list/place?name=relatedToEvent&uri={id}",
+    "scope": "event"
+  },
+  "lux:eventSetAboutTime": {
+    "queryName": "setAboutEvent",
+    "template": "{searchUriHost}/api/facets/set?q={q}&name=setCreationOrPublicationDate",
+    "scope": "event"
+  },
+  "lux:eventSetTypes": {
+    "queryName": "setForEventSetType",
+    "template": "{searchUriHost}/api/facets/set?q={q}&name=setTypeId",
+    "scope": "event"
+  },
+  "lux:eventWorksAbout": {
+    "queryName": "worksAboutEvent",
+    "template": "{searchUriHost}/api/search/work?q={q}",
+    "scope": "event"
+  },
+  "lux:eventWorkTypesUsed": {
+    "queryName": "worksForEvent",
+    "template": "{searchUriHost}/api/facets/work?q={q}&name=workTypeId",
+    "scope": "event"
+  },
+  "lux:eventWorkTypesAbout": {
+    "queryName": "worksAboutEvent",
+    "template": "{searchUriHost}/api/facets/work?q={q}&name=workTypeId",
+    "scope": "event"
+  },
+  "lux:genderForAgent": {
+    "queryName": "agentsWithGender",
+    "template": "{searchUriHost}/api/search/agent?q={q}",
+    "scope": "concept"
+  },
+  "lux:itemArchive": {
+    "queryName": "archivesWithItem",
+    "template": "{searchUriHost}/api/search/set?q={q}",
+    "scope": "item"
+  },
+  "lux:itemCurrentHierarchyPage": {
+    "queryName": "currentItemAndSiblings",
+    "template": "{searchUriHost}/api/search/multi?q={q}&sort=archiveSortId:asc&pageWith={encodeURIComponent(id)}",
+    "scope": "item"
+  },
+  "lux:itemEvents": {
+    "queryName": "eventsWithItem",
+    "template": "{searchUriHost}/api/search/event?q={q}&sort=eventStartDate:asc",
+    "scope": "item"
+  },
+  "lux:itemDepartment": {
+    "queryName": "departmentsWithItem",
+    "template": "{searchUriHost}/api/search/agent?q={q}",
+    "scope": "item"
+  },
+  "lux:itemUnit": {
+    "queryName": "itemById",
+    "template": "{searchUriHost}/api/facets/item?q={q}&name=responsibleUnits",
+    "scope": "item"
+  },
+  "lux:itemWorksAbout": {
+    "queryName": "worksAboutItem",
+    "template": "{searchUriHost}/api/search/work?q={q}",
+    "scope": "item"
+  },
+  "lux:nationalityForAgent": {
+    "queryName": "agentsWithNationality",
+    "template": "{searchUriHost}/api/search/agent?q={q}",
+    "scope": "concept"
+  },
+  "lux:objectOrSetMemberOfSet": {
+    "queryName": "itemsOrSetsMemberOfSet",
+    "template": "{searchUriHost}/api/search/multi?q={q}&sort=archiveSortId:asc",
+    "scope": "set"
+  },
+  "lux:occupationForAgent": {
+    "queryName": "agentsWithOccupation",
+    "template": "{searchUriHost}/api/search/agent?q={q}",
+    "scope": "concept"
+  },
+  "lux:placeActiveAgent": {
+    "queryName": "agentsActiveAtPlace",
+    "template": "{searchUriHost}/api/search/agent?q={q}",
+    "scope": "place"
+  },
+  "lux:placeBornAgent": {
+    "queryName": "agentsBornAtPlace",
+    "template": "{searchUriHost}/api/search/agent?q={q}",
+    "scope": "place"
+  },
+  "lux:placeCreatedWork": {
+    "queryName": "worksCreatedAtPlace",
+    "template": "{searchUriHost}/api/search/work?q={q}",
+    "scope": "place"
+  },
+  "lux:placeDepictedAgentsFromRelatedWorks": {
+    "queryName": "worksRelatedToPlace",
+    "template": "{searchUriHost}/api/facets/work?q={q}&name=workAboutAgentId",
+    "scope": "place"
+  },
+  "lux:placeDiedAgent": {
+    "queryName": "agentsDiedAtPlace",
+    "template": "{searchUriHost}/api/search/agent?q={q}",
+    "scope": "place"
+  },
+  "lux:placeEvents": {
+    "queryName": "eventsHappenedAtPlace",
+    "template": "{searchUriHost}/api/search/event?q={q}",
+    "scope": "place"
+  },
+  "lux:placeInfluencedConcepts": {
+    "queryName": "conceptsInfluencedByPlace",
+    "template": "{searchUriHost}/api/search/concept?q={q}",
+    "scope": "place"
+  },
+  "lux:placeItemMadeTime": {
+    "queryName": "itemsProducedAtPlace",
+    "template": "{searchUriHost}/api/facets/item?q={q}&name=itemProductionDate",
+    "scope": "place"
+  },
+  "lux:placeItemEncounteredTime": {
+    "queryName": "itemsEncounteredAtPlace",
+    "template": "{searchUriHost}/api/facets/item?q={q}&name=itemEncounteredDate",
+    "scope": "place"
+  },
+  "lux:placeItemTypes": {
+    "queryName": "itemsProducedAtPlace",
+    "template": "{searchUriHost}/api/facets/item?q={q}&name=itemTypeId",
+    "scope": "place"
+  },
+  "lux:placeMadeDiscoveredItem": {
+    "queryName": "itemsProducedEncounteredAtPlace",
+    "template": "{searchUriHost}/api/search/item?q={q}",
+    "scope": "place"
+  },
+  "lux:placeParts": {
+    "queryName": "partsOfPlace",
+    "template": "{searchUriHost}/api/search/place?q={q}",
+    "scope": "place"
+  },
+  "lux:placePublishedWork": {
+    "queryName": "worksPublishedAtPlace",
+    "template": "{searchUriHost}/api/search/work?q={q}",
+    "scope": "place"
+  },
+  "lux:placeRelatedAgents": {
+    "queryName": "-",
+    "template": "{searchUriHost}/api/related-list/agent?name=relatedToPlace&uri={id}",
+    "scope": "place"
+  },
+  "lux:placeRelatedConcepts": {
+    "queryName": "-",
+    "template": "{searchUriHost}/api/related-list/concept?name=relatedToPlace&uri={id}",
+    "scope": "place"
+  },
+  "lux:placeRelatedPlaces": {
+    "queryName": "-",
+    "template": "{searchUriHost}/api/related-list/place?name=relatedToPlace&uri={id}",
+    "scope": "place"
+  },
+  "lux:placeSetAboutTime": {
+    "queryName": "setAboutPlace",
+    "template": "{searchUriHost}/api/facets/set?q={q}&name=setCreationOrPublicationDate",
+    "scope": "place"
+  },
+  "lux:placeSetTypes": {
+    "queryName": "setsRelatedToPlace",
+    "template": "{searchUriHost}/api/facets/set?q={q}&name=setTypeId",
+    "scope": "place"
+  },
+  "lux:placeWorkAbout": {
+    "queryName": "worksAboutPlace",
+    "template": "{searchUriHost}/api/search/work?q={q}",
+    "scope": "place"
+  },
+  "lux:placeWorkAboutTime": {
+    "queryName": "worksAboutPlace",
+    "template": "{searchUriHost}/api/facets/work?q={q}&name=workCreationOrPublicationDate",
+    "scope": "place"
+  },
+  "lux:placeWorkCreatedTime": {
+    "queryName": "worksCreatedAtPlace",
+    "template": "{searchUriHost}/api/facets/work?q={q}&name=workCreationDate",
+    "scope": "place"
+  },
+  "lux:placeWorkPublishedTime": {
+    "queryName": "worksPublishedAtPlace",
+    "template": "{searchUriHost}/api/facets/work?q={q}&name=workPublicationDate",
+    "scope": "place"
+  },
+  "lux:placeWorkTypes": {
+    "queryName": "worksRelatedToPlace",
+    "template": "{searchUriHost}/api/facets/work?q={q}&name=workTypeId",
+    "scope": "place"
+  },
+  "lux:setAboutAgent": {
+    "queryName": "setAboutAgent",
+    "template": "{searchUriHost}/api/search/set?q={q}",
+    "scope": "agent"
+  },
+  "lux:setAboutEvent": {
+    "queryName": "setAboutEvent",
+    "template": "{searchUriHost}/api/search/set?q={q}",
+    "scope": "event"
+  },
+  "lux:setAboutPlace": {
+    "queryName": "setAboutPlace",
+    "template": "{searchUriHost}/api/search/set?q={q}",
+    "scope": "place"
+  },
+  "lux:setCausedByEvent": {
+    "queryName": "setCausedByEvent",
+    "template": "{searchUriHost}/api/search/set?q={q}",
+    "scope": "event"
+  },
+  "lux:setCreatedByAgent": {
+    "queryName": "setCreatedByAgent",
+    "template": "{searchUriHost}/api/search/set?q={q}",
+    "scope": "agent"
+  },
+  "lux:setCreatedAtPlace": {
+    "queryName": "setCreatedAtPlace",
+    "template": "{searchUriHost}/api/search/set?q={q}",
+    "scope": "place"
+  },
+  "lux:setCurrentHierarchyPage": {
+    "queryName": "currentSetAndSiblings",
+    "template": "{searchUriHost}/api/search/multi?q={q}&sort=archiveSortId:asc&pageWith={encodeURIComponent(id)}",
+    "scope": "set"
+  },
+  "lux:setDepartment": {
+    "queryName": "departmentsCuratedSet",
+    "template": "{searchUriHost}/api/search/agent?q={q}",
+    "scope": "set"
+  },
+  "lux:setEvents": {
+    "queryName": "eventsWithSet",
+    "template": "{searchUriHost}/api/search/event?q={q}",
+    "scope": "set"
+  },
+  "lux:setIncludedItems": {
+    "queryName": "itemsInSet",
+    "template": "{searchUriHost}/api/search/item?q={q}&sort=itemArchiveSortId:asc",
+    "scope": "set"
+  },
+  "lux:setItemEncounteredTime": {
+    "queryName": "itemsInSet",
+    "template": "{searchUriHost}/api/facets/item?q={q}&name=itemEncounteredDate",
+    "scope": "set"
+  },
+  "lux:setItemMadeTime": {
+    "queryName": "itemsInSet",
+    "template": "{searchUriHost}/api/facets/item?q={q}&name=itemProductionDate",
+    "scope": "set"
+  },
+  "lux:setItemTypes": {
+    "queryName": "itemsInSet",
+    "template": "{searchUriHost}/api/facets/item?q={q}&name=itemTypeId",
+    "scope": "set"
+  },
+  "lux:setUnit": {
+    "queryName": "setById",
+    "template": "{searchUriHost}/api/facets/set?q={q}&name=responsibleUnits",
+    "scope": "set"
+  },
+  "lux:setItemsWithImages": {
+    "queryName": "itemsInSetWithImages",
+    "template": "{searchUriHost}/api/search/item?q={q}",
+    "scope": "set"
+  },
+  "lux:typeForAgent": {
+    "queryName": "agentsClassifiedAs",
+    "template": "{searchUriHost}/api/search/agent?q={q}",
+    "scope": "concept"
+  },
+  "lux:typeForEvent": {
+    "queryName": "eventsClassifiedAs",
+    "template": "{searchUriHost}/api/search/event?q={q}",
+    "scope": "concept"
+  },
+  "lux:typeForPlace": {
+    "queryName": "placesClassifiedAs",
+    "template": "{searchUriHost}/api/search/place?q={q}",
+    "scope": "concept"
+  },
+  "lux:workCarriedBy": {
+    "queryName": "itemsCarryingWork",
+    "template": "{searchUriHost}/api/search/item?q={q}",
+    "scope": "work"
+  },
+  "lux:workContainedWorks": {
+    "queryName": "worksContainingWork",
+    "template": "{searchUriHost}/api/search/work?q={q}",
+    "scope": "work"
+  },
+  "lux:workIncludedWorks": {
+    "queryName": "worksInWork",
+    "template": "{searchUriHost}/api/search/work?q={q}",
+    "scope": "work"
+  },
+  "lux:workWorksAbout": {
+    "queryName": "worksAboutWork",
+    "template": "{searchUriHost}/api/search/work?q={q}",
+    "scope": "work"
+  }
+}

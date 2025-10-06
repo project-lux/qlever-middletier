@@ -7,7 +7,17 @@ Created by Panos Mitzias (http://www.pmitzias.com)
 Updates: Rob Sanderson (robert.sanderson@yale.edu)
 """
 
-from qleverlux.SPARQLSyntaxTerms import *
+from qleverlux.SPARQLSyntaxTerms import (
+    Prefix,
+    Triple,
+    GroupBy,
+    OrderBy,
+    Binding,
+    Filter,
+    Values,
+    AbstractTerm,
+    Having,
+)
 
 
 class SPARQLGraphPattern(AbstractTerm):

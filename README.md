@@ -20,6 +20,56 @@ python ./qleverlux/middletier.py --help
 
 
 
+## Query Optimization notes
+
+
+### UNION vs Property Path OR
+
+UNION and property path | expressions are equivalent in timing
+
+```
+SELECT (COUNT(*) AS ?count)
+WHERE {
+   {
+      SELECT ?uri
+      WHERE       {
+         ?uri a lux:Item .
+         {
+            ?uri lux:agentOfItemBeginning <https://lux.collections.yale.edu/data/person/03ed33fa-1b1c-4fe0-9cba-614698dc94cd> .
+         }
+         UNION
+         {
+            ?uri lux:agentOfItemEncounter <https://lux.collections.yale.edu/data/person/03ed33fa-1b1c-4fe0-9cba-614698dc94cd> .
+         }
+         UNION
+         {
+            ?uri lux:agentInfluenceOfItemBeginning <https://lux.collections.yale.edu/data/person/03ed33fa-1b1c-4fe0-9cba-614698dc94cd> .
+         }
+      }
+      GROUP BY ?uri   }
+}
+```
+
+is the same timing as the slightly tidier but harder to generate from the LUX JSON syntax:
+
+```
+SELECT (COUNT(*) AS ?count)
+WHERE {
+   {
+      SELECT ?uri
+      WHERE       {
+         ?uri a lux:Item ;
+			lux:agentOfItemBeginning | lux:agentOfItemEncounter | lux:agentInfluenceOfItemBeginning
+			<https://lux.collections.yale.edu/data/person/03ed33fa-1b1c-4fe0-9cba-614698dc94cd> .
+      }
+      GROUP BY ?uri   }
+}
+```
+
+(98ms cold to count 78,322 objects, 66ms cold to generate first 100 entries)
+
+
+
 ## query notes
 
 geo_search = """

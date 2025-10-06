@@ -1,14 +1,22 @@
 from luxql import LuxLeaf, LuxBoolean, LuxRelationship
-from qleverlux.SPARQLQueryBuilder import *
+from qleverlux.SPARQLQueryBuilder import (
+    GraphPattern as Pattern,
+    SelectQuery,
+    Prefix,
+    Triple,
+    GroupBy,
+    OrderBy,
+    Binding,
+    Filter,
+    Values,
+)
 import shlex
 import unicodedata
 from string import whitespace, punctuation
 
-Pattern = GraphPattern  # noqa
-
 
 class SparqlTranslator:
-    def __init__(self, config):
+    def __init__(self, config, mt_config=None):
         self.config = config
         self.counter = 0
         self.scored = []
@@ -71,6 +79,7 @@ class SparqlTranslator:
                 "published": "^agentOfWorkPublication",
                 "subjectOfSet": "^setAboutAgent",
                 "subjectOfWork": "^workAboutAgent",
+                "classification": "agentClassification",
             },
             "item": {
                 "producedAt": "placeOfItemBeginning",
@@ -83,6 +92,10 @@ class SparqlTranslator:
                 "material": "material",
                 "subjectOfSet": "^setAboutItem",
                 "subjectOfWork": "^workAboutItem",
+                "memberOf": "itemMemberOfSet",
+                "creationCausedBy": "causeOfProduction",
+                "usedForEvent": "",
+                "classification": "itemClassification",
             },
             "concept": {
                 "broader": "broader",
@@ -105,6 +118,7 @@ class SparqlTranslator:
                 "subjectOfSet": "^setAboutConcept",
                 "subjectOfWork": "^workAboutConcept",
                 "usedToProduce": "^typeOfItemBeginning",
+                "classification": "conceptClassification",
             },
             "event": {
                 "carriedOutBy": "agentOfEvent",
@@ -114,6 +128,7 @@ class SparqlTranslator:
                 "causedCreationOf": "^causeOfWorkBeginning",
                 "subjectOfSet": "^setAboutEvent",
                 "subjectOfWork": "^workAboutEvent",
+                "classification": "eventClassification",
             },
             "place": {
                 "partOf": "placePartOf",
@@ -122,6 +137,7 @@ class SparqlTranslator:
                 "startPlaceOfAgent": "^placeOfAgentBeginning",
                 "producedHere": "^placeOfItemBeginning",
                 "createdHere": "^placeOfWorkBeginning",
+                "setCreatedHere": "^placeOfSetBeginning",
                 "endPlaceOfAgent": "^placeOfAgentEnding",
                 "encounteredHere": "^placeOfItemEncounter",
                 "placeOfEvent": "^placeOfEvent",
@@ -129,6 +145,7 @@ class SparqlTranslator:
                 "publishedHere": "^placeOfWorkPublication",
                 "subjectOfSet": "^setAboutPlace",
                 "subjectOfWork": "^workAboutPlace",
+                "classification": "placeClassification",
             },
             "set": {
                 "aboutConcept": "setAboutConcept",
@@ -146,6 +163,8 @@ class SparqlTranslator:
                 "containingSet": "^setMemberOfSet",
                 "containingItem": "^itemMemberOfSet",
                 "usedForEvent": "^eventUsedSet",
+                "memberOf": "setMemberOfSet",
+                "classification": "setClassification",
             },
             "work": {
                 "aboutConcept": "workAboutConcept",
@@ -166,6 +185,7 @@ class SparqlTranslator:
                 "subjectOfWork": "^workAboutWork",
                 "carriedBy": "^carries",
                 "containsWork": "^partOfWork",
+                "classification": "workClassification",
             },
         }
         # Property Path Notation:
@@ -173,6 +193,9 @@ class SparqlTranslator:
         # elt* is zero or more
         # elt+ is one or more
         # elt? is zero or one
+
+        if mt_config is not None and mt_config.use_stopwords:
+            self.set_stopwords(mt_config.stopwords)
 
     def set_stopwords(self, stopwords):
         if type(stopwords) is list:
@@ -209,7 +232,7 @@ class SparqlTranslator:
             t = Triple("?uri", "a", f"lux:{scope.title()}")
             where.add_triples([t])
 
-        query.var = f"?uri"
+        query.var = "?uri"
         self.translate_query(query, where)
 
         gby = GroupBy(["?uri"])
@@ -251,7 +274,7 @@ class SparqlTranslator:
             t = Triple("?uri", "lux:source", f"lux:{self.portal}")
             where.add_triples([t])
 
-        query.var = f"?uri"
+        query.var = "?uri"
         self.translate_query(query, where)
         sparql.add_group_by(GroupBy(["?uri"]))
         sparql.set_where_pattern(where)
@@ -278,7 +301,7 @@ class SparqlTranslator:
         sparql.add_variables(["?uri", "(COUNT(?uri) AS ?count)"])
 
         where = Pattern()
-        query.var = f"?uri"
+        query.var = "?uri"
 
         if self.portal is not None:
             t = Triple("?uri", "lux:source", f"lux:{self.portal}")
@@ -516,7 +539,7 @@ class SparqlTranslator:
             dt = query.value
 
             # make sure date is in a valid format
-            if not ":" in dt:
+            if ":" not in dt:
                 dt += "T00:00:00Z"
 
             comp = query.comparitor
@@ -689,8 +712,8 @@ COALESCE(?score_text_{self.counter}{wx}, 0) * {self.text_weight}",
         else:
             fldvar2 = f"{fldvar}P"
             opt1.add_triples([Triple(query.var, f"lux:{scope}Any", fldvar2)])
-            opt1.add_triples([Triple(fldvar2, f"lux:primaryName", fldvar)])
-            opt1.add_triples([Triple(fldvar2, f"lux:source", f"lux:{self.portal}")])
+            opt1.add_triples([Triple(fldvar2, "lux:primaryName", fldvar)])
+            opt1.add_triples([Triple(fldvar2, "lux:source", f"lux:{self.portal}")])
 
         svc = Pattern(service="textSearch")
         strips.append(Triple(tsvar, "textSearch:contains", cfvar))
@@ -714,7 +737,7 @@ COALESCE(?score_text_{self.counter}{wx}, 0) * {self.text_weight}",
         cfvar = f"?cf{n}{self.counter}{wx}"
         fldvar = f"?fld{n}{self.counter}{wx}"
 
-        opt1.add_triples([Triple(query.var, f"lux:recordText", fldvar)])
+        opt1.add_triples([Triple(query.var, "lux:recordText", fldvar)])
         svc = Pattern(service="textSearch")
         strips.append(Triple(tsvar, "textSearch:contains", cfvar))
         strips.append(Triple(cfvar, "textSearch:word", f'"{w}"'))
