@@ -4,6 +4,7 @@
 
 hal_cache/*
 files/*.pem
+config/old
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
