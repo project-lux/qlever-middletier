@@ -545,7 +545,7 @@ class QLeverLuxMiddleTier:
 ###
 
 
-@app.get("/api/advanced-search-config")
+@app.get("/api/advanced-search-config", operation_id="get_config")
 async def api_get_search_config():
     return await mt.do_get_config()
 
@@ -580,7 +580,7 @@ async def api_get_search_estimate(scope: scopeEnum, q={}, page=1):
     return await mt.do_search_estimate(scope, q, page)
 
 
-@app.get("/api/search/{scope}")
+@app.get("/api/search/{scope}", operation_id="get_search")
 async def api_get_search(
     scope: scopeEnum,
     q: str,
