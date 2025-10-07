@@ -510,6 +510,10 @@ class SparqlTranslator:
             return f"lux:{scope}{field[0].upper()}{field[1:]}"
         elif field == f"{scope}HasDigitalImage":
             return f"lux:{field}"
+        elif field == "isOnline":
+            return f"lux:{scope}{field[0].upper()}{field[1:]}"
+        elif field == f"{scope}IsOnline":
+            return f"lux:{field}"
 
         pred = self.scope_leaf_fields[scope].get(field, "missed")
         return pred

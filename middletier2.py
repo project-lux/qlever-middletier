@@ -63,7 +63,7 @@ class QLeverLuxMiddleTier:
             async with aiohttp.ClientSession() as session:
                 async with session.post(
                     self.config.sparql_endpoint,
-                    data={"query": q, "send": self.config.page_length},
+                    data={"query": q, "send": 60},
                     headers={"Accept": "application/qlever-results+json"},
                 ) as response:
                     ret = await response.json()
@@ -289,7 +289,9 @@ class QLeverLuxMiddleTier:
         js["_timing"] = res["time"]
         return JSONResponse(content=js)
 
-    async def do_facet(self, scope: scopeEnum, q: str, name: str, page: int = 1, sort: str = ""):
+    async def do_facet(
+        self, scope: scopeEnum, q: str, name: str, page: int = 1, sort: str = "", pageLength: int = 20
+    ):
         """
         Retrieve facet values for a given facet name and query.
 
@@ -299,6 +301,7 @@ class QLeverLuxMiddleTier:
             name (str): The name of the facet
             page (int): The page number, defaults to 1
             sort (str): "asc" or "desc"
+            pageLength (int): The number of items per page, defaults to configured value (20)
 
         Returns:
             - dict: The JSON response containing the facet values as an ActivityStream CollectionPage
@@ -306,6 +309,7 @@ class QLeverLuxMiddleTier:
         if self.config.facet_delay:
             await asyncio.sleep(self.config.facet_delay / 1000)
         scope = scope.value
+
         offset = (int(page) - 1) * self.config.page_length
         soffset = (offset // 60) * 60
         sort = sort.strip()
@@ -328,9 +332,9 @@ class QLeverLuxMiddleTier:
         uq = urllib.parse.quote(q)
         js = {
             "@context": "https://linked.art/ns/v1/search.json",
-            "id": f"{self.config.mt_uri}api/facets/{scope}?q={uq}&name={name}&page={page}",
+            "id": f"{self.config.mt_uri}api/facets/{scope}?q={uq}&name={name}&page={page}&pageLength={self.config.page_length}",
             "type": "OrderedCollectionPage",
-            "partOf": {"type": "OrderedCollection", "totalItems": 1000},
+            "partOf": {"type": "OrderedCollection", "totalItems": 0},
             "orderedItems": [],
         }
 
@@ -357,8 +361,11 @@ class QLeverLuxMiddleTier:
         if ":" not in pred and pred != "a":
             pred = f"lux:{pred}"
 
-        spq = self.sparql_translator.translate_facet(parsed, pred, offset=soffset, sort=sort, order=ascdesc)
+        spq = self.sparql_translator.translate_facet(
+            parsed, pred, scope=scope, offset=soffset, sort=sort, order=ascdesc
+        )
         qt = spq.get_text()
+        # print(qt)
         res = await self.fetch_qlever_sparql(qt)
         js["partOf"]["totalItems"] = res["total"] + soffset
         js["_timing"] = res["time"]
@@ -369,6 +376,8 @@ class QLeverLuxMiddleTier:
             if type(val) is str and val.startswith("http"):
                 # is a URI
                 if pred == "a":
+                    if val.startswith("https://lux.collections.yale.edu/ns/"):
+                        continue
                     val = val.replace("https://linked.art/ns/terms/", "")
                 else:
                     val = (
@@ -378,7 +387,7 @@ class QLeverLuxMiddleTier:
                     )
                 clause = {pname2: {"id": val}}
             else:
-                clause = {pname2: val, "_comp": "="}
+                clause = {pname2: val, "_comp": "=="}
 
             nq = {"AND": [clause, jq]}
             qstr = urllib.parse.quote(json.dumps(nq, separators=(",", ":")))
@@ -390,6 +399,17 @@ class QLeverLuxMiddleTier:
                     "totalItems": ct,
                 }
             )
+        if page > 1:
+            js["prev"] = {
+                "id": f"{self.config.mt_uri}api/facets/{scope}?q={uq}&name={name}&page={page - 1}&pageLength={self.config.page_length}",
+                "type": "OrderedCollectionPage",
+            }
+        if offset + self.config.page_length < js["partOf"]["totalItems"]:
+            js["next"] = {
+                "id": f"{self.config.mt_uri}api/facets/{scope}?q={uq}&name={name}&page={page + 1}&pageLength={self.config.page_length}",
+                "type": "OrderedCollectionPage",
+            }
+
         return JSONResponse(content=js)
 
     async def do_related_list(self, scope: scopeEnum, name: str, uri: str, page: int = 1):
@@ -466,7 +486,7 @@ class QLeverLuxMiddleTier:
             js["AND"] = [{"text": q}]
         jqs = json.dumps(qjs, separators=(",", ":"))
         jqs = urllib.parse.quote(jqs)
-        js["_link"] = f"{self.config.mt_uri}api/search/{scope}?q={jqs}&page=1"
+        # js["_link"] = f"{self.config.mt_uri}api/search/{scope}?q={jqs}&page=1"
         return JSONResponse(content=js)
 
     async def do_get_record(self, scope: classEnum, identifier: UUID, profile: profileEnum = None):
