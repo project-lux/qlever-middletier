@@ -17,7 +17,7 @@ from hypercorn.asyncio import serve as hypercorn_serve
 
 from luxql.string_parser import QueryParser
 from qleverlux.middletier_config import MTConfig
-from qleverlux.middletier_config import scopeEnum, classEnum, profileEnum, orderEnum, StatisticsResponse
+from qleverlux.middletier_config import scopeEnum, classEnum, profileEnum, StatisticsResponse
 
 app = FastAPI()
 app.add_middleware(

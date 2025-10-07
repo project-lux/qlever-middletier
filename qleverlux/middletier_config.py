@@ -405,11 +405,6 @@ class profileEnum(StrEnum):
     RESULTS = "results"
 
 
-class orderEnum(StrEnum):
-    ASC = "ASC"
-    DESC = "DESC"
-
-
 class SearchScopes(BaseModel):
     searchScopes: dict[str, int]
 
