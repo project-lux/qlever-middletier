@@ -31,17 +31,17 @@
   },
   "lux:agentItemEncounteredTime": {
     "queryName": "itemsEncounteredByAgent",
-    "template": "{searchUriHost}/api/facets/item?q={q}&name=itemEncounteredDate",
+    "template": "{searchUriHost}/api/facets/item?q={q}&name=itemEncounteredDate&sort=asc",
     "scope": "agent"
   },
   "lux:agentItemMadeTime": {
     "queryName": "itemsProducedByAgent",
-    "template": "{searchUriHost}/api/facets/item?q={q}&name=itemProductionDate",
+    "template": "{searchUriHost}/api/facets/item?q={q}&name=itemProductionDate&sort=asc",
     "scope": "agent"
   },
   "lux:agentMadeDiscoveredInfluencedItem": {
     "queryName": "itemsProducedEncounteredInfluencedByAgent",
-    "template": "{searchUriHost}/api/search/item?q={q}",
+    "template": "{searchUriHost}/api/search/item?q={q}&sort=itemHasDigitalImage:asc",
     "scope": "agent"
   },
   "lux:agentRelatedAgents": {
@@ -81,7 +81,7 @@
   },
   "lux:agentSetAboutTime": {
     "queryName": "setAboutAgent",
-    "template": "{searchUriHost}/api/facets/set?q={q}&name=setCreationOrPublicationDate",
+    "template": "{searchUriHost}/api/facets/set?q={q}&name=setCreationOrPublicationDate&sort=asc",
     "scope": "agent"
   },
   "lux:agentSetTypes": {
@@ -96,12 +96,12 @@
   },
   "lux:agentWorkCreatedTime": {
     "queryName": "worksCreatedPublishedInfluencedByAgent",
-    "template": "{searchUriHost}/api/facets/work?q={q}&name=workCreationDate",
+    "template": "{searchUriHost}/api/facets/work?q={q}&name=workCreationDate&sort=asc",
     "scope": "agent"
   },
   "lux:agentWorkPublishedTime": {
     "queryName": "worksCreatedPublishedInfluencedByAgent",
-    "template": "{searchUriHost}/api/facets/work?q={q}&name=workPublicationDate",
+    "template": "{searchUriHost}/api/facets/work?q={q}&name=workPublicationDate&sort=asc",
     "scope": "agent"
   },
   "lux:conceptChildren": {
@@ -116,12 +116,12 @@
   },
   "lux:conceptItemEncounteredTime": {
     "queryName": "itemsOfTypeOrMaterial",
-    "template": "{searchUriHost}/api/facets/item?q={q}&name=itemEncounteredDate",
+    "template": "{searchUriHost}/api/facets/item?q={q}&name=itemEncounteredDate&sort=asc",
     "scope": "concept"
   },
   "lux:conceptItemMadeTime": {
     "queryName": "itemsOfTypeOrMaterial",
-    "template": "{searchUriHost}/api/facets/item?q={q}&name=itemProductionDate",
+    "template": "{searchUriHost}/api/facets/item?q={q}&name=itemProductionDate&sort=asc",
     "scope": "concept"
   },
   "lux:conceptItemTypes": {
@@ -141,7 +141,7 @@
   },
   "lux:conceptRelatedItems": {
     "queryName": "itemsOfTypeOrMaterial",
-    "template": "{searchUriHost}/api/search/item?q={q}",
+    "template": "{searchUriHost}/api/search/item?q={q}&sort=itemHasDigitalImage:asc",
     "scope": "concept"
   },
   "lux:conceptRelatedPlaces": {
@@ -156,12 +156,12 @@
   },
   "lux:conceptWorkCreatedTime": {
     "queryName": "worksRelatedToConcept",
-    "template": "{searchUriHost}/api/facets/work?q={q}&name=workCreationDate",
+    "template": "{searchUriHost}/api/facets/work?q={q}&name=workCreationDate&sort=asc",
     "scope": "concept"
   },
   "lux:conceptWorkPublishedTime": {
     "queryName": "worksRelatedToConcept",
-    "template": "{searchUriHost}/api/facets/work?q={q}&name=workPublicationDate",
+    "template": "{searchUriHost}/api/facets/work?q={q}&name=workPublicationDate&sort=asc",
     "scope": "concept"
   },
   "lux:conceptWorkTypes": {
@@ -221,7 +221,7 @@
   },
   "lux:eventSetAboutTime": {
     "queryName": "setAboutEvent",
-    "template": "{searchUriHost}/api/facets/set?q={q}&name=setCreationOrPublicationDate",
+    "template": "{searchUriHost}/api/facets/set?q={q}&name=setCreationOrPublicationDate&sort=asc",
     "scope": "event"
   },
   "lux:eventSetTypes": {
@@ -331,12 +331,12 @@
   },
   "lux:placeItemMadeTime": {
     "queryName": "itemsProducedAtPlace",
-    "template": "{searchUriHost}/api/facets/item?q={q}&name=itemProductionDate",
+    "template": "{searchUriHost}/api/facets/item?q={q}&name=itemProductionDate&sort=asc",
     "scope": "place"
   },
   "lux:placeItemEncounteredTime": {
     "queryName": "itemsEncounteredAtPlace",
-    "template": "{searchUriHost}/api/facets/item?q={q}&name=itemEncounteredDate",
+    "template": "{searchUriHost}/api/facets/item?q={q}&name=itemEncounteredDate&sort=asc",
     "scope": "place"
   },
   "lux:placeItemTypes": {
@@ -376,7 +376,7 @@
   },
   "lux:placeSetAboutTime": {
     "queryName": "setAboutPlace",
-    "template": "{searchUriHost}/api/facets/set?q={q}&name=setCreationOrPublicationDate",
+    "template": "{searchUriHost}/api/facets/set?q={q}&name=setCreationOrPublicationDate&sort=asc",
     "scope": "place"
   },
   "lux:placeSetTypes": {
@@ -391,17 +391,17 @@
   },
   "lux:placeWorkAboutTime": {
     "queryName": "worksAboutPlace",
-    "template": "{searchUriHost}/api/facets/work?q={q}&name=workCreationOrPublicationDate",
+    "template": "{searchUriHost}/api/facets/work?q={q}&name=workCreationOrPublicationDate&sort=asc",
     "scope": "place"
   },
   "lux:placeWorkCreatedTime": {
     "queryName": "worksCreatedAtPlace",
-    "template": "{searchUriHost}/api/facets/work?q={q}&name=workCreationDate",
+    "template": "{searchUriHost}/api/facets/work?q={q}&name=workCreationDate&sort=asc",
     "scope": "place"
   },
   "lux:placeWorkPublishedTime": {
     "queryName": "worksPublishedAtPlace",
-    "template": "{searchUriHost}/api/facets/work?q={q}&name=workPublicationDate",
+    "template": "{searchUriHost}/api/facets/work?q={q}&name=workPublicationDate&sort=asc",
     "scope": "place"
   },
   "lux:placeWorkTypes": {
@@ -461,12 +461,12 @@
   },
   "lux:setItemEncounteredTime": {
     "queryName": "itemsInSet",
-    "template": "{searchUriHost}/api/facets/item?q={q}&name=itemEncounteredDate",
+    "template": "{searchUriHost}/api/facets/item?q={q}&name=itemEncounteredDate&sort=asc",
     "scope": "set"
   },
   "lux:setItemMadeTime": {
     "queryName": "itemsInSet",
-    "template": "{searchUriHost}/api/facets/item?q={q}&name=itemProductionDate",
+    "template": "{searchUriHost}/api/facets/item?q={q}&name=itemProductionDate&sort=asc",
     "scope": "set"
   },
   "lux:setItemTypes": {

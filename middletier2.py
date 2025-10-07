@@ -204,13 +204,7 @@ class QLeverLuxMiddleTier:
         return JSONResponse(content=self.config.lux_config.lux_config)
 
     async def do_search(
-        self,
-        scope: scopeEnum,
-        q: str,
-        page: int = 1,
-        pageLength: int = 0,
-        sort: str = "relevance",
-        order: orderEnum = "DESC",
+        self, scope: scopeEnum, q: str, page: int = 1, pageLength: int = 0, sort: str = "relevance:desc"
     ):
         """
         Given a search query in the q parameter, perform the search against the database and return the results.
@@ -221,14 +215,12 @@ class QLeverLuxMiddleTier:
             - page (int): The page number for pagination of results
             - pageLength (int): The number of results per page
             - sort (str): How to sort the results, default by relevance to the query
-            - order (orderEnum): The direction of the sort, ASC or DESC
 
         Returns:
             - dict: The search results in the ActivityStreams CollectionPage format
         """
 
         scope = scope.value
-        order = order.value
         page = int(page)
         pageLength = int(pageLength)
         offset = (page - 1) * pageLength
@@ -297,7 +289,7 @@ class QLeverLuxMiddleTier:
         js["_timing"] = res["time"]
         return JSONResponse(content=js)
 
-    async def do_facet(self, scope: scopeEnum, q: str, name: str, page: int = 1):
+    async def do_facet(self, scope: scopeEnum, q: str, name: str, page: int = 1, sort: str = ""):
         """
         Retrieve facet values for a given facet name and query.
 
@@ -306,6 +298,7 @@ class QLeverLuxMiddleTier:
             q (url encoded dict): The query
             name (str): The name of the facet
             page (int): The page number, defaults to 1
+            sort (str): "asc" or "desc"
 
         Returns:
             - dict: The JSON response containing the facet values as an ActivityStream CollectionPage
@@ -315,6 +308,19 @@ class QLeverLuxMiddleTier:
         scope = scope.value
         offset = (int(page) - 1) * self.config.page_length
         soffset = (offset // 60) * 60
+        sort = sort.strip()
+        if sort:
+            try:
+                sort, ascdesc = sort.split(":")
+                ascdesc = ascdesc.upper().strip()
+                sort = sort.strip()
+            except Exception:
+                ascdesc = sort.upper().strip()
+                sort = ""
+        else:
+            sort = ""
+            ascdesc = ""
+
         q = q.replace(self.config.mt_uri, self.config.data_uri)
         jq = json.loads(q)
         parsed = self.json_reader.read(jq, scope)
@@ -338,6 +344,8 @@ class QLeverLuxMiddleTier:
             pred = "lux:itemMemberOfSet/lux:setCuratedBy/lux:agentMemberOfGroup"
         else:
             pname = self.config.facets.get(name, None)
+            if not pname:
+                print(f" *** request for unknown facet {name} ***")
             pname2 = pname["searchTermName"]
             pred = self.sparql_translator.get_predicate(pname2, scope)
             if pred == "lux:missed":
@@ -349,9 +357,7 @@ class QLeverLuxMiddleTier:
         if ":" not in pred and pred != "a":
             pred = f"lux:{pred}"
 
-        print(f" -- facets made pred:{pred}, pname2:{pname2}")
-
-        spq = self.sparql_translator.translate_facet(parsed, pred, offset=soffset)
+        spq = self.sparql_translator.translate_facet(parsed, pred, offset=soffset, sort=sort, order=ascdesc)
         qt = spq.get_text()
         res = await self.fetch_qlever_sparql(qt)
         js["partOf"]["totalItems"] = res["total"] + soffset
@@ -372,7 +378,7 @@ class QLeverLuxMiddleTier:
                     )
                 clause = {pname2: {"id": val}}
             else:
-                clause = {pname2: val}
+                clause = {pname2: val, "_comp": "="}
 
             nq = {"AND": [clause, jq]}
             qstr = urllib.parse.quote(json.dumps(nq, separators=(",", ":")))
@@ -391,15 +397,15 @@ class QLeverLuxMiddleTier:
         xuri = urllib.parse.quote(uri)
         js = {
             "@context": "https://linked.art/ns/v1/search.json",
-            "id": f"https://lux.collections.yale.edu/api/related-list/{scope}?name={name}&page={page}&uri={xuri}",
+            "id": f"{self.config.mt_uri}api/related-list/{scope}?name={name}&page={page}&uri={xuri}",
             "type": "OrderedCollectionPage",
             "orderedItems": [],
-            "next": f"https://lux.collections.yale.edu/api/related-list/{scope}?name={name}&page={page + 1}&uri={xuri}",
+            "next": f"{self.config.mt_uri}api/related-list/{scope}?name={name}&page={page + 1}&uri={xuri}",
         }
 
         # get query from config's sparql cache and substitue in xuri
         spq = self.config.related_list_sparql[scope][name]
-        spq = spq.replace("V_TARGET_URI", xuri)
+        spq = spq.replace("V_TARGET_URI", uri)
         # execute sparql query
         res = await self.fetch_qlever_sparql(spq)
 
@@ -413,21 +419,23 @@ class QLeverLuxMiddleTier:
             for k, v in rd:
                 if not v:
                     break
-                name = self.config.related_list_names.get(k, f"UNKNOWN RELATED LIST: {k}")
+                label = self.config.related_list_names.get(k, f"UNKNOWN RELATED LIST: {k}")
                 qscope = self.config.related_list_scopes[scope][name][k]
 
                 # make json query string with target substitution
-                qjstr = self.config.related_list_json[scope][name][k].replace("URI-HERE", xuri)
+                qjstr = (
+                    self.config.related_list_json[scope][name][k].replace("V_TO_URI", uri).replace("V_FROM_URI", xuri)
+                )
 
-                coll_id = f"https://lux.collections.yale.edu/api/search-estimate/{qscope}?q={qjstr}"
-                first_id = f"https://lux.collections.yale.edu/api/search/{qscope}?page=1&q={qjstr}"
+                coll_id = f"{self.config.mt_uri}api/search-estimate/{qscope}?q={qjstr}"
+                first_id = f"{self.config.mt_uri}api/search/{qscope}?page=1&q={qjstr}"
                 entry = {
                     "id": coll_id,
                     "type": "OrderedCollection",
                     "totalItems": v,
                     "first": first_id,
                     "value": uri,
-                    "name": name,
+                    "name": label,
                 }
                 js["orderedItems"].append(entry)
 
@@ -573,8 +581,8 @@ async def api_get_related_list(scope: scopeEnum, name: str, uri: str, page: int 
 
 
 @app.get("/api/facets/{scope}", operation_id="get_facet")
-async def api_get_facet(scope: scopeEnum, q: str, name: str, page: int = 1):
-    return await mt.do_facet(scope, q, name, page)
+async def api_get_facet(scope: scopeEnum, q: str, name: str, page: int = 1, sort: str = ""):
+    return await mt.do_facet(scope, q, name, page, sort)
 
 
 @app.get("/api/search-estimate/{scope}", operation_id="get_estimate")
@@ -583,15 +591,8 @@ async def api_get_search_estimate(scope: scopeEnum, q={}, page=1):
 
 
 @app.get("/api/search/{scope}", operation_id="get_search")
-async def api_get_search(
-    scope: scopeEnum,
-    q: str,
-    page: int = 1,
-    pageLength: int = 0,
-    sort: str = "relevance",
-    order: orderEnum = "DESC",
-):
-    return await mt.do_search(scope, q, page, pageLength, sort, order)
+async def api_get_search(scope: scopeEnum, q: str, page: int = 1, pageLength: int = 0, sort: str = "relevance:DESC"):
+    return await mt.do_search(scope, q, page, pageLength, sort)
 
 
 async def main(mt_config):

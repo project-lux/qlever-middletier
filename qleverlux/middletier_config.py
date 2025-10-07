@@ -3,6 +3,7 @@
 import os
 import sys
 import json
+from luxql import luxql as luxql_mod
 from luxql import JsonReader, LuxConfig
 from qleverlux.sparql import SparqlTranslator
 from argparse import ArgumentParser
@@ -192,6 +193,19 @@ class MTConfig:
 
         # Init LuxQL FIXME: pass search_config through from env/cli
         self.lux_config = LuxConfig()
+        # recache it into the module so auto configs use it
+        luxql_mod._cached_lux_config = self.lux_config
+
+        self.lux_config.lux_config["terms"]["work"]["workCreationOrPublicationDate"] = {
+            "label": "Creation or Publication Date",
+            "relation": "date",
+        }
+        self.lux_config.lux_config["terms"]["set"]["setCreationOrPublicationDate"] = {
+            "label": "Creation or Publication Date",
+            "relation": "date",
+        }
+        self.lux_config.inverted["workCreationOrPublicationDate"] = ["work"]
+        self.lux_config.inverted["setCreationOrPublicationDate"] = ["set"]
 
         # Trim facets to those with search terms
         for k, v in list(self.facets.items())[:]:

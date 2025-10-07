@@ -315,14 +315,16 @@ class SparqlTranslator:
         sparql.add_group_by(gby)
         ob = OrderBy(["?count"], True)
         sparql.add_order_by(ob)
-
         return sparql
 
-    def translate_facet(self, query, facet, scope=None, limit=None, offset=0):
+    def translate_facet(self, query, facet, scope=None, limit=None, offset=0, sort="", order=""):
         self.calculate_scores = True
         self.counter = 0
         gb = GroupBy(["?facet"])
-        ob = OrderBy(["?facetCount"], True)
+        if not order:
+            ob = OrderBy(["?facetCount"], True)
+        else:
+            ob = OrderBy(["?facet"], order == "DESC")
 
         if limit is None:
             sparql = SelectQuery(offset=offset)
@@ -499,8 +501,12 @@ class SparqlTranslator:
             return [f"lux:startOf{scope.title()}Publication", f"lux:endOf{scope.title()}Publication"]
         elif field == "encounteredDate":
             return [f"lux:startOf{scope.title()}Encounter", f"lux:endOf{scope.title()}Encounter"]
-
-        if field == "hasDigitalImage":
+        elif "CreationOrPublicationDate" in field:
+            return [
+                f"lux:startOf{scope.title()}Creation|lux:startOf{scope.title()}Publication",
+                f"lux:endOf{scope.title()}Creation|lux:endOf{scope.title()}Publication",
+            ]
+        elif field == "hasDigitalImage":
             return f"lux:{scope}{field[0].upper()}{field[1:]}"
         elif field == f"{scope}HasDigitalImage":
             return f"lux:{field}"
