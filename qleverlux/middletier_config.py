@@ -130,7 +130,7 @@ class MTConfig:
 
         # Allow an upstream load balancer to have a different port
         if self.replace_port > 0:
-            self.replace_port = f":{args.port_replace}"
+            self.replace_port = f":{args.replace_port}"
         else:
             self.replace_port = ""
         if self.qlport > 0:
@@ -192,6 +192,19 @@ class MTConfig:
 
         # Init LuxQL FIXME: pass search_config through from env/cli
         self.lux_config = LuxConfig()
+
+        # Trim facets to those with search terms
+        for k, v in list(self.facets.items())[:]:
+            stn = v["searchTermName"]
+            found = False
+            for scope, terms in self.lux_config.lux_config["terms"].items():
+                if stn in terms:
+                    found = True
+                    break
+            if not found:
+                print(f" *** Could not find search term {stn} for facet {k} in search terms, deleting ***")
+                del self.facets[k]
+
         self.json_reader = JsonReader(self.lux_config)
 
         # And init translation layer
@@ -311,24 +324,28 @@ SELECT ?uri ?total {vars} WHERE {{
         return q
 
     def cache_sparql_queries(self):
-        for scope in self.hal_queries:
-            self.sparql_hal_queries[scope] = {}
-            for hal, query in self.hal_queries[scope].items():
-                if type(query) is str:
-                    self.sparql_hal_queries[scope][hal] = ""
-                    continue
-                try:
-                    qscope = query["_scope"]
-                except KeyError:
-                    # Already been processed
-                    continue
-                try:
-                    parsed = self.json_reader.read(query, qscope)
-                except Exception as e:
-                    print(f"Error parsing query for {hal}: {e}\n{query}")
-                    continue
-                spq = self.sparql_translator.translate_search_count(parsed, qscope)
-                self.sparql_hal_queries[scope][hal] = spq
+        for hal, entry in self.hal_queries.items():
+            scope = entry["scope"]
+            qname = entry["queryName"]
+            if scope not in self.sparql_hal_queries:
+                self.sparql_hal_queries[scope] = {}
+
+            query = self.queries.get(qname, {})
+            if not query:
+                print(f"Could not find query {qname} referenced from HAL {hal}")
+                continue
+            try:
+                qscope = query["_scope"]
+            except KeyError:
+                # Already been processed
+                print(f"Couldn't find scope for {hal} / {qname}?")
+            try:
+                parsed = self.json_reader.read(query, qscope)
+            except Exception as e:
+                print(f"Error parsing query for {hal}: {e}\n{query}")
+                continue
+            spq = self.sparql_translator.translate_search_count(parsed, qscope)
+            self.sparql_hal_queries[scope][hal] = spq.get_text()
 
         for scope, entry in self.related_list_scopes.items():
             self.related_list_sparql[scope] = {}

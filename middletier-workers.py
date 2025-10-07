@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 from uuid import UUID
 import urllib
@@ -12,8 +13,13 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import asyncio
 import uvloop
+
+
+# We use Hypercorn for h2 (http/2) support
 from hypercorn.config import Config as HyperConfig
-from hypercorn.asyncio import serve as hypercorn_serve
+
+# from hypercorn.asyncio import serve as hypercorn_serve
+from hypercorn.run import run as hypercorn_run
 
 from luxql.string_parser import QueryParser
 from qleverlux.middletier_config import MTConfig
@@ -145,21 +151,24 @@ class QLeverLuxMiddleTier:
             print(f"MISSED SCOPE IN HAL: {scope}")
             hscope = scope
 
-        # uuri = urllib.parse.quote(uri)
-        for hal, qt in self.config.sparql_hal_queries[hscope].items():
+        uuri = urllib.parse.quote(uri)
+        for hal, spq in self.config.sparql_hal_queries[hscope].items():
+            if type(spq) is str:
+                # related-list ... just add it
+                href = self.config.hal_link_templates[hal].replace("{id}", uuri)
+                links[hal] = {"href": href, "_estimate": 1}
+                continue
+            qt = spq.get_text()
             qt = qt.replace("URI-HERE", uri)
             res = await self.fetch_qlever_sparql(qt)
             ttl = res["results"][0][0]
             if ttl > 0:
-                info = self.config.hal_queries[hal]
-                template = info["template"]
-                qname = info["queryName"]
-                jq = self.config.queries[qname]
+                jq = self.config.hal_queries[hscope][hal]
                 jqs = json.dumps(jq, separators=(",", ":"))
                 jqs = jqs.replace("URI-HERE", uri)
                 jqs = urllib.parse.quote(jqs)
-                href = template.replace("{q}", jqs)
-                links[hal] = {"href": href}
+                href = self.config.hal_link_templates[hal].replace("{q}", jqs)
+                links[hal] = {"href": href, "_estimate": 1}
 
         with open(fn, "w") as f:
             json.dump(links, f)
@@ -200,7 +209,7 @@ class QLeverLuxMiddleTier:
     # API Functions From Here
 
     async def do_get_config(self):
-        # mt-config.luxql-config.lux-advsrch-config (!)
+        # mtconfig.luxql-config.lux-as-config (!)
         return JSONResponse(content=self.config.lux_config.lux_config)
 
     async def do_search(
@@ -349,8 +358,6 @@ class QLeverLuxMiddleTier:
         if ":" not in pred and pred != "a":
             pred = f"lux:{pred}"
 
-        print(f" -- facets made pred:{pred}, pname2:{pname2}")
-
         spq = self.sparql_translator.translate_facet(parsed, pred, offset=soffset)
         qt = spq.get_text()
         res = await self.fetch_qlever_sparql(qt)
@@ -366,7 +373,7 @@ class QLeverLuxMiddleTier:
                     val = val.replace("https://linked.art/ns/terms/", "")
                 else:
                     val = (
-                        val.replace(f"{self.config.data_uri}data/", f"{self.config.mt_uri}data/")
+                        val.replace(f"{self.config.data_uri}data/", f"{self.config.my_uri}data/")
                         .replace("https://lux.collections.yale.edu/ns/", "")
                         .replace("https://linked.art/ns/terms/", "")
                     )
@@ -378,7 +385,7 @@ class QLeverLuxMiddleTier:
             qstr = urllib.parse.quote(json.dumps(nq, separators=(",", ":")))
             js["orderedItems"].append(
                 {
-                    "id": f"{self.config.mt_uri}api/search-estimate/{scope}?q={qstr}",
+                    "id": f"{self.config.my_uri}api/search-estimate/{scope}?q={qstr}",
                     "type": "OrderedCollection",
                     "value": val,
                     "totalItems": ct,
@@ -456,9 +463,6 @@ class QLeverLuxMiddleTier:
             js[k] = qjs[k]
         except Exception:
             js["AND"] = [{"text": q}]
-        jqs = json.dumps(qjs, separators=(",", ":"))
-        jqs = urllib.parse.quote(jqs)
-        js["_link"] = f"{self.config.mt_uri}api/search/{scope}?q={jqs}&page=1"
         return JSONResponse(content=js)
 
     async def do_get_record(self, scope: classEnum, identifier: UUID, profile: profileEnum = None):
@@ -485,7 +489,7 @@ class QLeverLuxMiddleTier:
                 links = {
                     "curies": [
                         {"name": "lux", "href": f"{self.config.mt_uri}api/rels/{{rel}}", "templated": True},
-                        {"name": "la", "href": "https://linked.art/api/1.0/rels/{rel}", "templated": True},
+                        {"name": "la", "href": "https://linked.art/api/1.0/rels/{{rel}}", "templated": True},
                     ],
                     "self": {"href": f"{self.config.mt_uri}data/{scope}/{identifier}"},
                 }
@@ -546,6 +550,8 @@ class QLeverLuxMiddleTier:
 ### cbv() decorator instantiates a new MT instance for each call which isn't needed
 ###
 
+mt = QLeverLuxMiddleTier()
+
 
 @app.get("/api/advanced-search-config", operation_id="get_config")
 async def api_get_search_config():
@@ -594,7 +600,11 @@ async def api_get_search(
     return await mt.do_search(scope, q, page, pageLength, sort, order)
 
 
-async def main(mt_config):
+# --- Main Execution ---
+if __name__ == "__main__":
+    print("Starting hypercorn https/2 server...")
+
+    mt_config = mt.config
     uvloop.install()
     hconfig = HyperConfig()
     hconfig.bind = [f"0.0.0.0:{mt_config.mtport}"]
@@ -603,15 +613,13 @@ async def main(mt_config):
     hconfig.errorlog = "-"
     hconfig.certfile = f"files/{mt_config.cert_name}.pem"
     hconfig.keyfile = f"files/{mt_config.cert_name}-key.pem"
-    hconfig.queue_size = 256
+    hconfig.queue_size = 200
     hconfig.backlog = 2048
     hconfig.read_timeout = 120
-    hconfig.max_app_queue_size = 256
-    await hypercorn_serve(app, hconfig)
-
-
-# --- Main Execution ---
-if __name__ == "__main__":
-    print("Starting hypercorn https/2 server...")
-    mt = QLeverLuxMiddleTier()
-    asyncio.run(main(mt.config))
+    hconfig.max_app_queue_size = 2048
+    hconfig.workers = 16
+    hconfig.worker_class = "uvloop"
+    hconfig.reload = False
+    me = sys.argv[0].replace("./", "").replace(".py", "")
+    hconfig.application_path = f"{me}:app"
+    hypercorn_run(hconfig)
