@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 from uuid import UUID
 import urllib
@@ -11,9 +12,6 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import asyncio
-import uvloop
-from hypercorn.config import Config as HyperConfig
-from hypercorn.asyncio import serve as hypercorn_serve
 
 from luxql.string_parser import QueryParser
 from qleverlux.middletier_config import MTConfig
@@ -27,6 +25,49 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+local_module = sys.modules[__name__]
+
+
+@app.get("/api/advanced-search-config", operation_id="get_config")
+async def api_get_search_config():
+    return await local_module.mt.do_get_config()
+
+
+@app.get("/api/stats", response_model=StatisticsResponse, operation_id="get_statistics")
+async def api_get_statistics():
+    print(local_module)
+    return await local_module.mt.do_stats()
+
+
+@app.get("/data/{scope}/{identifier}", operation_id="get_record")
+async def api_get_record(scope: classEnum, identifier: UUID, profile: profileEnum = None):
+    return await local_module.mt.do_get_record(scope, identifier, profile)
+
+
+@app.get("/api/translate/{scope}", operation_id="translate_string_query")
+async def api_get_translate(scope: scopeEnum, q: str):
+    return await local_module.mt.do_translate(scope, q)
+
+
+@app.get("/api/related-list/{scope}", operation_id="get_related_list")
+async def api_get_related_list(scope: scopeEnum, name: str, uri: str, page: int = 1):
+    return await local_module.mt.do_related_list(scope, name, uri, page)
+
+
+@app.get("/api/facets/{scope}", operation_id="get_facet")
+async def api_get_facet(scope: scopeEnum, q: str, name: str, page: int = 1, sort: str = ""):
+    return await local_module.mt.do_facet(scope, q, name, page, sort)
+
+
+@app.get("/api/search-estimate/{scope}", operation_id="get_estimate")
+async def api_get_search_estimate(scope: scopeEnum, q={}, page=1):
+    return await local_module.mt.do_search_estimate(scope, q, page)
+
+
+@app.get("/api/search/{scope}", operation_id="get_search")
+async def api_get_search(scope: scopeEnum, q: str, page: int = 1, pageLength: int = 0, sort: str = "relevance:DESC"):
+    return await local_module.mt.do_search(scope, q, page, pageLength, sort)
 
 
 class QLeverLuxMiddleTier:
@@ -70,7 +111,9 @@ class QLeverLuxMiddleTier:
                     results["total"] = ret.get("resultSizeTotal", 0)
                     results["time"] = ret.get("time", {}).get("total", "unknown")
                     results["variables"] = ret.get("selected", [])
-                    for r in ret["res"]:
+                    if ret["status"] == "ERROR":
+                        results["error"] = ret["exception"]
+                    for r in ret.get("res", []):
                         r2 = []
                         for i in r:
                             if i is None:
@@ -93,7 +136,6 @@ class QLeverLuxMiddleTier:
         except Exception as e:
             print(q)
             print(e)
-            # raise
             results["error"] = str(e)
         return results
 
@@ -147,19 +189,35 @@ class QLeverLuxMiddleTier:
 
         # uuri = urllib.parse.quote(uri)
         for hal, qt in self.config.sparql_hal_queries[hscope].items():
-            qt = qt.replace("URI-HERE", uri)
+            if type(qt) is dict:
+                # related list
+                scope = qt["scope"]
+                rlname = qt["relatedList"]
+                rtemplate = qt["template"]
+                qt = self.config.related_list_sparql[scope][rlname]
+                qt = qt.replace("V_TARGET_URI", uri)
+                rtemplate = rtemplate.replace("{id}", uri)
+            else:
+                qt = qt.replace("URI-HERE", uri)
+                rtemplate = None
+
             res = await self.fetch_qlever_sparql(qt)
-            ttl = res["results"][0][0]
+
+            ttl = res["total"]
+            print(f"{hal}: {ttl}")
             if ttl > 0:
-                info = self.config.hal_queries[hal]
-                template = info["template"]
-                qname = info["queryName"]
-                jq = self.config.queries[qname]
-                jqs = json.dumps(jq, separators=(",", ":"))
-                jqs = jqs.replace("URI-HERE", uri)
-                jqs = urllib.parse.quote(jqs)
-                href = template.replace("{q}", jqs)
-                links[hal] = {"href": href}
+                if rtemplate is None:
+                    info = self.config.hal_queries[hal]
+                    template = info["template"]
+                    qname = info["queryName"]
+                    jq = self.config.queries[qname]
+                    jqs = json.dumps(jq, separators=(",", ":"))
+                    jqs = jqs.replace("URI-HERE", uri)
+                    jqs = urllib.parse.quote(jqs)
+                    href = template.replace("{q}", jqs)
+                else:
+                    href = rtemplate
+                links[hal] = {"href": href, "_estimate": 1}
 
         with open(fn, "w") as f:
             json.dump(links, f)
@@ -244,7 +302,10 @@ class QLeverLuxMiddleTier:
             # Just write the queries sensibly
             qt = ""
         else:
-            qt = self.make_sparql_query(scope, q, page, pageLength, pred, ascdesc)
+            try:
+                qt = self.make_sparql_query(scope, q, page, pageLength, pred, ascdesc)
+            except ValueError as e:
+                return JSONResponse(status_code=400, content={"error": str(e)})
 
         res = await self.fetch_qlever_sparql(qt)
 
@@ -434,6 +495,7 @@ class QLeverLuxMiddleTier:
         vars = [x[1:].replace("_", "-") for x in res["variables"]]
         for r in res["results"]:
             uri = r[0]
+            luri = uri.replace(self.config.data_uri, self.config.mt_uri)
             rd = list(zip(vars[2:], [x if x else 0 for x in r][2:]))
             rd.sort(key=lambda x: x[1], reverse=True)
             for k, v in rd:
@@ -447,14 +509,15 @@ class QLeverLuxMiddleTier:
                     self.config.related_list_json[scope][name][k].replace("V_TO_URI", uri).replace("V_FROM_URI", xuri)
                 )
 
+                qjstr = urllib.parse.quote(qjstr)
                 coll_id = f"{self.config.mt_uri}api/search-estimate/{qscope}?q={qjstr}"
                 first_id = f"{self.config.mt_uri}api/search/{qscope}?page=1&q={qjstr}"
                 entry = {
                     "id": coll_id,
                     "type": "OrderedCollection",
                     "totalItems": v,
-                    "first": first_id,
-                    "value": uri,
+                    "first": {"id": first_id, "type": "OrderedCollectionPage"},
+                    "value": luri,
                     "name": label,
                 }
                 js["orderedItems"].append(entry)
@@ -566,73 +629,3 @@ class QLeverLuxMiddleTier:
             cts[s] = vals.get(s, 0)
         js = {"estimates": {"searchScopes": cts}}
         return JSONResponse(content=js)
-
-
-###
-### Make the API available to FastAPI via the MiddleTier instance
-### Putting the decorator on the instance functions means `self` is needed
-### cbv() decorator instantiates a new MT instance for each call which isn't needed
-###
-
-
-@app.get("/api/advanced-search-config", operation_id="get_config")
-async def api_get_search_config():
-    return await mt.do_get_config()
-
-
-@app.get("/api/stats", response_model=StatisticsResponse, operation_id="get_statistics")
-async def api_get_statistics():
-    return await mt.do_stats()
-
-
-@app.get("/data/{scope}/{identifier}", operation_id="get_record")
-async def api_get_record(scope: classEnum, identifier: UUID, profile: profileEnum = None):
-    return await mt.do_get_record(scope, identifier, profile)
-
-
-@app.get("/api/translate/{scope}", operation_id="translate_string_query")
-async def api_get_translate(scope: scopeEnum, q: str):
-    return await mt.do_translate(scope, q)
-
-
-@app.get("/api/related-list/{scope}", operation_id="get_related_list")
-async def api_get_related_list(scope: scopeEnum, name: str, uri: str, page: int = 1):
-    return await mt.do_related_list(scope, name, uri, page)
-
-
-@app.get("/api/facets/{scope}", operation_id="get_facet")
-async def api_get_facet(scope: scopeEnum, q: str, name: str, page: int = 1, sort: str = ""):
-    return await mt.do_facet(scope, q, name, page, sort)
-
-
-@app.get("/api/search-estimate/{scope}", operation_id="get_estimate")
-async def api_get_search_estimate(scope: scopeEnum, q={}, page=1):
-    return await mt.do_search_estimate(scope, q, page)
-
-
-@app.get("/api/search/{scope}", operation_id="get_search")
-async def api_get_search(scope: scopeEnum, q: str, page: int = 1, pageLength: int = 0, sort: str = "relevance:DESC"):
-    return await mt.do_search(scope, q, page, pageLength, sort)
-
-
-async def main(mt_config):
-    uvloop.install()
-    hconfig = HyperConfig()
-    hconfig.bind = [f"0.0.0.0:{mt_config.mtport}"]
-    hconfig.loglevel = mt_config.log_level
-    hconfig.accesslog = "-"
-    hconfig.errorlog = "-"
-    hconfig.certfile = f"files/{mt_config.cert_name}.pem"
-    hconfig.keyfile = f"files/{mt_config.cert_name}-key.pem"
-    hconfig.queue_size = 256
-    hconfig.backlog = 2048
-    hconfig.read_timeout = 120
-    hconfig.max_app_queue_size = 256
-    await hypercorn_serve(app, hconfig)
-
-
-# --- Main Execution ---
-if __name__ == "__main__":
-    print("Starting hypercorn https/2 server...")
-    mt = QLeverLuxMiddleTier()
-    asyncio.run(main(mt.config))

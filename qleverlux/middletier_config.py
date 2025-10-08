@@ -341,6 +341,10 @@ SELECT ?uri ?total {vars} WHERE {{
         for hal, entry in self.hal_queries.items():
             scope = entry["scope"]
             qname = entry["queryName"]
+            if qname == "-" and "related-list" in entry["template"]:
+                # related lists get generated differently
+                self.sparql_hal_queries[scope][hal] = entry
+                continue
             if scope not in self.sparql_hal_queries:
                 self.sparql_hal_queries[scope] = {}
 

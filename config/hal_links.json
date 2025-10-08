@@ -46,11 +46,13 @@
   },
   "lux:agentRelatedAgents": {
     "queryName": "-",
+    "relatedList": "relatedToAgent",
     "template": "{searchUriHost}/api/related-list/agent?&name=relatedToAgent&uri={id}",
     "scope": "agent"
   },
   "lux:agentRelatedConcepts": {
     "queryName": "-",
+    "relatedList": "relatedToAgent",
     "template": "{searchUriHost}/api/related-list/concept?&name=relatedToAgent&uri={id}",
     "scope": "agent"
   },
@@ -66,6 +68,7 @@
   },
   "lux:agentRelatedPlaces": {
     "queryName": "-",
+    "relatedList": "relatedToAgent",
     "template": "{searchUriHost}/api/related-list/place?&name=relatedToAgent&uri={id}",
     "scope": "agent"
   },
@@ -131,11 +134,13 @@
   },
   "lux:conceptRelatedAgents": {
     "queryName": "-",
+    "relatedList": "relatedToConcept",
     "template": "{searchUriHost}/api/related-list/agent?&name=relatedToConcept&uri={id}",
     "scope": "concept"
   },
   "lux:conceptRelatedConcepts": {
     "queryName": "-",
+    "relatedList": "relatedToConcept",
     "template": "{searchUriHost}/api/related-list/concept?&name=relatedToConcept&uri={id}",
     "scope": "concept"
   },
@@ -146,6 +151,7 @@
   },
   "lux:conceptRelatedPlaces": {
     "queryName": "-",
+    "relatedList": "relatedToConcept",
     "template": "{searchUriHost}/api/related-list/place?name=relatedToConcept&uri={id}",
     "scope": "concept"
   },
@@ -206,16 +212,19 @@
   },
   "lux:eventRelatedAgents": {
     "queryName": "-",
+    "relatedList": "relatedToEvent",
     "template": "{searchUriHost}/api/related-list/agent?name=relatedToEvent&uri={id}",
     "scope": "event"
   },
   "lux:eventRelatedConcepts": {
     "queryName": "-",
+    "relatedList": "relatedToEvent",
     "template": "{searchUriHost}/api/related-list/concept?name=relatedToEvent&uri={id}",
     "scope": "event"
   },
   "lux:eventRelatedPlaces": {
     "queryName": "-",
+    "relatedList": "relatedToEvent",
     "template": "{searchUriHost}/api/related-list/place?name=relatedToEvent&uri={id}",
     "scope": "event"
   },
@@ -361,16 +370,19 @@
   },
   "lux:placeRelatedAgents": {
     "queryName": "-",
+    "relatedList": "relatedToPlace",
     "template": "{searchUriHost}/api/related-list/agent?name=relatedToPlace&uri={id}",
     "scope": "place"
   },
   "lux:placeRelatedConcepts": {
     "queryName": "-",
+    "relatedList": "relatedToPlace",
     "template": "{searchUriHost}/api/related-list/concept?name=relatedToPlace&uri={id}",
     "scope": "place"
   },
   "lux:placeRelatedPlaces": {
     "queryName": "-",
+    "relatedList": "relatedToPlace",
     "template": "{searchUriHost}/api/related-list/place?name=relatedToPlace&uri={id}",
     "scope": "place"
   },
