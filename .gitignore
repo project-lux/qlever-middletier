@@ -5,6 +5,10 @@
 hal_cache/*
 files/*.pem
 config/old
+results
+test_data
+test_sources
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
