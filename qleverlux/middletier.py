@@ -3,10 +3,13 @@ import sys
 import json
 from uuid import UUID
 import urllib
-import psycopg2
-from psycopg2.extras import RealDictCursor
+
+from psycopg import AsyncConnection
+from psycopg.rows import dict_row
 
 import aiohttp
+import httpx
+
 from async_lru import alru_cache
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
@@ -76,68 +79,104 @@ class QLeverLuxMiddleTier:
         self.json_reader = self.config.json_reader
         self.sparql_translator = self.config.sparql_translator
         self.query_parser = QueryParser()
-        self.connect_to_postgres()
+        self.sparql_client = None
+        self.postgres_conn = None
 
         if not os.path.exists("hal_cache"):
             os.makedirs("hal_cache")
 
-    def connect_to_postgres(self):
+    def start(self):
+        self.connect_to_postgres()
+        self.connect_to_qlever()
+
+    def connect_to_qlever(self):
+        # The async pool needs to exist before async clients can be created
+        if self.config.use_httpx:
+            self.sparql_client = httpx.AsyncClient(http2=True, verify=False, timeout=60.0)
+        else:
+            self.sparql_client = aiohttp.ClientSession()
+
+    async def connect_to_postgres(self):
         try:
             if self.config.pghost:
-                self.conn = psycopg2.connect(
-                    host=self.config.pghost,
-                    port=self.config.pgport,
+                conninfo = f"host={self.config.pghost} port={self.config.pgport} user={self.config.pguser} password={self.config.pgpass} dbname={self.config.pgdb}"
+                self.postgres_conn = await AsyncConnection.connect(conninfo)
+            else:
+                self.postgres_conn = await AsyncConnection.connect(
                     user=self.config.pguser,
-                    password=self.config.pgpass,
                     dbname=self.config.pgdb,
                 )
-            else:
-                self.conn = psycopg2.connect(user=self.config.pguser, dbname=self.config.pgdb)
-        except psycopg2.OperationalError as e:
+        except Exception as e:
             print(f"Error connecting to database: {e}")
-            return None
+        return None
+
+    def process_qlever_results(self, ret):
+        results = {"results": []}
+        results["total"] = ret.get("resultSizeTotal", 0)
+        results["time"] = ret.get("time", {}).get("total", "unknown")
+        results["variables"] = ret.get("selected", [])
+        if ret["status"] == "ERROR":
+            results["error"] = ret["exception"]
+        for r in ret.get("res", []):
+            r2 = []
+            for i in r:
+                if i is None:
+                    r2.append(None)
+                elif i[0] == "<" and i[-1] == ">":
+                    r2.append(i[1:-1])
+                elif "^^<" in i and i[-1] == ">":
+                    val, dt = i[:-1].rsplit("^^<", 1)
+                    val = val[1:-1]
+                    if dt.endswith("int"):
+                        r2.append(int(val))
+                    elif dt.endswith("decimal"):
+                        r2.append(float(val))
+                    else:
+                        r2.append(val)
+                else:
+                    r2.append(i)
+            results["results"].append(r2)
+        return results
+
+    def fetch_qlever_sparql(self, q):
+        if self.sparql_client is None:
+            self.connect_to_qlever()
+        if self.config.use_httpx:
+            return self.fetch_qlever_sparql_httpx(q)
+        else:
+            return self.fetch_qlever_sparql_aiohttp(q)
 
     @alru_cache(maxsize=500)
-    async def fetch_qlever_sparql(self, q):
-        results = {"total": 0, "results": []}
+    async def fetch_qlever_sparql_aiohttp(self, q):
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    self.config.sparql_endpoint,
-                    data={"query": q, "send": 60},
-                    headers={"Accept": "application/qlever-results+json"},
-                ) as response:
-                    ret = await response.json()
-                    results["total"] = ret.get("resultSizeTotal", 0)
-                    results["time"] = ret.get("time", {}).get("total", "unknown")
-                    results["variables"] = ret.get("selected", [])
-                    if ret["status"] == "ERROR":
-                        results["error"] = ret["exception"]
-                    for r in ret.get("res", []):
-                        r2 = []
-                        for i in r:
-                            if i is None:
-                                r2.append(None)
-                            elif i[0] == "<" and i[-1] == ">":
-                                r2.append(i[1:-1])
-                            elif "^^<" in i and i[-1] == ">":
-                                val, dt = i[:-1].rsplit("^^<", 1)
-                                val = val[1:-1]
-                                if dt.endswith("int"):
-                                    r2.append(int(val))
-                                elif dt.endswith("decimal"):
-                                    r2.append(float(val))
-                                else:
-                                    r2.append(val)
-                            else:
-                                r2.append(i)
-                        results["results"].append(r2)
-                    return results
+            async with self.sparql_client.post(
+                self.config.sparql_endpoint,
+                data={"query": q, "send": 60},
+                headers={"Accept": "application/qlever-results+json"},
+            ) as response:
+                ret = await response.json()
+                return self.process_qlever_results(ret)
         except Exception as e:
+            print("--- Qlever Exception ---")
             print(q)
             print(e)
-            results["error"] = str(e)
-        return results
+            return {"total": 0, "results": [], "error": str(e), "status": response.status_code}
+
+    @alru_cache(maxsize=500)
+    async def fetch_qlever_sparql_httpx(self, q):
+        try:
+            response = await self.sparql_client.post(
+                self.config.sparql_endpoint,
+                data={"query": q, "send": 60},
+                headers={"Accept": "application/qlever-results+json"},
+            )
+            ret = response.json()
+            return self.process_qlever_results(ret)
+        except Exception as e:
+            print("--- Qlever Exception ---")
+            print(q)
+            print(e)
+            return {"total": 0, "results": [], "error": str(e), "status": response.status_code}
 
     def make_sparql_query(self, scope, q, page=1, pageLength=0, sort="relevance", order="DESC"):
         if pageLength < 1:
@@ -236,19 +275,20 @@ class QLeverLuxMiddleTier:
         candidates.sort(key=lambda x: len(x.get("language", [])), reverse=True)
         return candidates[0] if candidates else None
 
-    def fetch_record_from_cache(self, identifier):
+    async def fetch_record_from_cache(self, identifier):
         qry = f"SELECT * FROM {self.config.pgtable} WHERE identifier = %s"
         params = (identifier,)
+        row = None
         try:
-            cursor = self.conn.cursor(cursor_factory=RealDictCursor)
-            cursor.execute(qry, params)
-            row = cursor.fetchone()
+            # this will fail at least the very first attempt before the connection is created
+            async with self.postgres_conn.cursor(row_factory=dict_row) as cursor:
+                await cursor.execute(qry, params)
+                row = await cursor.fetchone()
         except Exception:
-            # try re-connecting to the database
             self.connect_to_postgres()
-            cursor = self.conn.cursor(cursor_factory=RealDictCursor)
-            cursor.execute(qry, params)
-            row = cursor.fetchone()
+            async with self.postgres_conn.cursor(row_factory=dict_row) as cursor:
+                await cursor.execute(qry, params)
+                row = await cursor.fetchone()
 
         if row:
             return row["data"]
@@ -495,6 +535,9 @@ class QLeverLuxMiddleTier:
         vars = [x[1:].replace("_", "-") for x in res["variables"]]
         for r in res["results"]:
             uri = r[0]
+            if uri is None:
+                print(res)
+                continue
             luri = uri.replace(self.config.data_uri, self.config.mt_uri)
             rd = list(zip(vars[2:], [x if x else 0 for x in r][2:]))
             rd.sort(key=lambda x: x[1], reverse=True)
@@ -570,7 +613,7 @@ class QLeverLuxMiddleTier:
             profile = profile.value
         identifier = str(identifier)
         scope = str(scope)
-        js = self.fetch_record_from_cache(identifier)
+        js = await self.fetch_record_from_cache(identifier)
         if js:
             if not profile:
                 links = {
@@ -616,7 +659,8 @@ class QLeverLuxMiddleTier:
         """
 
         if self.sparql_translator.portal is not None:
-            spq = f"PREFIX lux: <https://lux.collections.yale.edu/ns/> SELECT ?class (COUNT(?class) as ?count) WHERE {{?what a ?class ; lux:source lux:{self.sparql_translator.portal} . }} GROUP BY ?class"
+            spq = f"PREFIX lux: <https://lux.collections.yale.edu/ns/> SELECT ?class (COUNT(?class) as ?count) \
+            WHERE {{?what a ?class ; lux:source lux:{self.sparql_translator.portal} . }} GROUP BY ?class"
         else:
             spq = "SELECT ?class (COUNT(?class) as ?count) {?what a ?class} GROUP BY ?class"
         # This will always be in the ALRU cache

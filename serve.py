@@ -6,7 +6,8 @@ import qleverlux.middletier
 from qleverlux.middletier import QLeverLuxMiddleTier, app
 
 
-async def main(mt_config):
+async def main(mt):
+    mt_config = mt.config
     uvloop.install()
     hconfig = HyperConfig()
     hconfig.bind = [f"0.0.0.0:{mt_config.mtport}"]
@@ -19,6 +20,8 @@ async def main(mt_config):
     hconfig.backlog = 2048
     hconfig.read_timeout = 120
     hconfig.max_app_queue_size = 256
+    await mt.connect_to_postgres()
+    mt.connect_to_qlever()
     await hypercorn_serve(app, hconfig)
 
 
@@ -27,4 +30,4 @@ if __name__ == "__main__":
     print("Starting hypercorn https/2 server...")
     mt = QLeverLuxMiddleTier()
     qleverlux.middletier.mt = mt
-    asyncio.run(main(mt.config))
+    asyncio.run(main(mt))

@@ -75,6 +75,9 @@ class MTConfig:
         # use stopwords or not, default to yes
         self.use_stopwords = os.getenv("QLMT_USESTOPWORDS", "true").lower() == "true"
 
+        # use httpx or aiohttp, default to httpx for HTTP/2 support
+        self.use_httpx = os.getenv("QLMT_USEHTTPX", "true").lower() == "true"
+
         # Now look for overrides from the command line
 
         parser = ArgumentParser()
@@ -118,6 +121,7 @@ class MTConfig:
         )
         parser.add_argument("--facet-delay", type=int, help="Delay in milliseconds for facets", default=0)
         parser.add_argument("--use-stopwords", action="store_true", help="Use stopwords")
+        parser.add_argument("--use-httpx", action="store_true", help="Use stopwords")
         parser.add_argument(
             "--search-config", type=str, help="Path to search configuration file", default=self.search_config
         )
