@@ -129,7 +129,7 @@ class MTConfig:
         )
         parser.add_argument("--facet-delay", type=int, help="Delay in milliseconds for facets", default=0)
         parser.add_argument("--use-stopwords", action="store_true", help="Use stopwords")
-        parser.add_argument("--use-httpx", action="store_true", help="Use stopwords")
+        parser.add_argument("--use-httpx", action="store_true", help="Use httpx for http2 connections to qlever")
         parser.add_argument(
             "--search-config", type=str, help="Path to search configuration file", default=self.search_config
         )
@@ -311,7 +311,11 @@ PREFIX lux: <https://lux.collections.yale.edu/ns/>
                 target_scope = scope
                 while target_scope not in ["item", "work", "set", "collection"]:
                     f = fields.pop(0)
-                    p = flds[target_scope][f]
+                    try:
+                        p = flds[target_scope][f]
+                    except KeyError:
+                        print(f"KeyError: {f} not found in {target_scope}")
+                        continue
                     aq.append(p)
                     try:
                         target_scope = self.lux_config.lux_config["terms"][target_scope][f]["relation"]
