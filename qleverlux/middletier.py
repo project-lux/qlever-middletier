@@ -39,7 +39,6 @@ async def api_get_search_config():
 
 @app.get("/api/stats", response_model=StatisticsResponse, operation_id="get_statistics")
 async def api_get_statistics():
-    print(local_module)
     return await local_module.mt.do_stats()
 
 
