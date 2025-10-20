@@ -416,7 +416,7 @@ if USE_STR_ENUM:
         PERIOD = "period"
         ACTIVITY = "activity"
 
-    class profileEnum(str, Enum):
+    class profileEnum(StrEnum):
         DEFAULT = ""
         NAME = "name"
         RESULTS = "results"
