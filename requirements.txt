@@ -8,5 +8,6 @@ hypercorn
 aiohttp
 async_lru
 uvloop
+dotenv
 httpx[http2]
 git+https://github.com/project-lux/luxql.git

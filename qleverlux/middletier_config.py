@@ -11,7 +11,15 @@ from dotenv import load_dotenv
 from getpass import getuser
 
 from pydantic import BaseModel
-from enum import StrEnum
+
+try:
+    from enum import StrEnum
+
+    USE_STR_ENUM = True
+except ImportError:
+    from enum import Enum
+
+    USE_STR_ENUM = False
 
 if "--pgpass" in sys.argv or "--qlpass" in sys.argv:
     print("Don't put passwords in the command line, as they're visible via ps")
@@ -383,35 +391,64 @@ SELECT ?uri ?total {vars} WHERE {{
                     self.related_list_json[scope][qtype][qname] = json.dumps(jq, separators=(",", ":"))
 
 
-class scopeEnum(StrEnum):
-    ITEM = "item"
-    WORK = "work"
-    AGENT = "agent"
-    PLACE = "place"
-    CONCEPT = "concept"
-    SET = "set"
-    EVENT = "event"
+if USE_STR_ENUM:
 
+    class scopeEnum(StrEnum):
+        ITEM = "item"
+        WORK = "work"
+        AGENT = "agent"
+        PLACE = "place"
+        CONCEPT = "concept"
+        SET = "set"
+        EVENT = "event"
 
-class classEnum(StrEnum):
-    OBJECT = "object"
-    DIGITAL = "digital"
-    TEXT = "text"
-    VISUAL = "visual"
-    PLACE = "place"
-    PERSON = "person"
-    GROUP = "group"
-    SET = "set"
-    CONCEPT = "concept"
-    EVENT = "event"
-    PERIOD = "period"
-    ACTIVITY = "activity"
+    class classEnum(StrEnum):
+        OBJECT = "object"
+        DIGITAL = "digital"
+        TEXT = "text"
+        VISUAL = "visual"
+        PLACE = "place"
+        PERSON = "person"
+        GROUP = "group"
+        SET = "set"
+        CONCEPT = "concept"
+        EVENT = "event"
+        PERIOD = "period"
+        ACTIVITY = "activity"
 
+    class profileEnum(str, Enum):
+        DEFAULT = ""
+        NAME = "name"
+        RESULTS = "results"
+else:
 
-class profileEnum(StrEnum):
-    DEFAULT = ""
-    NAME = "name"
-    RESULTS = "results"
+    class scopeEnum(str, Enum):
+        ITEM = "item"
+        WORK = "work"
+        AGENT = "agent"
+        PLACE = "place"
+        CONCEPT = "concept"
+        SET = "set"
+        EVENT = "event"
+
+    class classEnum(str, Enum):
+        OBJECT = "object"
+        DIGITAL = "digital"
+        TEXT = "text"
+        VISUAL = "visual"
+        PLACE = "place"
+        PERSON = "person"
+        GROUP = "group"
+        SET = "set"
+        CONCEPT = "concept"
+        EVENT = "event"
+        PERIOD = "period"
+        ACTIVITY = "activity"
+
+    class profileEnum(str, Enum):
+        DEFAULT = ""
+        NAME = "name"
+        RESULTS = "results"
 
 
 class SearchScopes(BaseModel):
