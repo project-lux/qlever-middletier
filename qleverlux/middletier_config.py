@@ -262,7 +262,12 @@ class MTConfig:
             while target_scope != qscope:
                 f = fields.pop(0)
                 inv = self.inverses[target_scope][f]
-                target_scope = self.lux_config.lux_config["terms"][target_scope][f]["relation"]
+                try:
+                    target_scope = self.lux_config.lux_config["terms"][target_scope][f]["relation"]
+                except KeyError:
+                    print(f"Failed to traverse for {qname}")
+                    print(f"Invalid field '{f}' for scope '{target_scope}'")
+                    break
                 aq[inv] = {}
                 aq = aq[inv]
             aq["id"] = from_uri
