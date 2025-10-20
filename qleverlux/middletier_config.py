@@ -314,22 +314,25 @@ PREFIX lux: <https://lux.collections.yale.edu/ns/>
                     try:
                         p = flds[target_scope][f]
                     except KeyError:
+                        print(f"flds for {key}")
                         print(f"KeyError: {f} not found in {target_scope}")
-                        continue
+                        break
                     aq.append(p)
                     try:
                         target_scope = self.lux_config.lux_config["terms"][target_scope][f]["relation"]
                     except KeyError:
+                        print(f"reset target scope for relation in {key}")
                         print(f"KeyError: {f} not found in {target_scope}")
-                        continue
+                        break
 
                 bq = []
                 for f in fields:
                     try:
                         p2 = flds[target_scope][f]
                     except KeyError:
+                        print(f"Second half, missed for {key}")
                         print(f"KeyError: {f} not found in {target_scope}")
-                        continue
+                        break
                     bq.append(p2)
                     target_scope = self.lux_config.lux_config["terms"][target_scope][f]["relation"]
 
