@@ -332,10 +332,11 @@ PREFIX lux: <https://lux.collections.yale.edu/ns/>
         coalesces = " + ".join([f"COALESCE(?{x}, 0)" for x in names])
         vars = " ".join([f"?{x}" for x in names])
 
+        newline = "\n"  # work around no backslash in f string
         q = f"""
 {PREFIXES}
 SELECT ?uri ?total {vars} WHERE {{
-    {"\n".join(fragments)}
+    {newline.join(fragments)}
     FILTER(!(?uri = <V_TARGET_URI>))
     BIND({coalesces} AS ?total)
 }} ORDER BY DESC(?total) LIMIT 50"""
