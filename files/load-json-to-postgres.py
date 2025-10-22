@@ -6,7 +6,7 @@ import ujson as json
 import psycopg2
 from psycopg2.extras import RealDictCursor, Json
 
-conn = psycopg2.connect(user="ubuntu", dbname="ubuntu", host="10.5.156.132", port=5432, password="ubuntu")
+conn = psycopg2.connect(user="ubuntu", dbname="ubuntu", host="10.5.156.83", port=5432, password="ubuntu")
 table = "lux_data_cache"
 
 
