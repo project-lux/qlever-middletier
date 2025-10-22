@@ -32,7 +32,7 @@ TIMEOUT            = 60s
 
 [runtime]
 SYSTEM = docker
-IMAGE  = qlever:latest
+IMAGE  = qlever-debug:latest
 
 [ui]
 UI_CONFIG = lux
