@@ -246,7 +246,7 @@ class QLeverLuxMiddleTier:
             print(f"SPARQL for HAL: {qt}")
             res = await self.fetch_qlever_sparql(qt)
             print(res)
-            ttl = res["results"][0]
+            ttl = res["results"][0][0]
             print(f"{hal}: {ttl}")
             if ttl > 0:
                 if rtemplate is None:
