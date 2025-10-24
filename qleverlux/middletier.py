@@ -243,9 +243,10 @@ class QLeverLuxMiddleTier:
                 qt = qt.replace("URI-HERE", uri)
                 rtemplate = None
 
+            print(f"SPARQL for HAL: {qt}")
             res = await self.fetch_qlever_sparql(qt)
-
-            ttl = res["total"]
+            print(res)
+            ttl = res["results"][0]
             print(f"{hal}: {ttl}")
             if ttl > 0:
                 if rtemplate is None:
