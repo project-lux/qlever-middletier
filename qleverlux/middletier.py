@@ -232,7 +232,11 @@ class QLeverLuxMiddleTier:
                 scope = qt["scope"]
                 rlname = qt["relatedList"]
                 rtemplate = qt["template"]
-                qt = self.config.related_list_sparql[scope][rlname]
+                try:
+                    qt = self.config.related_list_sparql[scope][rlname]
+                except KeyError:
+                    print(f"Missing related list for {scope} and {rlname}")
+                    continue
                 qt = qt.replace("V_TARGET_URI", uri)
                 rtemplate = rtemplate.replace("{id}", uri)
             else:
@@ -284,7 +288,7 @@ class QLeverLuxMiddleTier:
                 await cursor.execute(qry, params)
                 row = await cursor.fetchone()
         except Exception:
-            self.connect_to_postgres()
+            await self.connect_to_postgres()
             async with self.postgres_conn.cursor(row_factory=dict_row) as cursor:
                 await cursor.execute(qry, params)
                 row = await cursor.fetchone()
