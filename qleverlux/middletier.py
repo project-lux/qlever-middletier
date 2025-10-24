@@ -247,7 +247,7 @@ class QLeverLuxMiddleTier:
             print(res)
             ttl = res["results"][0][0]
             if type(ttl) is not int:
-                ttl = res["results"]["total"]
+                ttl = res["total"]
             if ttl > 0:
                 if rtemplate is None:
                     info = self.config.hal_queries[hal]
