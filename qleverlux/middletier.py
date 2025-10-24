@@ -244,7 +244,6 @@ class QLeverLuxMiddleTier:
                 rtemplate = None
 
             res = await self.fetch_qlever_sparql(qt)
-            print(res)
             ttl = res["results"][0][0]
             if type(ttl) is not int:
                 ttl = res["total"]
