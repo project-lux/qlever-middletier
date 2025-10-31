@@ -75,6 +75,7 @@ async def api_get_search(scope: scopeEnum, q: str, page: int = 1, pageLength: in
 class QLeverLuxMiddleTier:
     def __init__(self):
         self.config = MTConfig()
+        self.config.print_self()
         self.json_reader = self.config.json_reader
         self.sparql_translator = self.config.sparql_translator
         self.query_parser = QueryParser()

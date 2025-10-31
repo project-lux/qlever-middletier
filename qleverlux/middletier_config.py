@@ -258,7 +258,10 @@ class MTConfig:
         print("---- Middletier Configuration ----")
         print()
         ### FIXME: print out all the settings
-        print(f"Facets: {len(self.facets)}")
+
+        print(f"Postgres HAL: {self.use_postgres_hal_cache}")
+        print(f"Disk HAL:     {self.use_disk_hal_cache}")
+        print(f"Facets:       {len(self.facets)}")
         print(f"Search Terms: {len(self.lux_config.lux_config['terms'])}")
 
     def make_related_json_stub(self, qname, scope, qscope):
