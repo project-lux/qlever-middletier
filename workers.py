@@ -20,11 +20,11 @@ if __name__ == "__main__":
     hconfig.errorlog = "-"
     hconfig.certfile = f"files/{mt_config.cert_name}.pem"
     hconfig.keyfile = f"files/{mt_config.cert_name}-key.pem"
-    hconfig.queue_size = 256
-    hconfig.backlog = 1024
-    hconfig.read_timeout = 59
-    hconfig.max_app_queue_size = 256
-    hconfig.workers = 16
+    hconfig.queue_size = mt_config.queue_size
+    hconfig.backlog = mt_config.backlog
+    hconfig.read_timeout = mt_config.read_timeout
+    hconfig.max_app_queue_size = mt_config.max_app_queue_size
+    hconfig.workers = mt_config.workers
     hconfig.worker_class = "uvloop"
     hconfig.reload = False
     me = sys.argv[0].replace("./", "").replace(".py", "")

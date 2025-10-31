@@ -16,10 +16,10 @@ async def main(mt):
     hconfig.errorlog = "-"
     hconfig.certfile = f"files/{mt_config.cert_name}.pem"
     hconfig.keyfile = f"files/{mt_config.cert_name}-key.pem"
-    hconfig.queue_size = 256
-    hconfig.backlog = 1024
-    hconfig.read_timeout = 59
-    hconfig.max_app_queue_size = 256
+    hconfig.queue_size = mt_config.queue_size
+    hconfig.backlog = mt_config.backlog
+    hconfig.read_timeout = mt_config.read_timeout
+    hconfig.max_app_queue_size = mt_config.max_app_queue_size
     await mt.connect_to_postgres()
     mt.connect_to_qlever()
     await hypercorn_serve(app, hconfig)

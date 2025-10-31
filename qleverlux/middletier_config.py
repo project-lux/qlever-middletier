@@ -139,6 +139,14 @@ class MTConfig:
         parser.add_argument("--use-postgres-hal-cache", action="store_true", help="Use postgres hal cache")
         parser.add_argument("--use-disk-hal-cache", action="store_true", help="Use postgres hal cache")
 
+        parser.add_argument("--queue-size", type=int, help="Size of the queue", default=256)
+        parser.add_argument("--backlog", type=int, help="Backlog size for the queue", default=1024)
+        parser.add_argument("--read-timeout", type=int, help="Timeout for read operations", default=30)
+        parser.add_argument(
+            "--max-app-queue-size", type=int, help="Maximum size of the application queue", default=512
+        )
+        parser.add_argument("--workers", type=int, help="Number of worker processes", default=2)
+
         parser.add_argument(
             "--qlever-timeout", type=int, help="Timeout for qlever requests", default=self.qlever_timeout
         )
@@ -259,10 +267,16 @@ class MTConfig:
         print()
         ### FIXME: print out all the settings
 
-        print(f"Postgres HAL: {self.use_postgres_hal_cache}")
-        print(f"Disk HAL:     {self.use_disk_hal_cache}")
+        print(f"Postgres HAL:   {self.use_postgres_hal_cache}")
+        print(f"Disk HAL:       {self.use_disk_hal_cache}")
+
+        print(f"Queue Size:     {self.queue_size}")
+        print(f"App Queue Size: {self.max_app_queue_size}")
+        print(f"Backlog size:   {self.backlog}")
+        print(f"Read timeout:   {self.read_timeout}")
+        print(f"SPARQL timeout: {self.sparql_timeout}")
+        print()
         print(f"Facets:       {len(self.facets)}")
-        print(f"Search Terms: {len(self.lux_config.lux_config['terms'])}")
 
     def make_related_json_stub(self, qname, scope, qscope):
         # given created, createdBy
