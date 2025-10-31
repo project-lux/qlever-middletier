@@ -316,7 +316,7 @@ class QLeverLuxMiddleTier:
             # this will fail at least the very first attempt before the connection is created
             if self.postgres_conn is None:
                 await self.connect_to_postgres()
-            async with self.postgres_conn.cursor(row_factory=dict_row) as cursor:
+            async with self.postgres_conn.cursor() as cursor:
                 await cursor.execute(qry, params)
                 row = await cursor.fetchone()
         except Exception:
