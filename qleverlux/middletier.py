@@ -323,6 +323,7 @@ class QLeverLuxMiddleTier:
                 await cursor.execute(qry, params)
                 row = await cursor.fetchone()
 
+        print(row)
         if row:
             return row["data"]
         else:
