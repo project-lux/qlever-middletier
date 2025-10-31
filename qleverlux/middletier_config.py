@@ -87,6 +87,9 @@ class MTConfig:
         # use httpx or aiohttp, default to httpx for HTTP/2 support
         self.use_httpx = os.getenv("QLMT_USEHTTPX", "true").lower() == "true"
 
+        self.use_postgres_hal_cache = os.getenv("QLMT_USE_POSTGRES_HAL_CACHE", "false").lower() == "true"
+        self.use_disk_hal_cache = os.getenv("QLMT_USE_DISK_HAL_CACHE", "true").lower() == "true"
+
         self.qlever_timeout = os.getenv("QLMT_QLEVER_TIMEOUT", 30)
 
         # Now look for overrides from the command line
@@ -133,6 +136,8 @@ class MTConfig:
         parser.add_argument("--facet-delay", type=int, help="Delay in milliseconds for facets", default=0)
         parser.add_argument("--use-stopwords", action="store_true", help="Use stopwords")
         parser.add_argument("--use-httpx", action="store_true", help="Use httpx for http2 connections to qlever")
+        parser.add_argument("--use-postgres-hal-cache", action="store_true", help="Use postgres hal cache")
+        parser.add_argument("--use-disk-hal-cache", action="store_true", help="Use postgres hal cache")
 
         parser.add_argument(
             "--qlever-timeout", type=int, help="Timeout for qlever requests", default=self.qlever_timeout
@@ -248,6 +253,13 @@ class MTConfig:
         self.related_list_json = {}
         self.related_list_sparql = {}
         self.cache_sparql_queries()
+
+    def print_config(self):
+        print("---- Middletier Configuration ----")
+        print()
+        ### FIXME: print out all the settings
+        print(f"Facets: {len(self.facets)}")
+        print(f"Search Terms: {len(self.lux_config.lux_config['terms'])}")
 
     def make_related_json_stub(self, qname, scope, qscope):
         # given created, createdBy

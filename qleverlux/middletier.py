@@ -215,7 +215,7 @@ class QLeverLuxMiddleTier:
         return qt
 
     async def do_hal_links(self, scope, identifier):
-        if self.config.disk_hal_cache:
+        if self.config.use_disk_hal_cache:
             fn = os.path.join(self.config.hal_cache_path, f"{identifier}.json")
             if os.path.exists(fn):
                 with open(fn, "r") as f:
@@ -278,10 +278,10 @@ class QLeverLuxMiddleTier:
                 links[hal] = {"href": href, "_estimate": 1}
 
         # XXX FIXME: Don't write to file, but write back to a postgres table
-        if self.config.disk_hal_cache:
+        if self.config.use_disk_hal_cache:
             with open(fn, "w") as f:
                 json.dump(links, f)
-        elif self.config.postgres_hal_cache:
+        elif self.config.use_postgres_hal_cache:
             await self.store_postgres_hal_cache(links)
         return links
 
@@ -305,7 +305,7 @@ class QLeverLuxMiddleTier:
             await cursor.execute(qry, params)
 
     async def fetch_record_from_cache(self, identifier):
-        if self.config.postgres_hal_cache:
+        if self.config.use_postgres_hal_cache:
             qry = f"SELECT doc.data, hal.data FROM {self.config.pgtable} AS doc LEFT JOIN {self.config.pgtable_hal} AS hal ON doc.identifier = hal.identifier WHERE identifier = %s"
         else:
             qry = f"SELECT * FROM {self.config.pgtable} WHERE identifier = %s"
