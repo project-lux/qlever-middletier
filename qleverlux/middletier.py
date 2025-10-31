@@ -326,10 +326,11 @@ class QLeverLuxMiddleTier:
                 await cursor.execute(qry, params)
                 row = await cursor.fetchone()
 
-        print(qry)
-        print(row)
         if row:
-            return row["data"]
+            if type(row) is dict:
+                return row["data"]
+            elif type(row) is tuple:
+                return row
         else:
             return None
 
@@ -654,6 +655,11 @@ class QLeverLuxMiddleTier:
         identifier = str(identifier)
         scope = str(scope)
         js = await self.fetch_record_from_cache(identifier)
+        if type(js) is tuple:
+            cache_links = js[1]
+            js = js[0]
+        else:
+            cache_links = {}
         if js:
             if not profile:
                 links = {
@@ -664,8 +670,12 @@ class QLeverLuxMiddleTier:
                     "self": {"href": f"{self.config.mt_uri}data/{scope}/{identifier}"},
                 }
                 # Calculate _links here
-                more_links = await self.do_hal_links(scope, identifier)
-                links.update(more_links)
+
+                if cache_links:
+                    links.update(cache_links)
+                else:
+                    more_links = await self.do_hal_links(scope, identifier)
+                    links.update(more_links)
                 jstr = json.dumps(js)
                 jstr = jstr.replace(f"{self.config.data_uri}data/", f"{self.config.mt_uri}data/")
                 js2 = json.loads(jstr)
