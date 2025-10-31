@@ -275,6 +275,7 @@ class MTConfig:
         print(f"Backlog size:   {self.backlog}")
         print(f"Read timeout:   {self.read_timeout}")
         print(f"SPARQL timeout: {self.qlever_timeout}")
+        print(f"Workers:        {self.workers}")
         print()
         print(f"Facets:       {len(self.facets)}")
 
