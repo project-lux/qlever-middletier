@@ -307,7 +307,7 @@ class QLeverLuxMiddleTier:
 
     async def fetch_record_from_cache(self, identifier):
         if self.config.use_postgres_hal_cache:
-            qry = f"SELECT doc.data, hal.data FROM {self.config.pgtable} AS doc LEFT JOIN {self.config.pgtable_hal} AS hal ON doc.identifier = hal.identifier WHERE identifier = %s"
+            qry = f"SELECT doc.data, hal.data FROM {self.config.pgtable} AS doc LEFT JOIN {self.config.pgtable_hal} AS hal ON doc.identifier = hal.identifier WHERE doc.identifier = %s"
         else:
             qry = f"SELECT * FROM {self.config.pgtable} WHERE identifier = %s"
         params = (identifier,)
