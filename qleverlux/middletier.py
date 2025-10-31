@@ -283,7 +283,7 @@ class QLeverLuxMiddleTier:
             with open(fn, "w") as f:
                 json.dump(links, f)
         elif self.config.use_postgres_hal_cache:
-            await self.store_postgres_hal_cache(links)
+            await self.store_postgres_hal_cache(identifier, links)
         return links
 
     def get_primary_name(self, names):
