@@ -80,6 +80,8 @@ class QLeverLuxMiddleTier:
         self.query_parser = QueryParser()
         self.sparql_client = None
         self.postgres_conn = None
+        self.open_requests = 0
+        self.warning_request_limit = 16
 
         if not os.path.exists("hal_cache"):
             os.makedirs("hal_cache")
@@ -91,7 +93,7 @@ class QLeverLuxMiddleTier:
     def connect_to_qlever(self):
         # The async pool needs to exist before async clients can be created
         if self.config.use_httpx:
-            self.sparql_client = httpx.AsyncClient(http2=True, verify=False, timeout=60.0)
+            self.sparql_client = httpx.AsyncClient(http2=True, verify=False, timeout=self.config.qlever_timeout)
         else:
             self.sparql_client = aiohttp.ClientSession()
 
@@ -140,6 +142,10 @@ class QLeverLuxMiddleTier:
     def fetch_qlever_sparql(self, q):
         if self.sparql_client is None:
             self.connect_to_qlever()
+
+        if self.open_requests > 16:
+            print(f"!!! {self.open_requests} open requests")
+
         if self.config.use_httpx:
             return self.fetch_qlever_sparql_httpx(q)
         else:
@@ -148,33 +154,39 @@ class QLeverLuxMiddleTier:
     @alru_cache(maxsize=500)
     async def fetch_qlever_sparql_aiohttp(self, q):
         try:
+            self.open_requests += 1
             async with self.sparql_client.post(
                 self.config.sparql_endpoint,
                 data={"query": q, "send": 60},
                 headers={"Accept": "application/qlever-results+json"},
             ) as response:
                 ret = await response.json()
+                self.open_requests -= 1
                 return self.process_qlever_results(ret)
         except Exception as e:
             print("--- Qlever Exception ---")
             print(q)
             print(e)
+            self.open_requests -= 1
             return {"total": 0, "results": [], "error": str(e), "status": response.status_code}
 
     @alru_cache(maxsize=500)
     async def fetch_qlever_sparql_httpx(self, q):
         try:
+            self.open_requests += 1
             response = await self.sparql_client.post(
                 self.config.sparql_endpoint,
                 data={"query": q, "send": 60},
                 headers={"Accept": "application/qlever-results+json"},
             )
             ret = response.json()
+            self.open_requests -= 1
             return self.process_qlever_results(ret)
         except Exception as e:
             print("--- Qlever Exception ---")
             print(q)
             print(e)
+            self.open_requests -= 1
             return {"total": 0, "results": [], "error": str(e), "status": response.status_code}
 
     def make_sparql_query(self, scope, q, page=1, pageLength=0, sort="relevance", order="DESC"):
@@ -203,11 +215,12 @@ class QLeverLuxMiddleTier:
         return qt
 
     async def do_hal_links(self, scope, identifier):
-        fn = os.path.join(self.config.hal_cache_path, f"{identifier}.json")
-        if os.path.exists(fn):
-            with open(fn, "r") as f:
-                links = json.load(f)
-            return links
+        if self.config.disk_hal_cache:
+            fn = os.path.join(self.config.hal_cache_path, f"{identifier}.json")
+            if os.path.exists(fn):
+                with open(fn, "r") as f:
+                    links = json.load(f)
+                return links
 
         uri = f"{self.config.data_uri}data/{scope}/{identifier}"
         links = {}
@@ -244,7 +257,10 @@ class QLeverLuxMiddleTier:
                 rtemplate = None
 
             res = await self.fetch_qlever_sparql(qt)
-            ttl = res["results"][0][0]
+            try:
+                ttl = res["results"][0][0]
+            except IndexError:
+                ttl = 0
             if type(ttl) is not int:
                 ttl = res["total"]
             if ttl > 0:
@@ -261,8 +277,12 @@ class QLeverLuxMiddleTier:
                     href = rtemplate
                 links[hal] = {"href": href, "_estimate": 1}
 
-        with open(fn, "w") as f:
-            json.dump(links, f)
+        # XXX FIXME: Don't write to file, but write back to a postgres table
+        if self.config.disk_hal_cache:
+            with open(fn, "w") as f:
+                json.dump(links, f)
+        elif self.config.postgres_hal_cache:
+            await self.store_postgres_hal_cache(links)
         return links
 
     def get_primary_name(self, names):
@@ -278,8 +298,17 @@ class QLeverLuxMiddleTier:
         candidates.sort(key=lambda x: len(x.get("language", [])), reverse=True)
         return candidates[0] if candidates else None
 
+    async def store_postgres_hal_cache(self, identifier, links):
+        async with self.postgres_conn.cursor(row_factory=dict_row) as cursor:
+            qry = f"INSERT INTO {self.config.pgtable_hal} (identifier, data) VALUES (%s, %s)"
+            params = (identifier, links)
+            await cursor.execute(qry, params)
+
     async def fetch_record_from_cache(self, identifier):
-        qry = f"SELECT * FROM {self.config.pgtable} WHERE identifier = %s"
+        if self.config.postgres_hal_cache:
+            qry = f"SELECT doc.data, hal.data FROM {self.config.pgtable} AS doc LEFT JOIN {self.config.pgtable_hal} AS hal ON doc.identifier = hal.identifier WHERE identifier = %s"
+        else:
+            qry = f"SELECT * FROM {self.config.pgtable} WHERE identifier = %s"
         params = (identifier,)
         row = None
         try:
@@ -454,7 +483,9 @@ class QLeverLuxMiddleTier:
             pname = self.config.facets.get(name, None)
             if not pname:
                 print(f" *** request for unknown facet {name} ***")
-            pname2 = pname["searchTermName"]
+                pname2 = "MISSING"
+            else:
+                pname2 = pname["searchTermName"]
             pred = self.sparql_translator.get_predicate(pname2, scope)
             if pred == "lux:missed":
                 pred = self.sparql_translator.get_leaf_predicate(pname2, scope)

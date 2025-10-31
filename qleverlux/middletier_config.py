@@ -44,6 +44,7 @@ class MTConfig:
         self.pgdb = os.getenv("QLMT_PGDB", getuser())
         self.pgtable = os.getenv("QLMT_PGTABLE", "lux_data_cache")
         self.pgsslmode = os.getenv("QLMT_PGSSLMODE", "require")
+        self.pgtable_hal = os.getenv("QLMT_PGTABLE_HAL", "hal_data_cache")
 
         # Environment variables to connect to the QLever SPARQL endpoint
         self.qlproto = os.getenv("QLMT_QLPROTO", "http")
@@ -85,6 +86,8 @@ class MTConfig:
 
         # use httpx or aiohttp, default to httpx for HTTP/2 support
         self.use_httpx = os.getenv("QLMT_USEHTTPX", "true").lower() == "true"
+
+        self.qlever_timeout = os.getenv("QLMT_QLEVER_TIMEOUT", 30)
 
         # Now look for overrides from the command line
 
@@ -130,6 +133,11 @@ class MTConfig:
         parser.add_argument("--facet-delay", type=int, help="Delay in milliseconds for facets", default=0)
         parser.add_argument("--use-stopwords", action="store_true", help="Use stopwords")
         parser.add_argument("--use-httpx", action="store_true", help="Use httpx for http2 connections to qlever")
+
+        parser.add_argument(
+            "--qlever-timeout", type=int, help="Timeout for qlever requests", default=self.qlever_timeout
+        )
+
         parser.add_argument(
             "--search-config", type=str, help="Path to search configuration file", default=self.search_config
         )

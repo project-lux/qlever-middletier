@@ -17,8 +17,8 @@ async def main(mt):
     hconfig.certfile = f"files/{mt_config.cert_name}.pem"
     hconfig.keyfile = f"files/{mt_config.cert_name}-key.pem"
     hconfig.queue_size = 256
-    hconfig.backlog = 2048
-    hconfig.read_timeout = 120
+    hconfig.backlog = 1024
+    hconfig.read_timeout = 59
     hconfig.max_app_queue_size = 256
     await mt.connect_to_postgres()
     mt.connect_to_qlever()
