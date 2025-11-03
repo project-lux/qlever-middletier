@@ -71,9 +71,10 @@ cp qlever/build/IndexBuilderMain qlever/build/ServerMain qlever/build/PrintIndex
 
 cd indexes
 echo '{ "ascii-prefixes-only": true, "num-triples-per-batch": 500000 }' > lux.settings.json
-
-ulimit -Sn 500000 && zcat lux_*.nt.gz | ../code/bin/IndexBuilderMain -i lux -s lux.settings.json -F nt -f - -p true --text-words-from-literals --stxxl-memory 60G
+ulimit -Sn 256000 && zcat ../../data/lux_* | ../bin/IndexBuilderMain -i lux -s lux.settings.json --vocabulary-type on-disk-compressed -F nt -f - -p true --text-words-from-literals --stxxl-memory 60G
 (wait)
+
+The step "Building the half-inverted index lists ..." takes a long time as we have a LOT of text
 
 
 ### Installing Qlever UI

@@ -79,7 +79,7 @@ class MTConfig:
         self.portal = os.getenv("QLMT_PORTAL", "")  # YPM
 
         # log level for output
-        self.log_level = os.getenv("QLMT_LOGLEVEL", "info")
+        self.log_level = os.getenv("QLMT_LOGLEVEL", "debug")
 
         # use stopwords or not, default to yes
         self.use_stopwords = os.getenv("QLMT_USESTOPWORDS", "true").lower() == "true"

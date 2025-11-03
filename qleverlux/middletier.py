@@ -145,20 +145,19 @@ class QLeverLuxMiddleTier:
             results["results"].append(r2)
         return results
 
-    def fetch_qlever_sparql(self, q):
+    def fetch_qlever_sparql(self, q, drop_okay=True):
         if self.sparql_client is None:
             self.connect_to_qlever()
 
         if self.config.use_httpx:
-            return self.fetch_qlever_sparql_httpx(q)
+            return self.fetch_qlever_sparql_httpx(q, drop_okay)
         else:
-            return self.fetch_qlever_sparql_aiohttp(q)
+            return self.fetch_qlever_sparql_aiohttp(q, drop_okay)
 
     @alru_cache(maxsize=500)
-    async def fetch_qlever_sparql_aiohttp(self, q):
+    async def fetch_qlever_sparql_aiohttp(self, q, drop_okay=True):
         response = None
-        if self.open_requests > self.config.max_open_requests:
-            print(f"!!! {self.open_requests} open requests")
+        if drop_okay and self.open_requests > self.config.max_open_requests:
             return {"total": -1, "results": [], "error": "Too many open requests", "status": 504}
         try:
             self.open_requests += 1
@@ -181,10 +180,9 @@ class QLeverLuxMiddleTier:
                 return {"total": 0, "results": [], "error": str(e), "status": 0}
 
     @alru_cache(maxsize=500)
-    async def fetch_qlever_sparql_httpx(self, q):
+    async def fetch_qlever_sparql_httpx(self, q, drop_okay=True):
         response = None
-        if self.open_requests > self.config.max_open_requests:
-            print(f"!!! {self.open_requests} open requests")
+        if drop_okay and self.open_requests > self.config.max_open_requests:
             return {"total": -1, "results": [], "error": "Too many open requests", "status": 504}
         try:
             self.open_requests += 1
@@ -274,7 +272,7 @@ class QLeverLuxMiddleTier:
                 rtemplate = None
 
             try:
-                res = await self.fetch_qlever_sparql(qt)
+                res = await self.fetch_qlever_sparql(qt, drop_okay=False)
             except Exception as e:
                 res = {"results": [], "error": str(e), "status": 504}
 
