@@ -159,6 +159,7 @@ class QLeverLuxMiddleTier:
 
     @alru_cache(maxsize=500)
     async def fetch_qlever_sparql_aiohttp(self, q):
+        response = None
         try:
             self.open_requests += 1
             async with self.sparql_client.post(
@@ -174,10 +175,14 @@ class QLeverLuxMiddleTier:
             print(q)
             print(e)
             self.open_requests -= 1
-            return {"total": 0, "results": [], "error": str(e), "status": response.status_code}
+            if response is not None:
+                return {"total": 0, "results": [], "error": str(e), "status": response.status_code}
+            else:
+                return {"total": 0, "results": [], "error": str(e), "status": 0}
 
     @alru_cache(maxsize=500)
     async def fetch_qlever_sparql_httpx(self, q):
+        response = None
         try:
             self.open_requests += 1
             response = await self.sparql_client.post(
@@ -193,7 +198,10 @@ class QLeverLuxMiddleTier:
             print(q)
             print(e)
             self.open_requests -= 1
-            return {"total": 0, "results": [], "error": str(e), "status": response.status_code}
+            if response is not None:
+                return {"total": 0, "results": [], "error": str(e), "status": response.status_code}
+            else:
+                return {"total": 0, "results": [], "error": str(e), "status": 0}
 
     def make_sparql_query(self, scope, q, page=1, pageLength=0, sort="relevance", order="DESC"):
         if pageLength < 1:
@@ -390,7 +398,15 @@ class QLeverLuxMiddleTier:
             except ValueError as e:
                 return JSONResponse(status_code=400, content={"error": str(e)})
 
-        res = await self.fetch_qlever_sparql(qt)
+        try:
+            res = await self.fetch_qlever_sparql(qt)
+        except Exception as e:
+            res = {"error": str(e), "results": [], "status": 0}
+        if "error" in res:
+            status = res.get("status", 0)
+            if not status:
+                status = 504
+            return JSONResponse(content=res, status_code=status)
 
         js = {
             "@context": "https://linked.art/ns/v1/search.json",
@@ -428,7 +444,16 @@ class QLeverLuxMiddleTier:
             "totalItems": 0,
         }
         qt = self.make_sparql_query(scope, q)
-        res = await self.fetch_qlever_sparql(qt)
+
+        try:
+            res = await self.fetch_qlever_sparql(qt)
+        except Exception as e:
+            res = {"error": str(e), "results": [], "status": 0}
+        if "error" in res:
+            status = res.get("status", 0)
+            if not status:
+                status = 504
+            return JSONResponse(content=res, status_code=status)
         js["totalItems"] = res["total"]
         js["_timing"] = res["time"]
         return JSONResponse(content=js)
@@ -512,7 +537,17 @@ class QLeverLuxMiddleTier:
         )
         qt = spq.get_text()
         # print(qt)
-        res = await self.fetch_qlever_sparql(qt)
+        #
+        try:
+            res = await self.fetch_qlever_sparql(qt)
+        except Exception as e:
+            res = {"error": str(e), "results": [], "status": 0}
+        if "error" in res:
+            status = res.get("status", 0)
+            if not status:
+                status = 504
+            return JSONResponse(content=res, status_code=status)
+
         js["partOf"]["totalItems"] = res["total"] + soffset
         js["_timing"] = res["time"]
 
@@ -573,9 +608,17 @@ class QLeverLuxMiddleTier:
         spq = self.config.related_list_sparql[scope][name]
         spq = spq.replace("V_TARGET_URI", uri)
         # execute sparql query
-        res = await self.fetch_qlever_sparql(spq)
 
-        # make full response
+        try:
+            res = await self.fetch_qlever_sparql(spq)
+        except Exception as e:
+            res = {"error": str(e), status=0, results=[]}
+
+        if "error" in res:
+            status = res.get("status", 0)
+            if not status:
+                status = 504
+            return JSONResponse(content=res, status_code=status)
 
         vars = [x[1:].replace("_", "-") for x in res["variables"]]
         for r in res["results"]:
@@ -658,7 +701,11 @@ class QLeverLuxMiddleTier:
             profile = profile.value
         identifier = str(identifier)
         scope = str(scope)
-        js = await self.fetch_record_from_cache(identifier)
+        try:
+            js = await self.fetch_record_from_cache(identifier)
+        except Exception as e:
+            return JSONResponse(content={"error": str(e)}, status_code=500)
+
         if type(js) is tuple:
             cache_links = js[1]
             js = js[0]
@@ -719,6 +766,11 @@ class QLeverLuxMiddleTier:
             spq = "SELECT ?class (COUNT(?class) as ?count) {?what a ?class} GROUP BY ?class"
         # This will always be in the ALRU cache
         res = await self.fetch_qlever_sparql(spq)
+        if "error" in res:
+            status = res.get("status", 0)
+            if not status:
+                status = 504
+            return JSONResponse(content=res, status_code=status)
         vals = {}
         for r in res["results"]:
             vals[r[0].rsplit("/")[-1].lower()] = r[1]
