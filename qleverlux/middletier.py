@@ -149,8 +149,9 @@ class QLeverLuxMiddleTier:
         if self.sparql_client is None:
             self.connect_to_qlever()
 
-        if self.open_requests > 16:
+        if self.open_requests > 256:
             print(f"!!! {self.open_requests} open requests")
+            return {"total": -1, "results": [], "error": "Too many open requests", "status": 504}
 
         if self.config.use_httpx:
             return self.fetch_qlever_sparql_httpx(q)
@@ -315,7 +316,13 @@ class QLeverLuxMiddleTier:
         async with self.postgres_conn.cursor(row_factory=dict_row) as cursor:
             qry = f"INSERT INTO {self.config.pgtable_hal} (identifier, data) VALUES (%s, %s)"
             params = (identifier, links)
-            await cursor.execute(qry, params)
+            try:
+                await cursor.execute(qry, params)
+            except Exception as e:
+                # try to reconnect
+                await self.connect_to_postgres()
+                cursor2 = self.postgres_conn.cursor(row_factory=dict_row)
+                await cursor2.execute(qry, params)
 
     async def fetch_record_from_cache(self, identifier):
         if self.config.use_postgres_hal_cache:
