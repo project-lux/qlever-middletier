@@ -91,6 +91,13 @@ class MTConfig:
         self.use_disk_hal_cache = os.getenv("QLMT_USE_DISK_HAL_CACHE", "true").lower() == "true"
 
         self.qlever_timeout = os.getenv("QLMT_QLEVER_TIMEOUT", 30)
+        self.max_qlever_connections = os.getenv("QLMT_MAX_QLEVER_CONNECTIONS", 20)
+
+        self.mt_backlog = os.getenv("QLMT_BACKLOG", 512)
+        self.mt_queue_size = os.getenv("QLMT_QUEUE_SIZE", 128)
+        self.mt_app_queue_size = os.getenv("QLMT_APP_QUEUE_SIZE", 128)
+        self.mt_workers = os.getenv("QLMT_WORKERS", 2)
+        self.mt_read_timeout = os.getenv("QLMT_READ_TIMEOUT", 30)
 
         # Now look for overrides from the command line
 
@@ -139,13 +146,18 @@ class MTConfig:
         parser.add_argument("--use-postgres-hal-cache", action="store_true", help="Use postgres hal cache")
         parser.add_argument("--use-disk-hal-cache", action="store_true", help="Use postgres hal cache")
 
-        parser.add_argument("--queue-size", type=int, help="Size of the queue", default=256)
-        parser.add_argument("--backlog", type=int, help="Backlog size for the queue", default=1024)
-        parser.add_argument("--read-timeout", type=int, help="Timeout for read operations", default=30)
+        parser.add_argument("--queue-size", type=int, help="Size of the queue", default=self.mt_queue_size)
+        parser.add_argument("--backlog", type=int, help="Backlog size for the queue", default=self.mt_backlog)
         parser.add_argument(
-            "--max-app-queue-size", type=int, help="Maximum size of the application queue", default=512
+            "--read-timeout", type=int, help="Timeout for read operations", default=self.mt_app_queue_size
         )
-        parser.add_argument("--workers", type=int, help="Number of worker processes", default=2)
+        parser.add_argument(
+            "--max-app-queue-size",
+            type=int,
+            help="Maximum size of the application queue",
+            default=self.mt_app_queue_size,
+        )
+        parser.add_argument("--workers", type=int, help="Number of worker processes", default=self.mt_app_queue_size)
 
         parser.add_argument(
             "--qlever-timeout", type=int, help="Timeout for qlever requests", default=self.qlever_timeout

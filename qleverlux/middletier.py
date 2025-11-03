@@ -94,9 +94,14 @@ class QLeverLuxMiddleTier:
     def connect_to_qlever(self):
         # The async pool needs to exist before async clients can be created
         if self.config.use_httpx:
-            self.sparql_client = httpx.AsyncClient(http2=True, verify=False, timeout=self.config.qlever_timeout)
+            limits = httpx.Limits(max_connections=self.config.max_qlever_connections)
+            timeout = httpx.Timeout(self.config.qlever_timeout, connect=2, read=self.config.qlever_timeout - 1)
+            self.sparql_client = httpx.AsyncClient(http2=True, verify=False, timeout=timeout, limits=limits)
         else:
-            self.sparql_client = aiohttp.ClientSession()
+            timeout = aiohttp.ClientTimeout(
+                connect=2, total=self.config.qlever_timeout, sock_read=self.config.qlever_timeout - 1
+            )
+            self.sparql_client = aiohttp.ClientSession(timeout=timeout)
 
     async def connect_to_postgres(self):
         try:
@@ -278,7 +283,6 @@ class QLeverLuxMiddleTier:
                     href = rtemplate
                 links[hal] = {"href": href, "_estimate": 1}
 
-        # XXX FIXME: Don't write to file, but write back to a postgres table
         if self.config.use_disk_hal_cache:
             with open(fn, "w") as f:
                 json.dump(links, f)
