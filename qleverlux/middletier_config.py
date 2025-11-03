@@ -98,6 +98,7 @@ class MTConfig:
         self.mt_app_queue_size = os.getenv("QLMT_APP_QUEUE_SIZE", 128)
         self.mt_workers = os.getenv("QLMT_WORKERS", 2)
         self.mt_read_timeout = os.getenv("QLMT_READ_TIMEOUT", 30)
+        self.qlever_max_requests = os.getenv("QLMT_MAX_OPEN_REQUESTS", 256)
 
         # Now look for overrides from the command line
 
@@ -158,6 +159,12 @@ class MTConfig:
             default=self.mt_app_queue_size,
         )
         parser.add_argument("--workers", type=int, help="Number of worker processes", default=self.mt_app_queue_size)
+        parser.add_argument(
+            "--max-open-requests",
+            type=int,
+            help="Maximum number of open requests to qlever",
+            default=self.qlever_max_requests,
+        )
 
         parser.add_argument(
             "--qlever-timeout", type=int, help="Timeout for qlever requests", default=self.qlever_timeout

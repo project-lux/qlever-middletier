@@ -57,6 +57,8 @@ mkdir build
 cd build
 cmake -DCMAKE_BUILD_TYPE=Release .. && make -j
 (wait)
+ctest --rerun-failed --output-on-failure
+(wait)
 cd ../..
 mkdir bin
 cp qlever/build/IndexBuilderMain qlever/build/ServerMain qlever/build/PrintIndexVersionMain qlever/build/VocabularyMergerMain qlever/build/spatialjoin bin/
