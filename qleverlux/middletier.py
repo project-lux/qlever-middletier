@@ -611,7 +611,7 @@ class QLeverLuxMiddleTier:
         try:
             res = await self.fetch_qlever_sparql(spq)
         except Exception as e:
-            res = {"error": str(e), status=0, results=[]}
+            res = {"error": str(e), "status": 0, "results": []}
 
         if "error" in res:
             status = res.get("status", 0)
