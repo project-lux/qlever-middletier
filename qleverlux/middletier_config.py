@@ -79,7 +79,7 @@ class MTConfig:
         self.portal = os.getenv("QLMT_PORTAL", "")  # YPM
 
         # log level for output
-        self.log_level = os.getenv("QLMT_LOGLEVEL", "debug")
+        self.log_level = os.getenv("QLMT_LOGLEVEL", "info")
 
         # use stopwords or not, default to yes
         self.use_stopwords = os.getenv("QLMT_USESTOPWORDS", "true").lower() == "true"
@@ -96,9 +96,9 @@ class MTConfig:
         self.mt_backlog = os.getenv("QLMT_BACKLOG", 512)
         self.mt_queue_size = os.getenv("QLMT_QUEUE_SIZE", 128)
         self.mt_app_queue_size = os.getenv("QLMT_APP_QUEUE_SIZE", 128)
-        self.mt_workers = os.getenv("QLMT_WORKERS", 2)
+        self.mt_workers = os.getenv("QLMT_WORKERS", 4)
         self.mt_read_timeout = os.getenv("QLMT_READ_TIMEOUT", 30)
-        self.qlever_max_requests = os.getenv("QLMT_MAX_OPEN_REQUESTS", 256)
+        self.qlever_max_requests = os.getenv("QLMT_MAX_OPEN_REQUESTS", 64)
 
         # Now look for overrides from the command line
 
