@@ -332,7 +332,6 @@ class QLeverLuxMiddleTier:
                 await cursor.execute(qry, params)
                 row = await cursor.fetchone()
         except Exception:
-            raise
             await self.connect_to_postgres()
             async with self.postgres_conn.cursor(row_factory=dict_row) as cursor:
                 await cursor.execute(qry, params)
