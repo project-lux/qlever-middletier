@@ -149,10 +149,6 @@ class QLeverLuxMiddleTier:
         if self.sparql_client is None:
             self.connect_to_qlever()
 
-        if self.open_requests > 256:
-            print(f"!!! {self.open_requests} open requests")
-            return {"total": -1, "results": [], "error": "Too many open requests", "status": 504}
-
         if self.config.use_httpx:
             return self.fetch_qlever_sparql_httpx(q)
         else:
@@ -161,6 +157,9 @@ class QLeverLuxMiddleTier:
     @alru_cache(maxsize=500)
     async def fetch_qlever_sparql_aiohttp(self, q):
         response = None
+        if self.open_requests > 256:
+            print(f"!!! {self.open_requests} open requests")
+            return {"total": -1, "results": [], "error": "Too many open requests", "status": 504}
         try:
             self.open_requests += 1
             async with self.sparql_client.post(
@@ -184,6 +183,9 @@ class QLeverLuxMiddleTier:
     @alru_cache(maxsize=500)
     async def fetch_qlever_sparql_httpx(self, q):
         response = None
+        if self.open_requests > 256:
+            print(f"!!! {self.open_requests} open requests")
+            return {"total": -1, "results": [], "error": "Too many open requests", "status": 504}
         try:
             self.open_requests += 1
             response = await self.sparql_client.post(
@@ -271,7 +273,11 @@ class QLeverLuxMiddleTier:
                 qt = qt.replace("URI-HERE", uri)
                 rtemplate = None
 
-            res = await self.fetch_qlever_sparql(qt)
+            try:
+                res = await self.fetch_qlever_sparql(qt)
+            except Exception as e:
+                res = {"results": [], "error": str(e), "status": 504}
+
             try:
                 ttl = res["results"][0][0]
             except IndexError:
@@ -318,7 +324,7 @@ class QLeverLuxMiddleTier:
             params = (identifier, links)
             try:
                 await cursor.execute(qry, params)
-            except Exception as e:
+            except Exception:
                 # try to reconnect
                 await self.connect_to_postgres()
                 cursor2 = self.postgres_conn.cursor(row_factory=dict_row)
