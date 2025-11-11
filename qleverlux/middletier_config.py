@@ -145,7 +145,7 @@ class MTConfig:
         parser.add_argument("--use-stopwords", action="store_true", help="Use stopwords")
         parser.add_argument("--use-httpx", action="store_true", help="Use httpx for http2 connections to qlever")
         parser.add_argument("--use-postgres-hal-cache", action="store_true", help="Use postgres hal cache")
-        parser.add_argument("--use-disk-hal-cache", action="store_true", help="Use postgres hal cache")
+        parser.add_argument("--use-disk-hal-cache", action="store_true", help="Use disk hal cache")
 
         parser.add_argument("--queue-size", type=int, help="Size of the queue", default=self.mt_queue_size)
         parser.add_argument("--backlog", type=int, help="Backlog size for the queue", default=self.mt_backlog)
@@ -165,6 +165,8 @@ class MTConfig:
             help="Maximum number of open requests to qlever",
             default=self.qlever_max_requests,
         )
+
+        parser.add_argument("--max-qlever-connections", type=int, help="Max connections to QLever", default=self.max_qlever_connections)
 
         parser.add_argument(
             "--qlever-timeout", type=int, help="Timeout for qlever requests", default=self.qlever_timeout
@@ -286,6 +288,13 @@ class MTConfig:
         print()
         ### FIXME: print out all the settings
 
+        print(f"Postgres Host:  {self.pghost}")
+        print(f"Postgres Port:  {self.pgport}")
+        print(f"QLever Proto:   {self.qlproto}")
+        print(f"QLever Host:    {self.qlhost}")
+        print(f"QLever Port:    {self.qlport}")
+        print(f"Use HTTPX:      {self.use_httpx}")
+        print()
         print(f"Postgres HAL:   {self.use_postgres_hal_cache}")
         print(f"Disk HAL:       {self.use_disk_hal_cache}")
 
@@ -295,6 +304,8 @@ class MTConfig:
         print(f"Read timeout:   {self.read_timeout}")
         print(f"SPARQL timeout: {self.qlever_timeout}")
         print(f"Workers:        {self.workers}")
+        print(f"Max QLever conns:{self.max_qlever_connections}")
+        print(f"Max QLever reqs: {self.qlever_max_requests}")
         print()
         print(f"Facets:       {len(self.facets)}")
 
