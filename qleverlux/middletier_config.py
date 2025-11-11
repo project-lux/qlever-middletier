@@ -98,7 +98,7 @@ class MTConfig:
         self.mt_app_queue_size = os.getenv("QLMT_APP_QUEUE_SIZE", 128)
         self.mt_workers = os.getenv("QLMT_WORKERS", 4)
         self.mt_read_timeout = os.getenv("QLMT_READ_TIMEOUT", 30)
-        self.qlever_max_requests = os.getenv("QLMT_MAX_OPEN_REQUESTS", 64)
+        self.max_qlever_requests = os.getenv("QLMT_MAX_OPEN_REQUESTS", 64)
 
         # Now look for overrides from the command line
 
@@ -160,10 +160,10 @@ class MTConfig:
         )
         parser.add_argument("--workers", type=int, help="Number of worker processes", default=self.mt_app_queue_size)
         parser.add_argument(
-            "--max-open-requests",
+            "--max-qlever-requests",
             type=int,
             help="Maximum number of open requests to qlever",
-            default=self.qlever_max_requests,
+            default=self.max_qlever_requests,
         )
 
         parser.add_argument("--max-qlever-connections", type=int, help="Max connections to QLever", default=self.max_qlever_connections)
@@ -305,7 +305,7 @@ class MTConfig:
         print(f"SPARQL timeout: {self.qlever_timeout}")
         print(f"Workers:        {self.workers}")
         print(f"Max QLever conns:{self.max_qlever_connections}")
-        print(f"Max QLever reqs: {self.qlever_max_requests}")
+        print(f"Max QLever reqs: {self.max_qlever_requests}")
         print()
         print(f"Facets:       {len(self.facets)}")
 
