@@ -266,6 +266,8 @@ class QLeverLuxMiddleTier:
                     print(f"Missing related list for {scope} and {rlname}")
                     continue
                 qt = qt.replace("V_TARGET_URI", uri)
+                qt = qt.replace("LIMIT 20", "LIMIT 1")
+                qt = qt.replace("ORDER BY DESC(?total)", " ")
                 rtemplate = rtemplate.replace("{id}", uri)
             else:
                 qt = qt.replace("URI-HERE", uri)
@@ -317,16 +319,23 @@ class QLeverLuxMiddleTier:
         return candidates[0] if candidates else None
 
     async def store_postgres_hal_cache(self, identifier, links):
+        print(f"Storing HAL cache for {identifier}")
         async with self.postgres_conn.cursor(row_factory=dict_row) as cursor:
             qry = f"INSERT INTO {self.config.pgtable_hal} (identifier, data) VALUES (%s, %s)"
             params = (identifier, links)
             try:
                 await cursor.execute(qry, params)
-            except Exception:
+                row = await cursor.fetchall()
+                print(f"Stored: {row}")
+            except Exception as e:
                 # try to reconnect
+                print(e)
+                print("(re)connecting to pg")
                 await self.connect_to_postgres()
+                print("reconnected")
                 cursor2 = self.postgres_conn.cursor(row_factory=dict_row)
                 await cursor2.execute(qry, params)
+                print("Stored")
 
     async def fetch_record_from_cache(self, identifier):
         if self.config.use_postgres_hal_cache:
@@ -342,7 +351,9 @@ class QLeverLuxMiddleTier:
             async with self.postgres_conn.cursor() as cursor:
                 await cursor.execute(qry, params)
                 row = await cursor.fetchone()
-        except Exception:
+        except Exception as e:
+            print("(re)connecting...")
+            print(e)
             await self.connect_to_postgres()
             async with self.postgres_conn.cursor(row_factory=dict_row) as cursor:
                 await cursor.execute(qry, params)

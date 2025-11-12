@@ -416,7 +416,7 @@ SELECT ?uri ?total {vars} WHERE {{
     {newline.join(fragments)}
     FILTER(!(?uri = <V_TARGET_URI>))
     BIND({coalesces} AS ?total)
-}} ORDER BY DESC(?total) LIMIT 50"""
+}} ORDER BY DESC(?total) LIMIT 20"""
         return q
 
     def cache_sparql_queries(self):
