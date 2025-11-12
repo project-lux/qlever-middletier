@@ -157,7 +157,7 @@ class QLeverLuxMiddleTier:
     @alru_cache(maxsize=500)
     async def fetch_qlever_sparql_aiohttp(self, q, drop_okay=True):
         response = None
-        if drop_okay and self.open_requests > self.config.max_open_requests:
+        if drop_okay and self.open_requests > self.config.max_qlever_requests:
             return {"total": -1, "results": [], "error": "Too many open requests", "status": 504}
         try:
             self.open_requests += 1
@@ -182,7 +182,7 @@ class QLeverLuxMiddleTier:
     @alru_cache(maxsize=500)
     async def fetch_qlever_sparql_httpx(self, q, drop_okay=True):
         response = None
-        if drop_okay and self.open_requests > self.config.max_open_requests:
+        if drop_okay and self.open_requests > self.config.max_qlever_requests:
             return {"total": -1, "results": [], "error": "Too many open requests", "status": 504}
         try:
             self.open_requests += 1
