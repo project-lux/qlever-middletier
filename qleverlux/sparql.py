@@ -533,7 +533,16 @@ class SparqlTranslator:
             elif query.field == "identifier":
                 # do exact match on the string
                 pred = f"lux:{scope}Identifier"
-                parent.add_triples([Triple(query.var, pred, f'"{query.value.lower()}"')])
+                # UNION with equivalent if starts with http
+                if query.value.startswith("http://") or query.value.startswith("https://"):
+                    p1 = Pattern()
+                    p1.add_triples([Triple(query.var, pred, f'"{query.value.lower()}"')])
+                    p2 = Pattern(union=True)
+                    p2.add_triples([Triple(query.var, "la:equivalent", f"<{query.value}>")])
+                    parent.add_nested_graph_pattern(p1)
+                    parent.add_nested_graph_pattern(p2)
+                else:
+                    parent.add_triples([Triple(query.var, pred, f'"{query.value.lower()}"')])
             elif query.field == "recordType":
                 parent.add_triples([Triple(query.var, "a", f"lux:{query.value}")])
             elif query.field == self.name_field and query.complete:
