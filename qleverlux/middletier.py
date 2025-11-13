@@ -233,7 +233,6 @@ class QLeverLuxMiddleTier:
         if self.config.use_disk_hal_cache:
             fn = os.path.join(self.config.hal_cache_path, f"{identifier}.json")
             if os.path.exists(fn):
-                print(f"reading hal cache from disk: {fn}")
                 with open(fn, "r") as f:
                     links = json.load(f)
                 return links
@@ -276,6 +275,9 @@ class QLeverLuxMiddleTier:
 
             try:
                 res = await self.fetch_qlever_sparql(qt, drop_okay=False)
+                print(qt)
+                print(res)
+                print()
             except Exception as e:
                 res = {"results": [], "error": str(e), "status": 504}
 
@@ -297,6 +299,7 @@ class QLeverLuxMiddleTier:
                     href = template.replace("{q}", jqs)
                 else:
                     href = rtemplate
+                print(f"adding hal for {hal}")
                 links[hal] = {"href": href, "_estimate": 1}
 
         if self.config.use_disk_hal_cache:
