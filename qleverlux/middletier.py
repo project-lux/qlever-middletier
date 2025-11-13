@@ -232,8 +232,8 @@ class QLeverLuxMiddleTier:
     async def do_hal_links(self, scope, identifier):
         if self.config.use_disk_hal_cache:
             fn = os.path.join(self.config.hal_cache_path, f"{identifier}.json")
-            print(f"reading hal cache from disk: {fn}")
             if os.path.exists(fn):
+                print(f"reading hal cache from disk: {fn}")
                 with open(fn, "r") as f:
                     links = json.load(f)
                 return links
