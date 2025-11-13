@@ -232,6 +232,7 @@ class QLeverLuxMiddleTier:
     async def do_hal_links(self, scope, identifier):
         if self.config.use_disk_hal_cache:
             fn = os.path.join(self.config.hal_cache_path, f"{identifier}.json")
+            print(f"reading hal cache from disk: {fn}")
             if os.path.exists(fn):
                 with open(fn, "r") as f:
                     links = json.load(f)
@@ -341,7 +342,7 @@ class QLeverLuxMiddleTier:
         if self.config.use_postgres_hal_cache:
             qry = f"SELECT doc.data, hal.data FROM {self.config.pgtable} AS doc LEFT JOIN {self.config.pgtable_hal} AS hal ON doc.identifier = hal.identifier WHERE doc.identifier = %s"
         else:
-            qry = f"SELECT * FROM {self.config.pgtable} WHERE identifier = %s"
+            qry = f"SELECT data FROM {self.config.pgtable} WHERE identifier = %s"
         params = (identifier,)
         row = None
         try:
@@ -355,15 +356,12 @@ class QLeverLuxMiddleTier:
             print("(re)connecting...")
             print(e)
             await self.connect_to_postgres()
-            async with self.postgres_conn.cursor(row_factory=dict_row) as cursor:
+            async with self.postgres_conn.cursor() as cursor:
                 await cursor.execute(qry, params)
                 row = await cursor.fetchone()
 
         if row:
-            if type(row) is dict:
-                return row["data"]
-            elif type(row) is tuple:
-                return row
+            return row
         else:
             return None
 
@@ -723,15 +721,18 @@ class QLeverLuxMiddleTier:
         identifier = str(identifier)
         scope = str(scope)
         try:
-            js = await self.fetch_record_from_cache(identifier)
+            res = await self.fetch_record_from_cache(identifier)
         except Exception as e:
             return JSONResponse(content={"error": str(e)}, status_code=500)
 
-        if type(js) is tuple:
-            cache_links = js[1]
-            js = js[0]
+        if res:
+            js = res[0]
+            if len(res) > 1:
+                cache_links = res[1]
+            else:
+                cache_links = {}
         else:
-            cache_links = {}
+            js = None
         if js:
             if not profile:
                 links = {
@@ -742,7 +743,6 @@ class QLeverLuxMiddleTier:
                     "self": {"href": f"{self.config.mt_uri}data/{scope}/{identifier}"},
                 }
                 # Calculate _links here
-
                 if cache_links:
                     links.update(cache_links)
                 else:
