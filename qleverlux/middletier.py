@@ -282,9 +282,17 @@ class QLeverLuxMiddleTier:
                 res = {"results": [], "error": str(e), "status": 504}
 
             try:
-                ttl = res["results"][0][0]
-            except IndexError:
+                res_array = res["results"][0]
+                if len(res_array) == 1:
+                    ttl = res_array[0]
+                elif len(res_array):
+                    ttl = res_array[1]
+                else:
+                    ttl = 0
+            except Exception as e:
+                print(f"Failed to find total: {e}\n{res}")
                 ttl = 0
+
             if type(ttl) is not int:
                 ttl = res["total"]
             if ttl > 0:
