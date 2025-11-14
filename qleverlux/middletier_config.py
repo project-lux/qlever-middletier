@@ -440,7 +440,7 @@ SELECT ?uri WHERE {
 
         print("----")
         print(qtype)
-        print(hal_tests)
+        print(json.dumps(hal_tests, indent=4))
         print("----")
 
         newline = "\n"  # work around no backslash in f string
