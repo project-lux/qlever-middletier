@@ -438,10 +438,9 @@ SELECT ?uri WHERE {
         # this allows the MT to step through each in turn and can bail when any
         # of them match. It also doesn't tie up the CPU as much on a single query
 
-        print("----")
-        print(qtype)
-        print(json.dumps(hal_tests, indent=4))
-        print("----")
+        jstr = json.dumps(hal_tests, indent=4)
+        with open(f"hal_test_config_{qtype}.json", "w") as fh:
+            fh.write(jstr)
 
         newline = "\n"  # work around no backslash in f string
         q = f"""
