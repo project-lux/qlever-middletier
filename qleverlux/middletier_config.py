@@ -166,7 +166,12 @@ class MTConfig:
             default=self.max_qlever_requests,
         )
 
-        parser.add_argument("--max-qlever-connections", type=int, help="Max connections to QLever", default=self.max_qlever_connections)
+        parser.add_argument(
+            "--max-qlever-connections",
+            type=int,
+            help="Max connections to QLever",
+            default=self.max_qlever_connections,
+        )
 
         parser.add_argument(
             "--qlever-timeout", type=int, help="Timeout for qlever requests", default=self.qlever_timeout
@@ -352,6 +357,7 @@ class MTConfig:
     def make_related_query_stub(self, scope, qtype):
         names = []
         fragments = []
+        hal_tests = []
         flds = self.sparql_translator.scope_fields
 
         PREFIXES = """
@@ -370,6 +376,12 @@ PREFIX lux: <https://lux.collections.yale.edu/ns/>
         ?what V_TARGET_REL <V_TARGET_URI> .
 	  } GROUP BY ?uri
 	}
+"""
+
+        HAL_TEMPLATE = """
+SELECT ?uri WHERE {
+    ?uri V_URI_REL/V_TARGET_REL <V_TARGET_URI> .
+} LIMIT 1
 """
 
         for key, rscope in self.related_list_scopes[scope][qtype].items():
@@ -415,10 +427,21 @@ PREFIX lux: <https://lux.collections.yale.edu/ns/>
             kn = key.replace("-", "_")
             names.append(kn)
             tmpl = SUB_TEMPLATE.replace("V_NAME_REL", kn).replace("V_URI_REL", p).replace("V_TARGET_REL", p2)
+            tmp2 = HAL_TEMPLATE.replace("V_URI_REL", p).replace("V_TARGET_REL", p2)
             fragments.append(tmpl)
+            hal_tests.append([tmp2, p, p2])
 
         coalesces = " + ".join([f"COALESCE(?{x}, 0)" for x in names])
         vars = " ".join([f"?{x}" for x in names])
+
+        # construct ordered series of tests for this related list for HAL testing
+        # this allows the MT to step through each in turn and can bail when any
+        # of them match. It also doesn't tie up the CPU as much on a single query
+
+        print("----")
+        print(qtype)
+        print(hal_tests)
+        print("----")
 
         newline = "\n"  # work around no backslash in f string
         q = f"""
