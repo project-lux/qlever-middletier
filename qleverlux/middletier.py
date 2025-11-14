@@ -261,25 +261,32 @@ class QLeverLuxMiddleTier:
                 rlname = qt["relatedList"]
                 rtemplate = qt["template"]
                 try:
-                    qt = self.config.related_list_sparql[scope][rlname]
+                    qts = self.config.hal_related_list_tests[scope][rlname]
                 except KeyError:
                     print(f"Missing related list for {scope} and {rlname}")
                     continue
-                qt = qt.replace("V_TARGET_URI", uri)
-                qt = qt.replace("LIMIT 20", "LIMIT 1")
-                qt = qt.replace("ORDER BY DESC(?total)", " ")
+                for qt in qts:
+                    qt = qt.replace("V_TARGET_URI", uri)
+                    try:
+                        res = await self.fetch_qlever_sparql(qt, drop_okay=False)
+                        print(qt)
+                        print(res)
+                        print()
+                    except Exception as e:
+                        res = {"results": [], "error": str(e), "status": 504}
+
                 rtemplate = rtemplate.replace("{id}", uri)
             else:
                 qt = qt.replace("URI-HERE", uri)
                 rtemplate = None
 
-            try:
-                res = await self.fetch_qlever_sparql(qt, drop_okay=False)
-                print(qt)
-                print(res)
-                print()
-            except Exception as e:
-                res = {"results": [], "error": str(e), "status": 504}
+                try:
+                    res = await self.fetch_qlever_sparql(qt, drop_okay=False)
+                    print(qt)
+                    print(res)
+                    print()
+                except Exception as e:
+                    res = {"results": [], "error": str(e), "status": 504}
 
             try:
                 res_array = res["results"][0]

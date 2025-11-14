@@ -286,6 +286,8 @@ class MTConfig:
         self.sparql_hal_queries = {}
         self.related_list_json = {}
         self.related_list_sparql = {}
+        self.hal_related_list_tests = {}
+
         self.cache_sparql_queries()
 
     def print_config(self):
@@ -424,23 +426,53 @@ SELECT ?uri WHERE {
             p = "/".join([f"^lux:{x[1:]}" if x[0] == "^" else f"lux:{x}" for x in aq])
             p2 = "/".join([f"^lux:{x[1:]}" if x[0] == "^" else f"lux:{x}" for x in bq])
 
+            score = 1
+            if "Classification" in p:
+                score += 3
+            if "Classification" in p2:
+                score += 3
+            if "workAbout" in p:
+                score += 1
+            if "workAbout" in p2:
+                score += 1
+            if "agentOf" in p:
+                score += 1
+            if "agentOf" in p2:
+                score += 1
+            if "Beginning" in p:
+                score += 0.5
+            if "Beginning" in p2:
+                score += 0.5
+            if "/" in p:
+                score -= 1
+            if "/" in p2:
+                score -= 1
+            if "Set" in p or "Event" in p:
+                score -= 1
+            if "Set" in p2 or "Event" in p2:
+                score -= 1
+
             kn = key.replace("-", "_")
-            names.append(kn)
+            names.append([kn, score])
             tmpl = SUB_TEMPLATE.replace("V_NAME_REL", kn).replace("V_URI_REL", p).replace("V_TARGET_REL", p2)
             tmp2 = HAL_TEMPLATE.replace("V_URI_REL", p).replace("V_TARGET_REL", p2)
-            fragments.append(tmpl)
-            hal_tests.append([tmp2, p, p2])
+            fragments.append([tmpl, score])
 
+            hal_tests.append([tmp2, score])
+
+        names.sort(key=lambda x: x[1], reverse=True)
+        names = [x[0] for x in names]
         coalesces = " + ".join([f"COALESCE(?{x}, 0)" for x in names])
         vars = " ".join([f"?{x}" for x in names])
 
         # construct ordered series of tests for this related list for HAL testing
         # this allows the MT to step through each in turn and can bail when any
         # of them match. It also doesn't tie up the CPU as much on a single query
+        hal_tests.sort(key=lambda x: x[1], reverse=True)
+        self.hal_related_list_tests[scope][qtype] = [x[0] for x in hal_tests]
 
-        jstr = json.dumps(hal_tests, indent=4)
-        with open(f"hal_test_config_{qtype}.json", "w") as fh:
-            fh.write(jstr)
+        fragments.sort(key=lambda x: x[1], reverse=True)
+        fragments = [x[0] for x in fragments]
 
         newline = "\n"  # work around no backslash in f string
         q = f"""
@@ -462,6 +494,7 @@ SELECT ?uri ?total {vars} WHERE {{
                 continue
             if scope not in self.sparql_hal_queries:
                 self.sparql_hal_queries[scope] = {}
+                self.hal_related_list_tests[scope] = {}
 
             query = self.queries.get(qname, {})
             if not query:
