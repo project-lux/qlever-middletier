@@ -469,7 +469,7 @@ SELECT ?uri WHERE {
         # this allows the MT to step through each in turn and can bail when any
         # of them match. It also doesn't tie up the CPU as much on a single query
         hal_tests.sort(key=lambda x: x[1], reverse=True)
-        self.hal_related_list_tests[scope][qtype] = [x[0] for x in hal_tests]
+        self.hal_related_list_tests[scope][qtype] = [f"{PREFIXES}\n{x[0]}" for x in hal_tests]
 
         fragments.sort(key=lambda x: x[1], reverse=True)
         fragments = [x[0] for x in fragments]

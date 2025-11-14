@@ -265,43 +265,43 @@ class QLeverLuxMiddleTier:
                 except KeyError:
                     print(f"Missing related list for {scope} and {rlname}")
                     continue
+                found = False
                 for qt in qts:
                     qt = qt.replace("V_TARGET_URI", uri)
                     try:
                         res = await self.fetch_qlever_sparql(qt, drop_okay=False)
-                        print(qt)
-                        print(res)
-                        print()
                     except Exception as e:
                         res = {"results": [], "error": str(e), "status": 504}
-
+                    if res["results"]:
+                        found = True
+                        break
+                if not found:
+                    continue
                 rtemplate = rtemplate.replace("{id}", uri)
+                ttl = 1
             else:
                 qt = qt.replace("URI-HERE", uri)
                 rtemplate = None
 
                 try:
                     res = await self.fetch_qlever_sparql(qt, drop_okay=False)
-                    print(qt)
-                    print(res)
-                    print()
                 except Exception as e:
                     res = {"results": [], "error": str(e), "status": 504}
 
-            try:
-                res_array = res["results"][0]
-                if len(res_array) == 1:
-                    ttl = res_array[0]
-                elif len(res_array):
-                    ttl = res_array[1]
-                else:
+                try:
+                    res_array = res["results"][0]
+                    if len(res_array) == 1:
+                        ttl = res_array[0]
+                    elif len(res_array):
+                        ttl = res_array[1]
+                    else:
+                        ttl = 0
+                except Exception as e:
+                    print(f"Failed to find total: {e}\n{res}")
                     ttl = 0
-            except Exception as e:
-                print(f"Failed to find total: {e}\n{res}")
-                ttl = 0
+                if type(ttl) is not int:
+                    ttl = res["total"]
 
-            if type(ttl) is not int:
-                ttl = res["total"]
             if ttl > 0:
                 if rtemplate is None:
                     info = self.config.hal_queries[hal]
@@ -314,7 +314,6 @@ class QLeverLuxMiddleTier:
                     href = template.replace("{q}", jqs)
                 else:
                     href = rtemplate
-                print(f"adding hal for {hal}")
                 links[hal] = {"href": href, "_estimate": 1}
 
         if self.config.use_disk_hal_cache:
