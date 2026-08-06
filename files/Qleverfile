@@ -13,26 +13,36 @@ TEXT_DESCRIPTION  = Yale LUX in Qlever
 FORMAT            = nt
 
 [index]
-INPUT_FILES       = lux_*.nt.gz
-CAT_INPUT_FILES   = zcat ${INPUT_FILES}
-SETTINGS_JSON     = { "ascii-prefixes-only": true, "num-triples-per-batch": 300000 }
+INPUT_FILES       = ../../data/lux_*.nt.gz
+CAT_INPUT_FILES   = gzcat ${INPUT_FILES}
+SETTINGS_JSON     = { "ascii-prefixes-only": true, "num-triples-per-batch": 500000 }
 TEXT_INDEX        = from_literals
-STXXL_MEMORY      = 40G
+STXXL_MEMORY      = 80G
 PARALLEL_PARSING  = true
 ULIMIT            = 256000
+ADD_HAS_WORD_TRIPLES = true
+MATERIALIZED_VIEWS = {"itemWords": "PREFIX lux: https://lux.collections.yale.edu/ns/ SELECT ?word ?uri ?score ?tf WHERE { { ?uri lux:itemPrimaryName ?text BIND (14 AS ?weight) } UNION { ?uri lux:recordText ?text BIND (5 AS ?weight) } UNION { ?uri lux:itemAny/lux:primaryName ?text BIND (1 AS ?weight) } ?uri a lux:Item . GRAPH ?tf { ?text ql:has-word ?word } BIND (?tf * ?weight AS ?score) }",
+  "workWords": "PREFIX lux: https://lux.collections.yale.edu/ns/ SELECT ?word ?uri ?score ?tf WHERE { { ?uri lux:workPrimaryName ?text BIND (14 AS ?weight) } UNION { ?uri lux:recordText ?text BIND (5 AS ?weight) } UNION { ?uri lux:workAny/lux:primaryName ?text BIND (1 AS ?weight) } ?uri a lux:Work . GRAPH ?tf { ?text ql:has-word ?word } BIND (?tf * ?weight AS ?score) }",
+  "setWords": "PREFIX lux: https://lux.collections.yale.edu/ns/ SELECT ?word ?uri ?score ?tf WHERE { { ?uri lux:setPrimaryName ?text BIND (14 AS ?weight) } UNION { ?uri lux:recordText ?text BIND (5 AS ?weight) } UNION { ?uri lux:setAny/lux:primaryName ?text BIND (1 AS ?weight) } ?uri a lux:Set . GRAPH ?tf { ?text ql:has-word ?word } BIND (?tf * ?weight AS ?score) }",
+  "agentWords": "PREFIX lux: https://lux.collections.yale.edu/ns/ SELECT ?word ?uri ?score ?tf WHERE { { ?uri lux:agentPrimaryName ?text BIND (14 AS ?weight) } UNION { ?uri lux:recordText ?text BIND (5 AS ?weight) } UNION { ?uri lux:agentAny/lux:primaryName ?text BIND (1 AS ?weight) } ?uri a lux:Agent . GRAPH ?tf { ?text ql:has-word ?word } BIND (?tf * ?weight AS ?score) }",
+  "placeWords": "PREFIX lux: https://lux.collections.yale.edu/ns/ SELECT ?word ?uri ?score ?tf WHERE { { ?uri lux:placePrimaryName ?text BIND (14 AS ?weight) } UNION { ?uri lux:recordText ?text BIND (5 AS ?weight) } UNION { ?uri lux:placeAny/lux:primaryName ?text BIND (1 AS ?weight) } ?uri a lux:Place . GRAPH ?tf { ?text ql:has-word ?word } BIND (?tf * ?weight AS ?score) }",
+  "conceptWords": "PREFIX lux: https://lux.collections.yale.edu/ns/ SELECT ?word ?uri ?score ?tf WHERE { { ?uri lux:conceptPrimaryName ?text BIND (14 AS ?weight) } UNION { ?uri lux:recordText ?text BIND (5 AS ?weight) } UNION { ?uri lux:conceptAny/lux:primaryName ?text BIND (1 AS ?weight) } ?uri a lux:Concept . GRAPH ?tf { ?text ql:has-word ?word } BIND (?tf * ?weight AS ?score) }",
+  "eventWords": "PREFIX lux: https://lux.collections.yale.edu/ns/ SELECT ?word ?uri ?score ?tf WHERE { { ?uri lux:eventPrimaryName ?text BIND (14 AS ?weight) } UNION { ?uri lux:recordText ?text BIND (5 AS ?weight) } UNION { ?uri lux:eventAny/lux:primaryName ?text BIND (1 AS ?weight) } ?uri a lux:Event . GRAPH ?tf { ?text ql:has-word ?word } BIND (?tf * ?weight AS ?score) }"
+}
+
 
 [server]
 HOST_NAME          = localhost
 PORT               = 7010
-ACCESS_TOKEN       = ${data:NAME}_106043e3_0421_4fe0a36d_72830178aa0e
-MEMORY_FOR_QUERIES = 40G
-CACHE_MAX_SIZE     = 30G
-NUM_THREADS        = 16
+ACCESS_TOKEN       = ${data:NAME}_8E34F576_B530_4982_B4D9_85E3B028A4F3
+MEMORY_FOR_QUERIES = 80G
+CACHE_MAX_SIZE     = 70G
+NUM_THREADS        = 20
 TIMEOUT            = 60s
+PRELOAD_MATERIALIZED_VIEWS = itemWords workWords setWords agentWords placeWords conceptWords eventWords
 
 [runtime]
-SYSTEM = docker
-IMAGE  = docker.io/adfreiburg/qlever:latest
+SYSTEM = native
 
 [ui]
 UI_CONFIG = lux
