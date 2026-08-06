@@ -1,16 +1,17 @@
 # configuration for middletier
 
+import json
 import os
 import sys
-import json
-from luxql import luxql as luxql_mod
-from luxql import JsonReader, LuxConfig
-from qleverlux.sparql import SparqlTranslator
 from argparse import ArgumentParser
-from dotenv import load_dotenv
 from getpass import getuser
 
+from dotenv import load_dotenv
+from luxql import JsonReader, LuxConfig
+from luxql import luxql as luxql_mod
 from pydantic import BaseModel
+
+from qleverlux.sparql import SparqlTranslator
 
 try:
     from enum import StrEnum
@@ -46,6 +47,18 @@ class MTConfig:
         self.pgsslmode = os.getenv("QLMT_PGSSLMODE", "require")
         self.pgtable_hal = os.getenv("QLMT_PGTABLE_HAL", "hal_data_cache")
 
+        self.use_pg_data_cache = (
+            os.getenv("QLMT_USE_PG_DATA_CACHE", "false").lower() == "true"
+        )
+
+        self.lmdb_path = os.getenv("QLMT_LMDB_PATH", "")
+        if self.lmdb_path == "":
+            self.use_lmdb_data_cache = False
+        else:
+            self.use_lmdb_data_cache = (
+                os.getenv("QLMT_USE_LMDB_DATA_CACHE", "false").lower() == "true"
+            )
+
         # Environment variables to connect to the QLever SPARQL endpoint
         self.qlproto = os.getenv("QLMT_QLPROTO", "http")
         self.qlhost = os.getenv("QLMT_QLHOST", "localhost")
@@ -64,7 +77,9 @@ class MTConfig:
         # Environment variables for replacing the data URIs for this middle tier instance
         self.data_uri = os.getenv("QLMT_DATAURI", "https://lux.collections.yale.edu/")
         self.replace_proto = os.getenv("QLMT_REPLACE_PROTO", "https")
-        self.replace_host = os.getenv("QLMT_EXTERNAL_HOST", "qleverlux.collections.yale.edu")
+        self.replace_host = os.getenv(
+            "QLMT_EXTERNAL_HOST", "qleverlux.collections.yale.edu"
+        )
         self.replace_port = int(os.getenv("QLMT_EXTERNAL_PORT", -1))
         self.replace_path = os.getenv("QLMT_EXTERNAL_PATH", "")
 
@@ -87,70 +102,209 @@ class MTConfig:
         # use httpx or aiohttp, default to httpx for HTTP/2 support
         self.use_httpx = os.getenv("QLMT_USEHTTPX", "true").lower() == "true"
 
-        self.use_postgres_hal_cache = os.getenv("QLMT_USE_POSTGRES_HAL_CACHE", "false").lower() == "true"
-        self.use_disk_hal_cache = os.getenv("QLMT_USE_DISK_HAL_CACHE", "true").lower() == "true"
+        # We can use lmdb cache for baseline, but need multiple-writers for HAL cache
+        self.use_pg_hal_cache = (
+            os.getenv("QLMT_USE_POSTGRES_HAL_CACHE", "false").lower() == "true"
+        )
+        self.use_disk_hal_cache = (
+            os.getenv("QLMT_USE_DISK_HAL_CACHE", "true").lower() == "true"
+        )
 
-        self.qlever_timeout = os.getenv("QLMT_QLEVER_TIMEOUT", 30)
-        self.max_qlever_connections = os.getenv("QLMT_MAX_QLEVER_CONNECTIONS", 20)
+        self.qlever_timeout = int(os.getenv("QLMT_QLEVER_TIMEOUT", 30))
+        self.max_qlever_connections = int(os.getenv("QLMT_MAX_QLEVER_CONNECTIONS", 20))
 
-        self.mt_backlog = os.getenv("QLMT_BACKLOG", 512)
-        self.mt_queue_size = os.getenv("QLMT_QUEUE_SIZE", 128)
-        self.mt_app_queue_size = os.getenv("QLMT_APP_QUEUE_SIZE", 128)
-        self.mt_workers = os.getenv("QLMT_WORKERS", 4)
-        self.mt_read_timeout = os.getenv("QLMT_READ_TIMEOUT", 30)
-        self.max_qlever_requests = os.getenv("QLMT_MAX_OPEN_REQUESTS", 64)
+        self.mt_backlog = int(os.getenv("QLMT_BACKLOG", 512))
+        self.mt_queue_size = int(os.getenv("QLMT_QUEUE_SIZE", 128))
+        self.mt_app_queue_size = int(os.getenv("QLMT_APP_QUEUE_SIZE", 128))
+        self.mt_workers = int(os.getenv("QLMT_WORKERS", 4))
+        self.mt_read_timeout = int(os.getenv("QLMT_READ_TIMEOUT", 30))
+        self.max_qlever_requests = int(os.getenv("QLMT_MAX_OPEN_REQUESTS", 64))
 
         # Now look for overrides from the command line
 
         parser = ArgumentParser()
 
-        parser.add_argument("--config-path", type=str, help="Path to config file directory", default=self.config_path)
-        parser.add_argument("--queries-path", type=str, help="Path to queries directory", default=self.queries_path)
         parser.add_argument(
-            "--hal-cache-path", type=str, help="Path to HAL cache directory", default=self.hal_cache_path
+            "--config-path",
+            type=str,
+            help="Path to config file directory",
+            default=self.config_path,
+        )
+        parser.add_argument(
+            "--queries-path",
+            type=str,
+            help="Path to queries directory",
+            default=self.queries_path,
+        )
+        parser.add_argument(
+            "--hal-cache-path",
+            type=str,
+            help="Path to HAL cache directory",
+            default=self.hal_cache_path,
         )
 
-        parser.add_argument("--pghost", type=str, help="Postgres host", default=self.pghost)
-        parser.add_argument("--pgport", type=int, help="Postgres port", default=self.pgport)
-        parser.add_argument("--pguser", type=str, help="Postgres username", default=self.pguser)
-        parser.add_argument("--pgdb", type=str, help="Postgres database", default=self.pgdb)
-        parser.add_argument("--pgtable", type=str, help="Postgres records table", default=self.pgtable)
-
-        parser.add_argument("--qlproto", type=str, help="Qlever protocol for SPARQL", default=self.qlproto)
-        parser.add_argument("--qlhost", type=str, help="Qlever host for SPARQL", default=self.qlhost)
-        parser.add_argument("--qlport", type=int, help="Qlever port for SPARQL", default=self.qlport)
-        parser.add_argument("--qlpath", type=str, help="Qlever path for SPARQL", default=self.qlpath)
-
-        parser.add_argument("--mtproto", type=str, help="HTTP/HTTPS for middletier", default=self.mtproto)
-        parser.add_argument("--mthost", type=str, help="Middletier listen host", default=self.mthost)
-        parser.add_argument("--mtport", type=int, help="Middletier listen port", default=self.mtport)
-        parser.add_argument("--mtpath", type=str, help="Middletier listen path", default=self.mtpath)
-
-        parser.add_argument("--data-uri", type=str, help="Data URI for URI substitution", default=self.data_uri)
         parser.add_argument(
-            "--replace-proto", type=str, help="Protocol for URI substitution", default=self.replace_proto
+            "--pghost", type=str, help="Postgres host", default=self.pghost
         )
-        parser.add_argument("--replace-host", type=str, help="Host for URI substitution", default=self.replace_host)
-        parser.add_argument("--replace-port", type=int, help="Port for replacement", default=self.replace_port)
-        parser.add_argument("--replace-path", type=str, help="Path for URI substitution", default=self.replace_path)
-
-        parser.add_argument("--log-level", type=str, help="Log level for uvicorn", default=self.log_level)
-        parser.add_argument("--cert-name", type=str, help="prefix for cert files", default=self.cert_name)
-
-        parser.add_argument("--page-length", type=int, help="Page length for pagination", default=self.page_length)
         parser.add_argument(
-            "--portal", type=str, help="Which source unit, if any, to filter for", default=self.portal
+            "--pgport", type=int, help="Postgres port", default=self.pgport
         )
-        parser.add_argument("--facet-delay", type=int, help="Delay in milliseconds for facets", default=0)
-        parser.add_argument("--use-stopwords", action="store_true", help="Use stopwords")
-        parser.add_argument("--use-httpx", action="store_true", help="Use httpx for http2 connections to qlever")
-        parser.add_argument("--use-postgres-hal-cache", action="store_true", help="Use postgres hal cache")
-        parser.add_argument("--use-disk-hal-cache", action="store_true", help="Use disk hal cache")
-
-        parser.add_argument("--queue-size", type=int, help="Size of the queue", default=self.mt_queue_size)
-        parser.add_argument("--backlog", type=int, help="Backlog size for the queue", default=self.mt_backlog)
         parser.add_argument(
-            "--read-timeout", type=int, help="Timeout for read operations", default=self.mt_app_queue_size
+            "--pguser", type=str, help="Postgres username", default=self.pguser
+        )
+        parser.add_argument(
+            "--pgdb", type=str, help="Postgres database", default=self.pgdb
+        )
+        parser.add_argument(
+            "--pgtable", type=str, help="Postgres records table", default=self.pgtable
+        )
+
+        parser.add_argument(
+            "--qlproto",
+            type=str,
+            help="Qlever protocol for SPARQL",
+            default=self.qlproto,
+        )
+        parser.add_argument(
+            "--qlhost", type=str, help="Qlever host for SPARQL", default=self.qlhost
+        )
+        parser.add_argument(
+            "--qlport", type=int, help="Qlever port for SPARQL", default=self.qlport
+        )
+        parser.add_argument(
+            "--qlpath", type=str, help="Qlever path for SPARQL", default=self.qlpath
+        )
+
+        parser.add_argument(
+            "--mtproto",
+            type=str,
+            help="HTTP/HTTPS for middletier",
+            default=self.mtproto,
+        )
+        parser.add_argument(
+            "--mthost", type=str, help="Middletier listen host", default=self.mthost
+        )
+        parser.add_argument(
+            "--mtport", type=int, help="Middletier listen port", default=self.mtport
+        )
+        parser.add_argument(
+            "--mtpath", type=str, help="Middletier listen path", default=self.mtpath
+        )
+
+        parser.add_argument(
+            "--data-uri",
+            type=str,
+            help="Data URI for URI substitution",
+            default=self.data_uri,
+        )
+        parser.add_argument(
+            "--replace-proto",
+            type=str,
+            help="Protocol for URI substitution",
+            default=self.replace_proto,
+        )
+        parser.add_argument(
+            "--replace-host",
+            type=str,
+            help="Host for URI substitution",
+            default=self.replace_host,
+        )
+        parser.add_argument(
+            "--replace-port",
+            type=int,
+            help="Port for replacement",
+            default=self.replace_port,
+        )
+        parser.add_argument(
+            "--replace-path",
+            type=str,
+            help="Path for URI substitution",
+            default=self.replace_path,
+        )
+
+        parser.add_argument(
+            "--log-level",
+            type=str,
+            help="Log level for uvicorn",
+            default=self.log_level,
+        )
+        parser.add_argument(
+            "--cert-name",
+            type=str,
+            help="prefix for cert files",
+            default=self.cert_name,
+        )
+
+        parser.add_argument(
+            "--page-length",
+            type=int,
+            help="Page length for pagination",
+            default=self.page_length,
+        )
+        parser.add_argument(
+            "--portal",
+            type=str,
+            help="Which source unit, if any, to filter for",
+            default=self.portal,
+        )
+        parser.add_argument(
+            "--facet-delay",
+            type=int,
+            help="Delay in milliseconds for facets",
+            default=0,
+        )
+        parser.add_argument(
+            "--use-stopwords", action="store_true", help="Use stopwords"
+        )
+        parser.add_argument(
+            "--use-httpx",
+            action="store_true",
+            help="Use httpx for http2 connections to qlever",
+        )
+
+        parser.add_argument(
+            "--lmdb-path",
+            type=str,
+            help="Path to lmdb cache",
+            default=self.lmdb_path,
+        )
+
+        parser.add_argument(
+            "--use-pg-data-cache",
+            action="store_true",
+            help="Use postgres data cache",
+        )
+        parser.add_argument(
+            "--use-lmdb-data-cache",
+            action="store_true",
+            help="Use lmdb data cache",
+        )
+        parser.add_argument(
+            "--use-postgres-hal-cache",
+            action="store_true",
+            help="Use postgres hal cache",
+        )
+        parser.add_argument(
+            "--use-disk-hal-cache", action="store_true", help="Use disk hal cache"
+        )
+
+        parser.add_argument(
+            "--queue-size",
+            type=int,
+            help="Size of the queue",
+            default=self.mt_queue_size,
+        )
+        parser.add_argument(
+            "--backlog",
+            type=int,
+            help="Backlog size for the queue",
+            default=self.mt_backlog,
+        )
+        parser.add_argument(
+            "--read-timeout",
+            type=int,
+            help="Timeout for read operations",
+            default=self.mt_app_queue_size,
         )
         parser.add_argument(
             "--max-app-queue-size",
@@ -158,7 +312,12 @@ class MTConfig:
             help="Maximum size of the application queue",
             default=self.mt_app_queue_size,
         )
-        parser.add_argument("--workers", type=int, help="Number of worker processes", default=self.mt_app_queue_size)
+        parser.add_argument(
+            "--workers",
+            type=int,
+            help="Number of worker processes",
+            default=self.mt_app_queue_size,
+        )
         parser.add_argument(
             "--max-qlever-requests",
             type=int,
@@ -174,11 +333,17 @@ class MTConfig:
         )
 
         parser.add_argument(
-            "--qlever-timeout", type=int, help="Timeout for qlever requests", default=self.qlever_timeout
+            "--qlever-timeout",
+            type=int,
+            help="Timeout for qlever requests",
+            default=self.qlever_timeout,
         )
 
         parser.add_argument(
-            "--search-config", type=str, help="Path to search configuration file", default=self.search_config
+            "--search-config",
+            type=str,
+            help="Path to search configuration file",
+            default=self.search_config,
         )
 
         args, rest = parser.parse_known_args()
@@ -199,7 +364,9 @@ class MTConfig:
             self.qlport = ""
 
         self.mt_uri = f"{args.replace_proto}://{args.replace_host}{self.replace_port}{args.replace_path}"
-        self.sparql_endpoint = f"{args.qlproto}://{args.qlhost}{self.qlport}/{args.qlpath}"
+        self.sparql_endpoint = (
+            f"{args.qlproto}://{args.qlhost}{self.qlport}/{args.qlpath}"
+        )
 
         with open(os.path.join(self.config_path, "facets.json")) as fh:
             self.facets = json.load(fh)
@@ -214,7 +381,9 @@ class MTConfig:
         with open(os.path.join(self.config_path, "hal_links.json")) as fh:
             self.hal_queries = json.load(fh)
             for v in self.hal_queries.values():
-                v["template"] = v["template"].replace("{searchUriHost}", self.mt_uri[:-1])
+                v["template"] = v["template"].replace(
+                    "{searchUriHost}", self.mt_uri[:-1]
+                )
 
         with open(os.path.join(self.config_path, "sorts.json"), "r") as f:
             self.sorts = json.load(f)
@@ -275,7 +444,9 @@ class MTConfig:
                     found = True
                     break
             if not found:
-                print(f" *** Could not find search term {stn} for facet {k} in search terms, deleting ***")
+                print(
+                    f" *** Could not find search term {stn} for facet {k} in search terms, deleting ***"
+                )
                 del self.facets[k]
 
         self.json_reader = JsonReader(self.lux_config)
@@ -295,15 +466,16 @@ class MTConfig:
         print()
         ### FIXME: print out all the settings
 
-        print(f"Postgres Host:  {self.pghost}")
-        print(f"Postgres Port:  {self.pgport}")
-        print(f"QLever Proto:   {self.qlproto}")
-        print(f"QLever Host:    {self.qlhost}")
-        print(f"QLever Port:    {self.qlport}")
+        print(f"Postgres:       {self.pghost or 'localhost'}:{self.pgport}/{self.pgdb}")
+        print(f"QLever:         {self.qlproto}://{self.qlhost}{self.qlport}")
+        print(f"LMDB:           {self.lmdb_path}")
         print(f"Use HTTPX:      {self.use_httpx}")
         print()
         print(f"Postgres HAL:   {self.use_postgres_hal_cache}")
         print(f"Disk HAL:       {self.use_disk_hal_cache}")
+
+        print(f"Internal URI:   {self.data_uri}")
+        print(f"External URI:   {self.mt_uri}")
 
         print(f"Queue Size:     {self.queue_size}")
         print(f"App Queue Size: {self.max_app_queue_size}")
@@ -338,7 +510,9 @@ class MTConfig:
                 f = fields.pop(0)
                 inv = self.inverses[target_scope][f]
                 try:
-                    target_scope = self.lux_config.lux_config["terms"][target_scope][f]["relation"]
+                    target_scope = self.lux_config.lux_config["terms"][target_scope][f][
+                        "relation"
+                    ]
                 except KeyError:
                     print(f"Failed to traverse for {qname}")
                     print(f"Invalid field '{f}' for scope '{target_scope}'")
@@ -406,7 +580,9 @@ SELECT ?uri WHERE {
                         break
                     aq.append(p)
                     try:
-                        target_scope = self.lux_config.lux_config["terms"][target_scope][f]["relation"]
+                        target_scope = self.lux_config.lux_config["terms"][
+                            target_scope
+                        ][f]["relation"]
                     except KeyError:
                         print(f"reset target scope for relation in {key}")
                         print(f"KeyError: {f} not found in {target_scope}")
@@ -421,7 +597,9 @@ SELECT ?uri WHERE {
                         print(f"KeyError: {f} not found in {target_scope}")
                         break
                     bq.append(p2)
-                    target_scope = self.lux_config.lux_config["terms"][target_scope][f]["relation"]
+                    target_scope = self.lux_config.lux_config["terms"][target_scope][f][
+                        "relation"
+                    ]
 
             p = "/".join([f"^lux:{x[1:]}" if x[0] == "^" else f"lux:{x}" for x in aq])
             p2 = "/".join([f"^lux:{x[1:]}" if x[0] == "^" else f"lux:{x}" for x in bq])
@@ -454,7 +632,11 @@ SELECT ?uri WHERE {
 
             kn = key.replace("-", "_")
             names.append([kn, score])
-            tmpl = SUB_TEMPLATE.replace("V_NAME_REL", kn).replace("V_URI_REL", p).replace("V_TARGET_REL", p2)
+            tmpl = (
+                SUB_TEMPLATE.replace("V_NAME_REL", kn)
+                .replace("V_URI_REL", p)
+                .replace("V_TARGET_REL", p2)
+            )
             tmp2 = HAL_TEMPLATE.replace("V_URI_REL", p).replace("V_TARGET_REL", p2)
             fragments.append([tmpl, score])
 
@@ -469,7 +651,9 @@ SELECT ?uri WHERE {
         # this allows the MT to step through each in turn and can bail when any
         # of them match. It also doesn't tie up the CPU as much on a single query
         hal_tests.sort(key=lambda x: x[1], reverse=True)
-        self.hal_related_list_tests[scope][qtype] = [f"{PREFIXES}\n{x[0]}" for x in hal_tests]
+        self.hal_related_list_tests[scope][qtype] = [
+            f"{PREFIXES}\n{x[0]}" for x in hal_tests
+        ]
 
         fragments.sort(key=lambda x: x[1], reverse=True)
         fragments = [x[0] for x in fragments]
@@ -523,7 +707,9 @@ SELECT ?uri ?total {vars} WHERE {{
                 self.related_list_json[scope][qtype] = {}
                 for qname, qscope in queries.items():
                     jq = self.make_related_json_stub(qname, scope, qscope)
-                    self.related_list_json[scope][qtype][qname] = json.dumps(jq, separators=(",", ":"))
+                    self.related_list_json[scope][qtype][qname] = json.dumps(
+                        jq, separators=(",", ":")
+                    )
 
 
 if USE_STR_ENUM:

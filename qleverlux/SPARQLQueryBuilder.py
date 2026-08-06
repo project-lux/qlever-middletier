@@ -19,6 +19,53 @@ from qleverlux.SPARQLSyntaxTerms import (
     Having,
 )
 
+#   lux:itemPrimaryName [ ql:has-word "fish" ] .
+#   SERVICE view:itemWords { [ view:column-word "university" ; view:column-uri ?subject; view:column-score ?s3 ] }
+
+class BNode(AbstractTerm):
+    def __init__(self):
+        self.graph = []
+
+    def add_triples(self, triples):
+        """
+        Adds a list of triples to the graph pattern.
+        :param triples: <list> A list of SPARQLSyntaxTerms.Triple objects. The subject is ignored
+        :return: <bool> True if addition succeeded, False if given argument was not a list of Triple objects.
+        """
+        if type(triples) not in [list, tuple, set]:
+            triples = [triples]
+        if all(isinstance(element, Triple) for element in triples):
+            self.graph.extend(triples)
+            return self
+        else:
+            return False
+
+    def get_text(self, indentation_depth=0):
+        """
+        Generates the text for the SPARQL graph pattern.
+        :param indentation_depth: <int> A value that facilitates the appropriate addition of indents to the text. Defaults at 0.
+        :return: <str> The SPARQL graph pattern text. Returns empty string if an exception was raised.
+        """
+        try:
+            # Calculate indentations
+            outer_indentation = indentation_depth * "   "
+            inner_indentation = (indentation_depth + 1) * "   "
+
+            query_text = "%s[\n" % (outer_indentation,)
+            entries = []
+            for entry in self.graph:
+                # If entry is a Triple object
+                entries.append("%s%s %s" % (inner_indentation, entry.predicate, entry.object))
+            query_text += inner_indentation
+            query_text += f" ;\n{inner_indentation}".join(entries)
+            query_text += " %s]" % (outer_indentation,)
+            return query_text
+
+        except Exception as e:
+            return ""
+
+
+
 
 class SPARQLGraphPattern(AbstractTerm):
     def __init__(self, optional=False, union=False, not_exists=False, service=""):
@@ -56,6 +103,10 @@ class SPARQLGraphPattern(AbstractTerm):
             return self
         else:
             return False
+
+    def add_bnode(self, bnode):
+        self.graph.append(bnode)
+
 
     def add_nested_graph_pattern(self, graph_pattern):
         """
@@ -148,7 +199,8 @@ class SPARQLGraphPattern(AbstractTerm):
             elif self.is_not_exists:
                 query_text = "%sFILTER NOT EXISTS {\n" % (outer_indentation,)
             elif self.service_name:
-                query_text = "%sSERVICE %s: {\n" % (outer_indentation, self.service_name)
+                sn = f"{self.service_name}:" if ":" not in self.service_name else self.service_name
+                query_text = "%sSERVICE %s {\n" % (outer_indentation, sn)
             else:
                 query_text = "%s{\n" % (outer_indentation,)
 
@@ -182,6 +234,9 @@ class SPARQLGraphPattern(AbstractTerm):
                         query_text += "%s{%s%s}\n" % (inner_indentation, nested_select_text, inner_indentation)
                     else:
                         return False
+
+                elif type(entry) is BNode:
+                    query_text += "%s%s\n" % (inner_indentation, entry.get_text())
 
             # Add binding texts
             for binding in self.bindings:

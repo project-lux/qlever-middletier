@@ -1,5 +1,6 @@
 from luxql import LuxLeaf, LuxBoolean, LuxRelationship
 from qleverlux.SPARQLQueryBuilder import (
+    BNode,
     GraphPattern as Pattern,
     SelectQuery,
     Prefix,
@@ -22,14 +23,15 @@ class SparqlTranslator:
         self.scored = []
         self.portal = None
         self.prefixes = {
-            # "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
-            # "la": "https://linked.art/ns/terms/",
+            "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
+            "la": "https://linked.art/ns/terms/",
             "xsd": "http://www.w3.org/2001/XMLSchema#",
             "geo": "http://www.opengis.net/ont/geosparql#",
             "geof": "http://www.opengis.net/def/function/geosparql/",
             "qlss": "https://qlever.cs.uni-freiburg.de/spatialSearch/",
             "textSearch": "https://qlever.cs.uni-freiburg.de/textSearch/",
             "lux": "https://lux.collections.yale.edu/ns/",
+            "view": "https://qlever.cs.uni-freiburg.de/materializedView/",
         }
 
         self.stopwords = {}
@@ -636,159 +638,38 @@ class SparqlTranslator:
         top = Pattern()
         wx = 0
 
+        # PREFIX lux: <https://lux.collections.yale.edu/ns/>
+        # SELECT ?uri (SUM(?score) AS ?total) WHERE {
+        #    ?uri a lux:Item ; lux:itemPrimaryName ?text .
+        #    GRAPH ?tf { ?text ql:has-word "chips" }
+        #    GRAPH ?tf2 { ?text ql:has-word "fish" }
+        #    BIND ((?tf + ?tf2) * 5 AS ?score)
+        # } GROUP BY ?uri
+
         if query.field == self.name_field:
             field = f"lux:{scope}Name"
-            nameVar = f"?name_{self.counter}"
-            top.add_triples(Triple(query.var, field, nameVar))
-            svc = Pattern(service="textSearch")
-            strips = []
-            tsvar = f"?ts{self.counter}"
-
-            # Only one field, so can have one service with one entry per word
+            bnode = BNode()
             for w in words:
-                cfvar = f"?cf{self.counter}{wx}"
-                strips.append(Triple(tsvar, "textSearch:contains", cfvar))
-                strips.append(Triple(cfvar, "textSearch:word", f'"{w}"'))
-                if self.calculate_scores:
-                    strips.append(Triple(cfvar, "textSearch:score", f"?score_{self.counter}{wx}"))
-                wx += 1
-
-            cfvar = f"?cf{self.counter}{wx}"
-            strips.append(Triple(tsvar, "textSearch:contains", cfvar))
-            strips.append(Triple(cfvar, "textSearch:entity", nameVar))
-            svc.add_triples(strips)
-            top.add_nested_graph_pattern(svc)
-            # if self.calculate_scores:
-            #    binds = []
-            #    for x in range(wx):
-            #        binds.append(f"COALESCE(?score_{self.counter}{x}, 0)")
-            #    top.add_binding(Binding(" + ".join(binds), f"?score_{self.counter}"))
+                bnode.add_triples(Triple("", "ql:has-word", f'"{w}"'))
+            top.add_triples(Triple(query.var, field, bnode))
 
         elif query.field == self.anywhere_field:
-            # This can't be text:A and text:B and text:C OR ref:A and ref:B and ref:C
-            # as it could match only as text:A and ref:B and text:C
-            # so must do (text:A OR ref:A) AND (text:B OR ref:B) AND (text:C OR ref:C)
+            view = f"view:{scope}Words"
             for w in words:
-                wpatt = Pattern()
-                p1 = Pattern()
-                opt1 = self.make_sparql_ref(query, scope, w, wx, False)
-                p1.add_nested_graph_pattern(opt1)
-                opt2 = self.make_sparql_anywhere(query, scope, w, wx, True)
-                p1.add_nested_graph_pattern(opt2)
-                if self.calculate_scores:
-                    p1.add_binding(
-                        Binding(
-                            f"COALESCE(?score_refs_{self.counter}{wx}, 0) * {self.refs_weight} + \
-COALESCE(?score_name_{self.counter}{wx}, 0) * {self.name_weight} + \
-COALESCE(?score_text_{self.counter}{wx}, 0) * {self.text_weight}",
-                            f"?score_{self.counter}{wx}",
-                        )
-                    )
-                wpatt.add_nested_graph_pattern(p1)
-
-                p2 = Pattern(union=True)
-                opt2 = self.make_sparql_anywhere(query, scope, w, wx, False)
-                p2.add_nested_graph_pattern(opt2)
-                opt1 = self.make_sparql_ref(query, scope, w, wx, True)
-                p2.add_nested_graph_pattern(opt1)
-                if self.calculate_scores:
-                    p2.add_binding(
-                        Binding(
-                            f"COALESCE(?score_refs_{self.counter}{wx}, 0) * {self.refs_weight} + \
-COALESCE(?score_name_{self.counter}{wx}, 0) * {self.name_weight} + \
-COALESCE(?score_text_{self.counter}{wx}, 0) * {self.text_weight}",
-                            f"?score_{self.counter}{wx}",
-                        )
-                    )
-                wpatt.add_nested_graph_pattern(p2)
-                top.add_nested_graph_pattern(wpatt)
+                svar = f"?view_"
+                svc = Pattern(service=view)
+                bnode = BNode()
+                bnode.add_triples(Triple("", "view:column-word", f'"{w}"'))
+                bnode.add_triples(Triple("", "view:column-uri", query.var))
+                bnode.add_triples(Triple("", "view:column-score", f"?score_{wx}"))
+                svc.add_bnode(bnode)
+                top.add_nested_graph_pattern(svc)
                 wx += 1
 
         parent.add_nested_graph_pattern(top)
-        # Still need to coalesce the scores across different words
-        if self.calculate_scores:
-            binds = []
-            for x in range(wx):
-                binds.append(f"COALESCE(?score_{self.counter}{x}, 0)")
-            parent.add_binding(Binding(" + ".join(binds), f"?score_{self.counter}"))
-            self.scored.append(self.counter)
+
         if phrases:
             fvar = f"?fld2{self.counter}0"
             ### FIXME: How to also test OR in name text?
             for p in phrases:
                 top.add_filter(Filter(f'CONTAINS(LCASE({fvar}), "{p}")'))
-
-    def make_sparql_ref(self, query, scope, w, wx, optional):
-        opt1 = Pattern(optional=optional)
-        n = 1
-        strips = []
-        tsvar = f"?ts{n}{self.counter}{wx}"
-        cfvar = f"?cf{n}{self.counter}{wx}"
-        fldvar = f"?fld{n}{self.counter}{wx}"
-
-        if self.portal is None:
-            opt1.add_triples([Triple(query.var, f"lux:{scope}Any/lux:primaryName", fldvar)])
-        else:
-            fldvar2 = f"{fldvar}P"
-            opt1.add_triples([Triple(query.var, f"lux:{scope}Any", fldvar2)])
-            opt1.add_triples([Triple(fldvar2, "lux:primaryName", fldvar)])
-            opt1.add_triples([Triple(fldvar2, "lux:source", f"lux:{self.portal}")])
-
-        svc = Pattern(service="textSearch")
-        strips.append(Triple(tsvar, "textSearch:contains", cfvar))
-        strips.append(Triple(cfvar, "textSearch:word", f'"{w}"'))
-        if self.calculate_scores:
-            strips.append(Triple(cfvar, "textSearch:score", f"?score_refs_{self.counter}{wx}"))
-        cfvar = f"?cf{self.counter}{wx}2"
-        strips.append(Triple(tsvar, "textSearch:contains", cfvar))
-        strips.append(Triple(cfvar, "textSearch:entity", fldvar))
-
-        svc.add_triples(strips)
-        opt1.add_nested_graph_pattern(svc)
-
-        return opt1
-
-    def make_sparql_anywhere(self, query, scope, w, wx, optional):
-        opt1 = Pattern(optional=optional)
-        n = 2
-        strips = []
-        tsvar = f"?ts{n}{self.counter}{wx}"
-        cfvar = f"?cf{n}{self.counter}{wx}"
-        fldvar = f"?fld{n}{self.counter}{wx}"
-
-        opt1.add_triples([Triple(query.var, "lux:recordText", fldvar)])
-        svc = Pattern(service="textSearch")
-        strips.append(Triple(tsvar, "textSearch:contains", cfvar))
-        strips.append(Triple(cfvar, "textSearch:word", f'"{w}"'))
-        cfvar = f"?cf{n}{self.counter}{wx}2"
-        strips.append(Triple(tsvar, "textSearch:contains", cfvar))
-        strips.append(Triple(cfvar, "textSearch:entity", fldvar))
-
-        if self.calculate_scores:
-            strips.append(Triple(cfvar, "textSearch:score", f"?score_text_{self.counter}{wx}"))
-        svc.add_triples(strips)
-        opt1.add_nested_graph_pattern(svc)
-
-        opt1n = Pattern(optional=True)
-        n = 3
-        strips = []
-        tsvar = f"?ts{n}{self.counter}{wx}"
-        cfvar = f"?cf{n}{self.counter}{wx}"
-        fldvar = f"?fld{n}{self.counter}{wx}"
-
-        opt1n.add_triples([Triple(query.var, f"lux:{scope}PrimaryName", fldvar)])
-
-        svc = Pattern(service="textSearch")
-        strips.append(Triple(tsvar, "textSearch:contains", cfvar))
-        strips.append(Triple(cfvar, "textSearch:word", f'"{w}"'))
-        cfvar = f"?cf{n}{self.counter}{wx}3"
-        strips.append(Triple(tsvar, "textSearch:contains", cfvar))
-        strips.append(Triple(cfvar, "textSearch:entity", fldvar))
-
-        if self.calculate_scores:
-            strips.append(Triple(cfvar, "textSearch:score", f"?score_name_{self.counter}{wx}"))
-        svc.add_triples(strips)
-        opt1n.add_nested_graph_pattern(svc)
-        opt1.add_nested_graph_pattern(opt1n)
-
-        return opt1

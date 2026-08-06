@@ -1,24 +1,29 @@
+import asyncio
 import os
 import sys
-import json
-from uuid import UUID
 import urllib
-
-from psycopg import AsyncConnection
-from psycopg.rows import dict_row
+import zlib
+from uuid import UUID
 
 import aiohttp
 import httpx
-
+import lmdb
+import ujson as json
 from async_lru import alru_cache
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-import asyncio
-
+from fastapi.responses import JSONResponse
 from luxql.string_parser import QueryParser
-from qleverlux.middletier_config import MTConfig
-from qleverlux.middletier_config import scopeEnum, classEnum, profileEnum, StatisticsResponse
+from psycopg import AsyncConnection
+from psycopg.rows import dict_row
+
+from qleverlux.middletier_config import (
+    MTConfig,
+    StatisticsResponse,
+    classEnum,
+    profileEnum,
+    scopeEnum,
+)
 
 app = FastAPI()
 app.add_middleware(
@@ -43,7 +48,9 @@ async def api_get_statistics():
 
 
 @app.get("/data/{scope}/{identifier}", operation_id="get_record")
-async def api_get_record(scope: classEnum, identifier: UUID, profile: profileEnum = None):
+async def api_get_record(
+    scope: classEnum, identifier: UUID, profile: profileEnum = None
+):
     return await local_module.mt.do_get_record(scope, identifier, profile)
 
 
@@ -58,7 +65,9 @@ async def api_get_related_list(scope: scopeEnum, name: str, uri: str, page: int 
 
 
 @app.get("/api/facets/{scope}", operation_id="get_facet")
-async def api_get_facet(scope: scopeEnum, q: str, name: str, page: int = 1, sort: str = ""):
+async def api_get_facet(
+    scope: scopeEnum, q: str, name: str, page: int = 1, sort: str = ""
+):
     return await local_module.mt.do_facet(scope, q, name, page, sort)
 
 
@@ -68,7 +77,13 @@ async def api_get_search_estimate(scope: scopeEnum, q={}, page=1):
 
 
 @app.get("/api/search/{scope}", operation_id="get_search")
-async def api_get_search(scope: scopeEnum, q: str, page: int = 1, pageLength: int = 0, sort: str = "relevance:DESC"):
+async def api_get_search(
+    scope: scopeEnum,
+    q: str,
+    page: int = 1,
+    pageLength: int = 0,
+    sort: str = "relevance:DESC",
+):
     return await local_module.mt.do_search(scope, q, page, pageLength, sort)
 
 
@@ -81,6 +96,8 @@ class QLeverLuxMiddleTier:
         self.query_parser = QueryParser()
         self.sparql_client = None
         self.postgres_conn = None
+        self.lmdb_env = None
+        self.lmdb_db = None
         self.open_requests = 0
         self.warning_request_limit = 16
 
@@ -88,22 +105,46 @@ class QLeverLuxMiddleTier:
             os.makedirs("hal_cache")
 
     def start(self):
-        self.connect_to_postgres()
+        # This has to be called after the event loop starts
+        if self.config.use_pg_data_cache or self.config.use_pg_hal_cache:
+            _ = self.connect_to_postgres()
+        if self.config.use_lmdb_data_cache and self.config.lmdb_path != "":
+            _ =self.connect_to_lmdb()
         self.connect_to_qlever()
+
+    def connect_to_lmdb(self):
+        print(f"Connecting to LMDB: {self.config.lmdb_path}")
+        if self.lmdb_env is None:
+            self.lmdb_env = lmdb.open(
+                self.config.lmdb_path, max_dbs=3, readonly=True, lock=False
+            )
+        if self.lmdb_db is None:
+            self.lmdb_db = self.lmdb_env.open_db(b"data", dupsort=False)
+        # And make a new txn for each request
 
     def connect_to_qlever(self):
         # The async pool needs to exist before async clients can be created
+        print(f"Connecting to QLever: {self.config.sparql_endpoint}")
         if self.config.use_httpx:
             limits = httpx.Limits(max_connections=self.config.max_qlever_connections)
-            timeout = httpx.Timeout(self.config.qlever_timeout, connect=2, read=self.config.qlever_timeout - 1)
-            self.sparql_client = httpx.AsyncClient(http2=True, verify=False, timeout=timeout, limits=limits)
+            timeout = httpx.Timeout(
+                self.config.qlever_timeout,
+                connect=2,
+                read=self.config.qlever_timeout - 1,
+            )
+            self.sparql_client = httpx.AsyncClient(
+                http2=True, verify=False, timeout=timeout, limits=limits
+            )
         else:
             timeout = aiohttp.ClientTimeout(
-                connect=2, total=self.config.qlever_timeout, sock_read=self.config.qlever_timeout - 1
+                connect=2,
+                total=self.config.qlever_timeout,
+                sock_read=self.config.qlever_timeout - 1,
             )
             self.sparql_client = aiohttp.ClientSession(timeout=timeout)
 
     async def connect_to_postgres(self):
+        print(f"Connecting to PostgreSQL: {self.config.pghost}:{self.config.pgport}/{self.config.pgdb}")
         try:
             if self.config.pghost:
                 conninfo = f"host={self.config.pghost} port={self.config.pgport} user={self.config.pguser} password={self.config.pgpass} dbname={self.config.pgdb}"
@@ -115,7 +156,6 @@ class QLeverLuxMiddleTier:
                 )
         except Exception as e:
             print(f"Error connecting to database: {e}")
-        return None
 
     def process_qlever_results(self, ret):
         results = {"results": []}
@@ -158,7 +198,12 @@ class QLeverLuxMiddleTier:
     async def fetch_qlever_sparql_aiohttp(self, q, drop_okay=True):
         response = None
         if drop_okay and self.open_requests > self.config.max_qlever_requests:
-            return {"total": -1, "results": [], "error": "Too many open requests", "status": 504}
+            return {
+                "total": -1,
+                "results": [],
+                "error": "Too many open requests",
+                "status": 504,
+            }
         try:
             self.open_requests += 1
             async with self.sparql_client.post(
@@ -175,7 +220,12 @@ class QLeverLuxMiddleTier:
             print(e)
             self.open_requests -= 1
             if response is not None:
-                return {"total": 0, "results": [], "error": str(e), "status": response.status_code}
+                return {
+                    "total": 0,
+                    "results": [],
+                    "error": str(e),
+                    "status": response.status_code,
+                }
             else:
                 return {"total": 0, "results": [], "error": str(e), "status": 0}
 
@@ -183,7 +233,14 @@ class QLeverLuxMiddleTier:
     async def fetch_qlever_sparql_httpx(self, q, drop_okay=True):
         response = None
         if drop_okay and self.open_requests > self.config.max_qlever_requests:
-            return {"total": -1, "results": [], "error": "Too many open requests", "status": 504}
+            return {
+                "total": -1,
+                "results": [],
+                "error": "Too many open requests",
+                "status": 504,
+            }
+        if self.sparql_client is None:
+            self.connect_to_qlever()
         try:
             self.open_requests += 1
             response = await self.sparql_client.post(
@@ -200,11 +257,18 @@ class QLeverLuxMiddleTier:
             print(e)
             self.open_requests -= 1
             if response is not None:
-                return {"total": 0, "results": [], "error": str(e), "status": response.status_code}
+                return {
+                    "total": 0,
+                    "results": [],
+                    "error": str(e),
+                    "status": response.status_code,
+                }
             else:
                 return {"total": 0, "results": [], "error": str(e), "status": 0}
 
-    def make_sparql_query(self, scope, q, page=1, pageLength=0, sort="relevance", order="DESC"):
+    def make_sparql_query(
+        self, scope, q, page=1, pageLength=0, sort="relevance", order="DESC"
+    ):
         if pageLength < 1:
             pageLength = self.config.page_length
         offset = (page - 1) * pageLength
@@ -222,7 +286,9 @@ class QLeverLuxMiddleTier:
             jq[k] = qjs[k]
         parsed = self.json_reader.read(jq, scope)
         try:
-            spq = self.sparql_translator.translate_search(parsed, scope=scope, offset=soffset, sort=sort, order=order)
+            spq = self.sparql_translator.translate_search(
+                parsed, scope=scope, offset=soffset, sort=sort, order=order
+            )
         except Exception as e:
             print(f"Error translating search: {e}")
             return None
@@ -319,7 +385,7 @@ class QLeverLuxMiddleTier:
         if self.config.use_disk_hal_cache:
             with open(fn, "w") as f:
                 json.dump(links, f)
-        elif self.config.use_postgres_hal_cache:
+        elif self.config.use_pg_hal_cache:
             await self.store_postgres_hal_cache(identifier, json.dumps(links))
         return links
 
@@ -327,8 +393,14 @@ class QLeverLuxMiddleTier:
         candidates = []
         for name in names:
             if name["type"] == "Name":
-                langs = [x.get("equivalent", [{"id": None}])[0]["id"] for x in name.get("language", [])]
-                cxns = [x.get("equivalent", [{"id": None}])[0]["id"] for x in name.get("classified_as", [])]
+                langs = [
+                    x.get("equivalent", [{"id": None}])[0]["id"]
+                    for x in name.get("language", [])
+                ]
+                cxns = [
+                    x.get("equivalent", [{"id": None}])[0]["id"]
+                    for x in name.get("classified_as", [])
+                ]
                 if self.config.aat_english in langs and self.config.aat_primary in cxns:
                     return name
                 elif self.config.aat_primary in cxns:
@@ -356,31 +428,64 @@ class QLeverLuxMiddleTier:
                 print("Stored")
 
     async def fetch_record_from_cache(self, identifier):
-        if self.config.use_postgres_hal_cache:
-            qry = f"SELECT doc.data, hal.data FROM {self.config.pgtable} AS doc LEFT JOIN {self.config.pgtable_hal} AS hal ON doc.identifier = hal.identifier WHERE doc.identifier = %s"
-        else:
-            qry = f"SELECT data FROM {self.config.pgtable} WHERE identifier = %s"
-        params = (identifier,)
-        row = None
-        try:
-            # this will fail at least the very first attempt before the connection is created
-            if self.postgres_conn is None:
-                await self.connect_to_postgres()
-            async with self.postgres_conn.cursor() as cursor:
-                await cursor.execute(qry, params)
-                row = await cursor.fetchone()
-        except Exception as e:
-            print("(re)connecting...")
-            print(e)
-            await self.connect_to_postgres()
-            async with self.postgres_conn.cursor() as cursor:
-                await cursor.execute(qry, params)
-                row = await cursor.fetchone()
+        # fetch both JSON and HAL results from cache
+        # return [json, hal]
 
-        if row:
-            return row
+        js = None
+        hal = None
+
+        if self.config.use_pg_data_cache and self.config.use_pg_hal_cache:
+            qry = f"SELECT doc.data, hal.data FROM {self.config.pgtable} AS doc LEFT JOIN {self.config.pgtable_hal} AS hal ON doc.identifier = hal.identifier WHERE doc.identifier = %s"
+            qt = "both"
+        elif self.config.use_pg_data_cache:
+            qry = f"SELECT data FROM {self.config.pgtable} WHERE identifier = %s"
+            qt = "data"
+        elif self.config.use_pg_hal_cache:
+            qry = f"SELECT data FROM {self.config.pgtable_hal} WHERE identifier = %s"
+            qt = "hal"
         else:
-            return None
+            qry = None
+            qt = None
+
+        if qry is not None:
+            params = (identifier,)
+            row = None
+            try:
+                # this will fail at least the very first attempt before the connection is created
+                if self.postgres_conn is None:
+                    await self.connect_to_postgres()
+                async with self.postgres_conn.cursor() as cursor:
+                    await cursor.execute(qry, params)
+                    row = await cursor.fetchone()
+            except Exception as e:
+                print("(re)connecting...")
+                print(e)
+                await self.connect_to_postgres()
+                async with self.postgres_conn.cursor() as cursor:
+                    await cursor.execute(qry, params)
+                    row = await cursor.fetchone()
+
+            if row:
+                if qt == "both":
+                    return row
+                elif qt == "data":
+                    js = row[0]
+                elif qt == "hal":
+                    hal = row[0]
+            else:
+                return None
+        # Now look for json in lmdb and hal on disk
+        if self.lmdb_env is not None:
+            with self.lmdb_env.begin(buffers=True) as txn:
+                uu = UUID(identifier).bytes
+                value = txn.get(key=uu, db=self.lmdb_db)
+                if value:
+                    js = json.loads(zlib.decompress(value).decode())
+
+        if self.config.use_disk_hal_cache:
+            pass
+
+        return [js, hal]
 
     # API Functions From Here
 
@@ -389,7 +494,12 @@ class QLeverLuxMiddleTier:
         return JSONResponse(content=self.config.lux_config.lux_config)
 
     async def do_search(
-        self, scope: scopeEnum, q: str, page: int = 1, pageLength: int = 0, sort: str = "relevance:desc"
+        self,
+        scope: scopeEnum,
+        q: str,
+        page: int = 1,
+        pageLength: int = 0,
+        sort: str = "relevance:desc",
     ):
         """
         Given a search query in the q parameter, perform the search against the database and return the results.
@@ -463,7 +573,9 @@ class QLeverLuxMiddleTier:
         for r in res["results"][offset % 60 : offset % 60 + pageLength]:
             js["orderedItems"].append(
                 {
-                    "id": r[0].replace(f"{self.config.data_uri}data/", f"{self.config.mt_uri}data/"),
+                    "id": r[0].replace(
+                        f"{self.config.data_uri}data/", f"{self.config.mt_uri}data/"
+                    ),
                     "type": "Object",
                 }
             )
@@ -495,7 +607,13 @@ class QLeverLuxMiddleTier:
         return JSONResponse(content=js)
 
     async def do_facet(
-        self, scope: scopeEnum, q: str, name: str, page: int = 1, sort: str = "", pageLength: int = 20
+        self,
+        scope: scopeEnum,
+        q: str,
+        name: str,
+        page: int = 1,
+        sort: str = "",
+        pageLength: int = 20,
     ):
         """
         Retrieve facet values for a given facet name and query.
@@ -598,7 +716,9 @@ class QLeverLuxMiddleTier:
                     val = val.replace("https://linked.art/ns/terms/", "")
                 else:
                     val = (
-                        val.replace(f"{self.config.data_uri}data/", f"{self.config.mt_uri}data/")
+                        val.replace(
+                            f"{self.config.data_uri}data/", f"{self.config.mt_uri}data/"
+                        )
                         .replace("https://lux.collections.yale.edu/ns/", "")
                         .replace("https://linked.art/ns/terms/", "")
                     )
@@ -629,7 +749,9 @@ class QLeverLuxMiddleTier:
 
         return JSONResponse(content=js)
 
-    async def do_related_list(self, scope: scopeEnum, name: str, uri: str, page: int = 1):
+    async def do_related_list(
+        self, scope: scopeEnum, name: str, uri: str, page: int = 1
+    ):
         """?name=relatedToAgent&uri=(uri-of-record)"""
         xuri = urllib.parse.quote(uri)
         js = {
@@ -668,12 +790,16 @@ class QLeverLuxMiddleTier:
             for k, v in rd:
                 if not v:
                     break
-                label = self.config.related_list_names.get(k, f"UNKNOWN RELATED LIST: {k}")
+                label = self.config.related_list_names.get(
+                    k, f"UNKNOWN RELATED LIST: {k}"
+                )
                 qscope = self.config.related_list_scopes[scope][name][k]
 
                 # make json query string with target substitution
                 qjstr = (
-                    self.config.related_list_json[scope][name][k].replace("V_TO_URI", uri).replace("V_FROM_URI", xuri)
+                    self.config.related_list_json[scope][name][k]
+                    .replace("V_TO_URI", uri)
+                    .replace("V_FROM_URI", xuri)
                 )
 
                 qjstr = urllib.parse.quote(qjstr)
@@ -719,7 +845,9 @@ class QLeverLuxMiddleTier:
         # js["_link"] = f"{self.config.mt_uri}api/search/{scope}?q={jqs}&page=1"
         return JSONResponse(content=js)
 
-    async def do_get_record(self, scope: classEnum, identifier: UUID, profile: profileEnum = None):
+    async def do_get_record(
+        self, scope: classEnum, identifier: UUID, profile: profileEnum = None
+    ):
         """
         Retrieve an individual record from the database.
 
@@ -742,20 +870,27 @@ class QLeverLuxMiddleTier:
         except Exception as e:
             return JSONResponse(content={"error": str(e)}, status_code=500)
 
+        cache_links = {}
+        js = None
         if res:
             js = res[0]
             if len(res) > 1:
                 cache_links = res[1]
-            else:
-                cache_links = {}
-        else:
-            js = None
+
         if js:
             if not profile:
                 links = {
                     "curies": [
-                        {"name": "lux", "href": f"{self.config.mt_uri}api/rels/{{rel}}", "templated": True},
-                        {"name": "la", "href": "https://linked.art/api/1.0/rels/{rel}", "templated": True},
+                        {
+                            "name": "lux",
+                            "href": f"{self.config.mt_uri}api/rels/{{rel}}",
+                            "templated": True,
+                        },
+                        {
+                            "name": "la",
+                            "href": "https://linked.art/api/1.0/rels/{rel}",
+                            "templated": True,
+                        },
                     ],
                     "self": {"href": f"{self.config.mt_uri}data/{scope}/{identifier}"},
                 }
@@ -765,10 +900,6 @@ class QLeverLuxMiddleTier:
                 else:
                     more_links = await self.do_hal_links(scope, identifier)
                     links.update(more_links)
-                jstr = json.dumps(js)
-                jstr = jstr.replace(f"{self.config.data_uri}data/", f"{self.config.mt_uri}data/")
-                js2 = json.loads(jstr)
-                js2["_links"] = links
             else:
                 js2 = {}
                 js2["id"] = js["id"]
@@ -782,9 +913,12 @@ class QLeverLuxMiddleTier:
                     for nm in js["identified_by"]:
                         if nm["type"] == "Identifier":
                             js2["identified_by"].append(nm)
-                jstr = json.dumps(js2)
-                jstr = jstr.replace(f"{self.config.data_uri}data/", f"{self.config.mt_uri}data/")
-                js2 = json.loads(jstr)
+                js = js2
+
+            ## This seems very inefficient
+            jstr = json.dumps(js, escape_forward_slashes=False)
+            jstr = jstr.replace(f"{self.config.data_uri}data/", f"{self.config.mt_uri}data/")
+            js2 = json.loads(jstr)
 
             return JSONResponse(content=js2)
         else:
