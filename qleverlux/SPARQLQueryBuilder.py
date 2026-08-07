@@ -8,19 +8,20 @@ Updates: Rob Sanderson (robert.sanderson@yale.edu)
 """
 
 from qleverlux.SPARQLSyntaxTerms import (
-    Prefix,
-    Triple,
-    GroupBy,
-    OrderBy,
+    AbstractTerm,
     Binding,
     Filter,
-    Values,
-    AbstractTerm,
+    GroupBy,
     Having,
+    OrderBy,
+    Prefix,
+    Triple,
+    Values,
 )
 
 #   lux:itemPrimaryName [ ql:has-word "fish" ] .
 #   SERVICE view:itemWords { [ view:column-word "university" ; view:column-uri ?subject; view:column-score ?s3 ] }
+
 
 class BNode(AbstractTerm):
     def __init__(self):
@@ -55,20 +56,23 @@ class BNode(AbstractTerm):
             entries = []
             for entry in self.graph:
                 # If entry is a Triple object
-                entries.append("%s%s %s" % (inner_indentation, entry.predicate, entry.object))
+                entries.append(
+                    "%s%s %s" % (inner_indentation, entry.predicate, entry.object)
+                )
             query_text += inner_indentation
             query_text += f" ;\n{inner_indentation}".join(entries)
             query_text += " %s]" % (outer_indentation,)
             return query_text
 
         except Exception as e:
+            print(e)
             return ""
 
 
-
-
 class SPARQLGraphPattern(AbstractTerm):
-    def __init__(self, optional=False, union=False, not_exists=False, service=""):
+    def __init__(
+        self, optional=False, union=False, not_exists=False, service="", graph_name=""
+    ):
         """
         The SPARQLGraphPattern class constructor.
         :param optional: <bool> Indicates if graph pattern should be marked as OPTIONAL.
@@ -82,6 +86,7 @@ class SPARQLGraphPattern(AbstractTerm):
         self.is_optional = optional
         self.is_union = union
         self.is_not_exists = not_exists
+        self.graph_name = graph_name
         self.service_name = service
         if not_exists and (optional or union):
             raise ValueError("FILTER NOT EXISTS cannot be used with OPTIONAL or UNION")
@@ -106,7 +111,6 @@ class SPARQLGraphPattern(AbstractTerm):
 
     def add_bnode(self, bnode):
         self.graph.append(bnode)
-
 
     def add_nested_graph_pattern(self, graph_pattern):
         """
@@ -198,8 +202,14 @@ class SPARQLGraphPattern(AbstractTerm):
                 query_text = "%sUNION\n%s{\n" % (outer_indentation, outer_indentation)
             elif self.is_not_exists:
                 query_text = "%sFILTER NOT EXISTS {\n" % (outer_indentation,)
+            elif self.graph_name:
+                query_text = f"{outer_indentation}GRAPH {self.graph_name} {{\n"
             elif self.service_name:
-                sn = f"{self.service_name}:" if ":" not in self.service_name else self.service_name
+                sn = (
+                    f"{self.service_name}:"
+                    if ":" not in self.service_name
+                    else self.service_name
+                )
                 query_text = "%sSERVICE %s {\n" % (outer_indentation, sn)
             else:
                 query_text = "%s{\n" % (outer_indentation,)
@@ -216,7 +226,9 @@ class SPARQLGraphPattern(AbstractTerm):
                 # If entry is a nested SPARQLGraphPattern object
                 elif type(entry) is SPARQLGraphPattern:
                     # Get text for nested graph pattern
-                    nested_graph_text = entry.get_text(indentation_depth=indentation_depth + 1)
+                    nested_graph_text = entry.get_text(
+                        indentation_depth=indentation_depth + 1
+                    )
 
                     # Append nested text to graph text
                     if nested_graph_text:
@@ -227,11 +239,17 @@ class SPARQLGraphPattern(AbstractTerm):
                 # If entry is a nested SPARQLSelectQuery object
                 elif type(entry) is SPARQLSelectQuery:
                     # Get the text for the nested select query
-                    nested_select_text = entry.get_text(indentation_depth=indentation_depth + 2)
+                    nested_select_text = entry.get_text(
+                        indentation_depth=indentation_depth + 2
+                    )
 
                     # Append nested text to graph text
                     if nested_select_text:
-                        query_text += "%s{%s%s}\n" % (inner_indentation, nested_select_text, inner_indentation)
+                        query_text += "%s{%s%s}\n" % (
+                            inner_indentation,
+                            nested_select_text,
+                            inner_indentation,
+                        )
                     else:
                         return False
 
@@ -316,7 +334,9 @@ class SPARQLQuery(AbstractTerm):
 
 
 class SPARQLSelectQuery(SPARQLQuery):
-    def __init__(self, distinct=False, limit=0, include_popular_prefixes=False, offset=0):
+    def __init__(
+        self, distinct=False, limit=0, include_popular_prefixes=False, offset=0
+    ):
         """
         The SPARQLSelectQuery class constructor.
         :param distinct: <bool> Indicates if the select should be SELECT DISTINCT.
@@ -409,7 +429,9 @@ class SPARQLSelectQuery(SPARQLQuery):
 
             # Add WHERE pattern graph
             if self.where is not None:
-                query_text += self.where.get_text(indentation_depth=indentation_depth)[:-1]
+                query_text += self.where.get_text(indentation_depth=indentation_depth)[
+                    :-1
+                ]
 
             # Add group by expressions
             for group in self.group_by:
@@ -493,7 +515,9 @@ class SPARQLUpdateQuery(SPARQLQuery):
                 query_text += "\n%sDELETE " % (outer_indentation,)
 
                 # Add DELETE pattern graph
-                query_text += self.delete.get_text(indentation_depth=indentation_depth)[:-1]
+                query_text += self.delete.get_text(indentation_depth=indentation_depth)[
+                    :-1
+                ]
 
             # If an insert graph pattern has been defined
             if self.insert is not None:
@@ -501,7 +525,9 @@ class SPARQLUpdateQuery(SPARQLQuery):
                 query_text += "\n%sINSERT " % (outer_indentation,)
 
                 # Add INSERT pattern graph
-                query_text += self.insert.get_text(indentation_depth=indentation_depth)[:-1]
+                query_text += self.insert.get_text(indentation_depth=indentation_depth)[
+                    :-1
+                ]
 
             # If a where graph pattern has been defined
             if self.where is not None:
@@ -509,7 +535,9 @@ class SPARQLUpdateQuery(SPARQLQuery):
                 query_text += "\n%sWHERE " % (outer_indentation,)
 
                 # Add WHERE pattern graph
-                query_text += self.where.get_text(indentation_depth=indentation_depth)[:-1]
+                query_text += self.where.get_text(indentation_depth=indentation_depth)[
+                    :-1
+                ]
 
             return query_text
 

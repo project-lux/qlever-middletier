@@ -1,19 +1,23 @@
-from luxql import LuxLeaf, LuxBoolean, LuxRelationship
-from qleverlux.SPARQLQueryBuilder import (
-    BNode,
-    GraphPattern as Pattern,
-    SelectQuery,
-    Prefix,
-    Triple,
-    GroupBy,
-    OrderBy,
-    Binding,
-    Filter,
-    Values,
-)
 import shlex
 import unicodedata
-from string import whitespace, punctuation
+from string import punctuation, whitespace
+
+from luxql import LuxBoolean, LuxLeaf, LuxRelationship
+
+from qleverlux.SPARQLQueryBuilder import (
+    Binding,
+    BNode,
+    Filter,
+    GroupBy,
+    OrderBy,
+    Prefix,
+    SelectQuery,
+    Triple,
+    Values,
+)
+from qleverlux.SPARQLQueryBuilder import (
+    GraphPattern as Pattern,
+)
 
 
 class SparqlTranslator:
@@ -23,13 +27,12 @@ class SparqlTranslator:
         self.scored = []
         self.portal = None
         self.prefixes = {
-            "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
+            #            "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
+            #            "xsd": "http://www.w3.org/2001/XMLSchema#",
+            #            "geo": "http://www.opengis.net/ont/geosparql#",
+            #            "geof": "http://www.opengis.net/def/function/geosparql/",
+            #            "qlss": "https://qlever.cs.uni-freiburg.de/spatialSearch/",
             "la": "https://linked.art/ns/terms/",
-            "xsd": "http://www.w3.org/2001/XMLSchema#",
-            "geo": "http://www.opengis.net/ont/geosparql#",
-            "geof": "http://www.opengis.net/def/function/geosparql/",
-            "qlss": "https://qlever.cs.uni-freiburg.de/spatialSearch/",
-            "textSearch": "https://qlever.cs.uni-freiburg.de/textSearch/",
             "lux": "https://lux.collections.yale.edu/ns/",
             "view": "https://qlever.cs.uni-freiburg.de/materializedView/",
         }
@@ -205,12 +208,23 @@ class SparqlTranslator:
         elif type(stopwords) is dict:
             self.stopwords = stopwords
 
-    def translate_search(self, query, scope=None, limit=None, offset=0, sort="", order="", sortDefault="ZZZZZZZZZZ"):
+    def translate_search(
+        self,
+        query,
+        scope=None,
+        limit=None,
+        offset=0,
+        sort="",
+        order="",
+        sortDefault="ZZZZZZZZZZ",
+    ):
         # Implement translation logic here
         self.counter = 0
         self.scored = []
         self.calculate_scores = False
-        self.calculate_scores = True  # always calculate scores for now until cache key is fixed
+        self.calculate_scores = (
+            True  # always calculate scores for now until cache key is fixed
+        )
         if limit is None:
             sparql = SelectQuery(offset=offset)
         else:
@@ -254,7 +268,9 @@ class SparqlTranslator:
             if "SortName" in sort:
                 spatt.add_filter(Filter("!isNumeric(?sortValue)"))
             where.add_nested_graph_pattern(spatt)
-            where.add_binding(Binding(f'COALESCE(?sortValue, "{sortDefault}")', "?sortWithDefault"))
+            where.add_binding(
+                Binding(f'COALESCE(?sortValue, "{sortDefault}")', "?sortWithDefault")
+            )
             ob = OrderBy(["?sort"], order == "DESC")
             sparql.add_order_by(ob)
 
@@ -319,7 +335,9 @@ class SparqlTranslator:
         sparql.add_order_by(ob)
         return sparql
 
-    def translate_facet(self, query, facet, scope=None, limit=None, offset=0, sort="", order=""):
+    def translate_facet(
+        self, query, facet, scope=None, limit=None, offset=0, sort="", order=""
+    ):
         self.calculate_scores = True
         self.counter = 0
         gb = GroupBy(["?facet"])
@@ -494,15 +512,30 @@ class SparqlTranslator:
             return f"lux:{field}"
 
         if field in ["startDate", "producedDate", "createdDate"]:
-            return [f"lux:startOf{scope.title()}Beginning", f"lux:endOf{scope.title()}Beginning"]
+            return [
+                f"lux:startOf{scope.title()}Beginning",
+                f"lux:endOf{scope.title()}Beginning",
+            ]
         elif field == "endDate":
-            return [f"lux:startOf{scope.title()}Ending", f"lux:endOf{scope.title()}Ending"]
+            return [
+                f"lux:startOf{scope.title()}Ending",
+                f"lux:endOf{scope.title()}Ending",
+            ]
         elif field == "activeDate":
-            return [f"lux:startOf{scope.title()}Activity", f"lux:endOf{scope.title()}Activity"]
+            return [
+                f"lux:startOf{scope.title()}Activity",
+                f"lux:endOf{scope.title()}Activity",
+            ]
         elif field == "publishedDate":
-            return [f"lux:startOf{scope.title()}Publication", f"lux:endOf{scope.title()}Publication"]
+            return [
+                f"lux:startOf{scope.title()}Publication",
+                f"lux:endOf{scope.title()}Publication",
+            ]
         elif field == "encounteredDate":
-            return [f"lux:startOf{scope.title()}Encounter", f"lux:endOf{scope.title()}Encounter"]
+            return [
+                f"lux:startOf{scope.title()}Encounter",
+                f"lux:endOf{scope.title()}Encounter",
+            ]
         elif "CreationOrPublicationDate" in field:
             return [
                 f"lux:startOf{scope.title()}Creation|lux:startOf{scope.title()}Publication",
@@ -536,15 +569,23 @@ class SparqlTranslator:
                 # do exact match on the string
                 pred = f"lux:{scope}Identifier"
                 # UNION with equivalent if starts with http
-                if query.value.startswith("http://") or query.value.startswith("https://"):
+                if query.value.startswith("http://") or query.value.startswith(
+                    "https://"
+                ):
                     p1 = Pattern()
-                    p1.add_triples([Triple(query.var, pred, f'"{query.value.lower()}"')])
+                    p1.add_triples(
+                        [Triple(query.var, pred, f'"{query.value.lower()}"')]
+                    )
                     p2 = Pattern(union=True)
-                    p2.add_triples([Triple(query.var, "la:equivalent", f"<{query.value}>")])
+                    p2.add_triples(
+                        [Triple(query.var, "la:equivalent", f"<{query.value}>")]
+                    )
                     parent.add_nested_graph_pattern(p1)
                     parent.add_nested_graph_pattern(p2)
                 else:
-                    parent.add_triples([Triple(query.var, pred, f'"{query.value.lower()}"')])
+                    parent.add_triples(
+                        [Triple(query.var, pred, f'"{query.value.lower()}"')]
+                    )
             elif query.field == "recordType":
                 parent.add_triples([Triple(query.var, "a", f"lux:{query.value}")])
             elif query.field == self.name_field and query.complete:
@@ -614,7 +655,11 @@ class SparqlTranslator:
         # extract words
         val = query.value.lower()
         if self.remove_diacritics:
-            val = unicodedata.normalize("NFKD", val).encode("ascii", "ignore").decode("ascii")
+            val = (
+                unicodedata.normalize("NFKD", val)
+                .encode("ascii", "ignore")
+                .decode("ascii")
+            )
         try:
             shwords = shlex.split(val)
         except:
@@ -632,44 +677,116 @@ class SparqlTranslator:
 
         if self.min_word_chars > 1:
             words = [
-                word.strip(whitespace + punctuation).ljust(self.min_word_chars, self.padding_char) for word in words
+                word.strip(whitespace + punctuation).ljust(
+                    self.min_word_chars, self.padding_char
+                )
+                for word in words
             ]
 
         top = Pattern()
         wx = 0
 
-        # PREFIX lux: <https://lux.collections.yale.edu/ns/>
-        # SELECT ?uri (SUM(?score) AS ?total) WHERE {
-        #    ?uri a lux:Item ; lux:itemPrimaryName ?text .
-        #    GRAPH ?tf { ?text ql:has-word "chips" }
-        #    GRAPH ?tf2 { ?text ql:has-word "fish" }
-        #    BIND ((?tf + ?tf2) * 5 AS ?score)
-        # } GROUP BY ?uri
-
         if query.field == self.name_field:
             field = f"lux:{scope}Name"
-            bnode = BNode()
+
+            top.add_triples(Triple(query.var, field, f"?text_{self.counter}"))
             for w in words:
-                bnode.add_triples(Triple("", "ql:has-word", f'"{w}"'))
-            top.add_triples(Triple(query.var, field, bnode))
+                gpat = Pattern(graph_name=f"?tf_{self.counter}_{wx}")
+                gpat.add_triples(
+                    Triple(f"?text_{self.counter}", "ql:has-word", f'"{w}"')
+                )
+                top.add_nested_graph_pattern(gpat)
+                wx += 1
+
+            for p in phrases:
+                top.add_filter(Filter(f'CONTAINS(?text_{self.counter}, "{p}")'))
 
         elif query.field == self.anywhere_field:
             view = f"view:{scope}Words"
             for w in words:
-                svar = f"?view_"
+                # svar = f"?view_"
                 svc = Pattern(service=view)
                 bnode = BNode()
                 bnode.add_triples(Triple("", "view:column-word", f'"{w}"'))
                 bnode.add_triples(Triple("", "view:column-uri", query.var))
-                bnode.add_triples(Triple("", "view:column-score", f"?score_{wx}"))
+                bnode.add_triples(Triple("", "view:column-score", f"?tf_{wx}"))
                 svc.add_bnode(bnode)
                 top.add_nested_graph_pattern(svc)
                 wx += 1
 
-        parent.add_nested_graph_pattern(top)
+            if phrases:
+                # Do this pattern:
+                """
+                SELECT ?uri WHERE {
+                ?uri a lux:Item .
+                {
+                    SERVICE view:itemWords {
+                    [
+                        view:column-word "thomas" ;
+                        view:column-uri ?uri ;
+                    ]
+                    }
+                    SERVICE view:itemWords {
+                    [
+                        view:column-word "eugene" ;
+                        view:column-uri ?uri ;
+                    ]
+                    }
+                    ?uri lux:itemPrimaryName ?text .
+                    FILTER (CONTAINS(?text,"thomas eugene"))
+                }
+                UNION {
+                    SERVICE view:itemWords {
+                    [
+                        view:column-word "thomas" ;
+                        view:column-uri ?uri ;
+                    ]
+                    }
+                    SERVICE view:itemWords {
+                    [
+                        view:column-word "eugene" ;
+                        view:column-uri ?uri ;
+                    ]
+                    }
+                    ?uri lux:recordText ?text .
+                    FILTER (CONTAINS(?text,"thomas eugene"))
+                }
+                UNION {
+                    SERVICE view:itemWords {
+                    [
+                        view:column-word "thomas" ;
+                        view:column-uri ?uri ;
+                    ]
+                    }
+                    SERVICE view:itemWords {
+                    [
+                        view:column-word "eugene" ;
+                        view:column-uri ?uri ;
+                    ]
+                    }
+                    ?uri lux:itemAny/lux:primaryName ?text .
+                    FILTER (CONTAINS(?text,"thomas eugene"))
+                }
+                }
+                GROUP BY ?uri
+                """
 
-        if phrases:
-            fvar = f"?fld2{self.counter}0"
-            ### FIXME: How to also test OR in name text?
-            for p in phrases:
-                top.add_filter(Filter(f'CONTAINS(LCASE({fvar}), "{p}")'))
+                # Calculate the strings and filter
+                p1 = Pattern()
+                p1.add_triples(Triple(query.var, f"lux:{scope}PrimaryName", "?text"))
+                p2 = Pattern(union=True)
+                p2.add_triples(Triple(query.var, "lux:recordText", "?text"))
+                p3 = Pattern(union=True)
+                p3.add_triples(
+                    Triple(query.var, f"lux:{scope}Any/lux:primaryName", "?text")
+                )
+                top.add_nested_graph_pattern(p1)
+                top.add_nested_graph_pattern(p2)
+                top.add_nested_graph_pattern(p3)
+                for p in phrases:
+                    top.add_filter(Filter(f'CONTAINS(?text, "{p}")'))
+
+        addn = " + ".join([f"?tf_{self.counter}_{i}" for i in range(wx)])
+        bnd = Binding(addn, f"?score_{self.counter}")
+        top.add_binding(bnd)
+        parent.add_nested_graph_pattern(top)

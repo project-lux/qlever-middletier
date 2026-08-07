@@ -109,7 +109,7 @@ class QLeverLuxMiddleTier:
         if self.config.use_pg_data_cache or self.config.use_pg_hal_cache:
             _ = self.connect_to_postgres()
         if self.config.use_lmdb_data_cache and self.config.lmdb_path != "":
-            _ =self.connect_to_lmdb()
+            _ = self.connect_to_lmdb()
         self.connect_to_qlever()
 
     def connect_to_lmdb(self):
@@ -144,7 +144,9 @@ class QLeverLuxMiddleTier:
             self.sparql_client = aiohttp.ClientSession(timeout=timeout)
 
     async def connect_to_postgres(self):
-        print(f"Connecting to PostgreSQL: {self.config.pghost}:{self.config.pgport}/{self.config.pgdb}")
+        print(
+            f"Connecting to PostgreSQL: {self.config.pghost}:{self.config.pgport}/{self.config.pgdb}"
+        )
         try:
             if self.config.pghost:
                 conninfo = f"host={self.config.pghost} port={self.config.pgport} user={self.config.pguser} password={self.config.pgpass} dbname={self.config.pgdb}"
@@ -544,6 +546,7 @@ class QLeverLuxMiddleTier:
             except ValueError as e:
                 return JSONResponse(status_code=400, content={"error": str(e)})
 
+        print(qt)
         try:
             res = await self.fetch_qlever_sparql(qt)
         except Exception as e:
@@ -917,7 +920,9 @@ class QLeverLuxMiddleTier:
 
             ## This seems very inefficient
             jstr = json.dumps(js, escape_forward_slashes=False)
-            jstr = jstr.replace(f"{self.config.data_uri}data/", f"{self.config.mt_uri}data/")
+            jstr = jstr.replace(
+                f"{self.config.data_uri}data/", f"{self.config.mt_uri}data/"
+            )
             js2 = json.loads(jstr)
 
             return JSONResponse(content=js2)
