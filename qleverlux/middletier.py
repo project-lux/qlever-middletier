@@ -549,6 +549,7 @@ class QLeverLuxMiddleTier:
         print(qt)
         try:
             res = await self.fetch_qlever_sparql(qt)
+            print(res["time"])
         except Exception as e:
             res = {"error": str(e), "results": [], "status": 0}
         if "error" in res:
@@ -898,11 +899,14 @@ class QLeverLuxMiddleTier:
                     "self": {"href": f"{self.config.mt_uri}data/{scope}/{identifier}"},
                 }
                 # Calculate _links here
+                # print(cache_links)
                 if cache_links:
                     links.update(cache_links)
                 else:
                     more_links = await self.do_hal_links(scope, identifier)
                     links.update(more_links)
+
+                js["_links"] = links
             else:
                 js2 = {}
                 js2["id"] = js["id"]
