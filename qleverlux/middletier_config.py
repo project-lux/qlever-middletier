@@ -69,8 +69,6 @@ class MTConfig:
         self.qlhost = os.getenv("QLMT_QLHOST", "localhost")
         self.qlport = int(os.getenv("QLMT_QLPORT", 7010))
         self.qlpath = os.getenv("QLMT_QLPATH", "sparql")
-        # self.qluser = os.getenv("QLMT_QLUSER", "")
-        # self.qlpass = os.getenv("QLMT_QLPASS", "")  # API key for update?
 
         # Environment variables for where the middle tier listens
         self.mthost = os.getenv("QLMT_MTHOST", "0.0.0.0")
@@ -313,12 +311,6 @@ class MTConfig:
             help="Use disk hal cache",
             default=self.use_disk_hal_cache,
         )
-
-        # self.ai_translate_model = os.getenv("QLMT_AI_TRANSLATE_MODEL", "")
-        # self.ai_translate_project = os.getenv("QLMT_AI_TRANSLATE_PROJECT", "")
-        # self.ai_translate_region = os.getenv("QLMT_AI_TRANSLATE_REGION", "")
-        # self.ai_translate_api_key = os.getenv("QLMT_AI_TRANSLATE_API_KEY", "")
-        # self.ai_translate_api_endpoint = os.getenv("QLMT_AI_TRANSLATE_API_ENDPOINT", "")
 
         parser.add_argument(
             "--ai-translate-enabled",
