@@ -14,6 +14,11 @@ from pydantic import BaseModel
 from qleverlux.sparql import SparqlTranslator
 
 try:
+    from google.genai import types
+except ImportError:
+    types = None
+
+try:
     from enum import StrEnum
 
     USE_STR_ENUM = True
@@ -109,6 +114,16 @@ class MTConfig:
         self.use_disk_hal_cache = (
             os.getenv("QLMT_USE_DISK_HAL_CACHE", "true").lower() == "true"
         )
+
+        self.ai_translate_enabled = (
+            os.getenv("QLMT_AI_TRANSLATE", "true").lower() == "true"
+        )
+        self.ai_translate_model = os.getenv("QLMT_AI_TRANSLATE_MODEL", "")
+        self.ai_translate_project = os.getenv("QLMT_AI_TRANSLATE_PROJECT", "")
+        self.ai_translate_region = os.getenv("QLMT_AI_TRANSLATE_REGION", "")
+        self.ai_translate_api_key = os.getenv("QLMT_AI_TRANSLATE_API_KEY", "")
+        self.ai_translate_api_endpoint = os.getenv("QLMT_AI_TRANSLATE_API_ENDPOINT", "")
+        self.ai_thinking_budget = int(os.getenv("QLMT_AI_THINKING_BUDGET", 2000))
 
         self.qlever_timeout = int(os.getenv("QLMT_QLEVER_TIMEOUT", 30))
         self.max_qlever_connections = int(os.getenv("QLMT_MAX_QLEVER_CONNECTIONS", 20))
@@ -254,12 +269,16 @@ class MTConfig:
             default=0,
         )
         parser.add_argument(
-            "--use-stopwords", action="store_true", help="Use stopwords"
+            "--use-stopwords",
+            action="store_true",
+            help="Use stopwords",
+            default=self.use_stopwords,
         )
         parser.add_argument(
             "--use-httpx",
             action="store_true",
             help="Use httpx for http2 connections to qlever",
+            default=self.use_httpx,
         )
 
         parser.add_argument(
@@ -273,19 +292,75 @@ class MTConfig:
             "--use-pg-data-cache",
             action="store_true",
             help="Use postgres data cache",
+            default=self.use_pg_data_cache,
         )
         parser.add_argument(
             "--use-lmdb-data-cache",
             action="store_true",
             help="Use lmdb data cache",
+            default=self.use_lmdb_data_cache,
         )
         parser.add_argument(
             "--use-postgres-hal-cache",
+            dest="use_pg_hal_cache",
             action="store_true",
             help="Use postgres hal cache",
+            default=self.use_pg_hal_cache,
         )
         parser.add_argument(
-            "--use-disk-hal-cache", action="store_true", help="Use disk hal cache"
+            "--use-disk-hal-cache",
+            action="store_true",
+            help="Use disk hal cache",
+            default=self.use_disk_hal_cache,
+        )
+
+        # self.ai_translate_model = os.getenv("QLMT_AI_TRANSLATE_MODEL", "")
+        # self.ai_translate_project = os.getenv("QLMT_AI_TRANSLATE_PROJECT", "")
+        # self.ai_translate_region = os.getenv("QLMT_AI_TRANSLATE_REGION", "")
+        # self.ai_translate_api_key = os.getenv("QLMT_AI_TRANSLATE_API_KEY", "")
+        # self.ai_translate_api_endpoint = os.getenv("QLMT_AI_TRANSLATE_API_ENDPOINT", "")
+
+        parser.add_argument(
+            "--ai-translate-enabled",
+            action="store_true",
+            help="Enable AI translation",
+            default=self.ai_translate_enabled,
+        )
+        parser.add_argument(
+            "--ai-translate-model",
+            type=str,
+            help="AI translate model",
+            default=self.ai_translate_model,
+        )
+        parser.add_argument(
+            "--ai-translate-project",
+            type=str,
+            help="AI translate project",
+            default=self.ai_translate_project,
+        )
+        parser.add_argument(
+            "--ai-translate-region",
+            type=str,
+            help="AI translate region",
+            default=self.ai_translate_region,
+        )
+        parser.add_argument(
+            "--ai-translate-api-key",
+            type=str,
+            help="AI translate API key",
+            default=self.ai_translate_api_key,
+        )
+        parser.add_argument(
+            "--ai-translate-api-endpoint",
+            type=str,
+            help="AI translate API endpoint",
+            default=self.ai_translate_api_endpoint,
+        )
+        parser.add_argument(
+            "--ai-thinking-budget",
+            type=int,
+            help="AI thinking budget in tokens",
+            default=self.ai_thinking_budget,
         )
 
         parser.add_argument(
@@ -304,7 +379,7 @@ class MTConfig:
             "--read-timeout",
             type=int,
             help="Timeout for read operations",
-            default=self.mt_app_queue_size,
+            default=self.mt_read_timeout,
         )
         parser.add_argument(
             "--max-app-queue-size",
@@ -316,7 +391,7 @@ class MTConfig:
             "--workers",
             type=int,
             help="Number of worker processes",
-            default=self.mt_app_queue_size,
+            default=self.mt_workers,
         )
         parser.add_argument(
             "--max-qlever-requests",
@@ -400,6 +475,72 @@ class MTConfig:
         with open(os.path.join(self.config_path, "stopwords.json"), "r") as f:
             self.stopwords = json.load(f)
 
+        with open(os.path.join(self.config_path, "system-prompt-translate.txt")) as fh:
+            self.system_prompt_translate = fh.read().strip()
+
+        with open(os.path.join(self.config_path, "system-prompt-improve.txt")) as fh:
+            self.system_prompt_improve = fh.read().strip()
+
+        if types is not None:
+            self.translate_config = types.GenerateContentConfig(
+                temperature=0.8,
+                top_p=0.95,
+                max_output_tokens=36000,
+                response_modalities=["TEXT"],
+                safety_settings=[
+                    types.SafetySetting(
+                        category="HARM_CATEGORY_HATE_SPEECH", threshold="OFF"
+                    ),
+                    types.SafetySetting(
+                        category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="OFF"
+                    ),
+                    types.SafetySetting(
+                        category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="OFF"
+                    ),
+                    types.SafetySetting(
+                        category="HARM_CATEGORY_HARASSMENT", threshold="OFF"
+                    ),
+                ],
+                response_mime_type="application/json",
+                thinking_config=types.ThinkingConfig(
+                    thinking_budget=self.ai_thinking_budget
+                ),
+                system_instruction=[
+                    types.Part.from_text(text=self.system_prompt_translate)
+                ],
+            )
+
+            self.improve_config = types.GenerateContentConfig(
+                temperature=0.8,
+                top_p=0.95,
+                max_output_tokens=36000,
+                response_modalities=["TEXT"],
+                safety_settings=[
+                    types.SafetySetting(
+                        category="HARM_CATEGORY_HATE_SPEECH", threshold="OFF"
+                    ),
+                    types.SafetySetting(
+                        category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="OFF"
+                    ),
+                    types.SafetySetting(
+                        category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="OFF"
+                    ),
+                    types.SafetySetting(
+                        category="HARM_CATEGORY_HARASSMENT", threshold="OFF"
+                    ),
+                ],
+                response_mime_type="application/json",
+                thinking_config=types.ThinkingConfig(
+                    thinking_budget=self.ai_thinking_budget
+                ),
+                system_instruction=[
+                    types.Part.from_text(text=self.system_prompt_improve)
+                ],
+            )
+        else:
+            self.translate_config = None
+            self.improve_config = None
+
         self.aat_english = "http://vocab.getty.edu/aat/300388277"
         self.aat_primary = "http://vocab.getty.edu/aat/300404670"
         self.results_fields = [
@@ -471,7 +612,7 @@ class MTConfig:
         print(f"LMDB:           {self.lmdb_path}")
         print(f"Use HTTPX:      {self.use_httpx}")
         print()
-        print(f"Postgres HAL:   {self.use_postgres_hal_cache}")
+        print(f"Postgres HAL:   {self.use_pg_hal_cache}")
         print(f"Disk HAL:       {self.use_disk_hal_cache}")
 
         print(f"Internal URI:   {self.data_uri}")

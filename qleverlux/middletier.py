@@ -17,6 +17,18 @@ from luxql.string_parser import QueryParser
 from psycopg import AsyncConnection
 from psycopg.rows import dict_row
 
+try:
+    from google import genai
+except ImportError:
+    genai = None
+    types = None
+
+try:
+    import lmstudio
+except ImportError:
+    lmstudio = None
+
+
 from qleverlux.middletier_config import (
     MTConfig,
     StatisticsResponse,
@@ -855,6 +867,10 @@ class QLeverLuxMiddleTier:
         return JSONResponse(content=js)
 
     async def do_ai_translate(self, scope: scopeEnum, q: str, prevQuery: str = ""):
+        # TODO: put a flag in config to disable ai translate
+        if not self.config.ai_translate_enabled:
+            return JSONResponse(content={}, status_code=404)
+
         return JSONResponse(content={"saw": {"q": q, "prevQuery": prevQuery}})
 
     async def do_get_record(

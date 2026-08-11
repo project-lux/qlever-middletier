@@ -141,12 +141,22 @@ class Filter(AbstractTerm):
 
 @dataclass(slots=True, eq=False)
 class Having(AbstractTerm):
-    """A HAVING expression, e.g. ``HAVING (COUNT(?x) > 2)``."""
+    """
+    A HAVING condition, e.g. ``HAVING (COUNT(?x) > 2)``.
+
+    HAVING belongs to the query rather than to a graph pattern: add it with
+    ``SPARQLSelectQuery.add_having()``, which renders it after GROUP BY.
+    """
 
     expression: str
 
+    @property
+    def condition(self) -> str:
+        """The condition alone, for a query listing several under one keyword."""
+        return f"({self.expression})"
+
     def get_text(self, indentation_depth: int = 0) -> str:
-        return f"HAVING ({self.expression})"
+        return f"HAVING {self.condition}"
 
 
 @dataclass(slots=True, eq=False)

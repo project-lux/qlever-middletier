@@ -146,7 +146,7 @@ class SPARQLGraphPattern(AbstractTerm):
         self.service_name = service
 
         self.graph: list[AbstractTerm] = []
-        self.filters: list[Filter | Having] = []
+        self.filters: list[Filter] = []
         self.bindings: list[Binding] = []
         self.values: list[Values] = []
 
@@ -176,12 +176,6 @@ class SPARQLGraphPattern(AbstractTerm):
     def add_filter(self, filter: Filter) -> Self:
         """Add a FILTER expression, rendered after the pattern's triples."""
         _check(filter, Filter, "add_filter")
-        self.filters.append(filter)
-        return self
-
-    def add_having(self, filter: Having) -> Self:
-        """Add a HAVING expression, rendered alongside the filters."""
-        _check(filter, Having, "add_having")
         self.filters.append(filter)
         return self
 
@@ -288,7 +282,15 @@ class SPARQLQuery(AbstractTerm):
 class SPARQLSelectQuery(SPARQLQuery):
     """A SELECT query, optionally distinct, grouped, ordered, limited and offset."""
 
-    __slots__ = ("distinct", "group_by", "limit", "offset", "order_by", "variables")
+    __slots__ = (
+        "distinct",
+        "group_by",
+        "having",
+        "limit",
+        "offset",
+        "order_by",
+        "variables",
+    )
 
     def __init__(
         self,
@@ -304,6 +306,7 @@ class SPARQLSelectQuery(SPARQLQuery):
         self.offset = offset
         self.variables: list[str] = []
         self.group_by: list[GroupBy] = []
+        self.having: list[Having] = []
         self.order_by: list[OrderBy] = []
 
     def add_variables(self, variables: str | Iterable[str]) -> Self:
@@ -321,6 +324,17 @@ class SPARQLSelectQuery(SPARQLQuery):
         """Add a GROUP BY clause."""
         _check(group, GroupBy, "add_group_by")
         self.group_by.append(group)
+        return self
+
+    def add_having(self, having: Having) -> Self:
+        """
+        Add a HAVING condition, filtering the grouped solutions.
+
+        Conditions are rendered after GROUP BY under a single HAVING keyword, in
+        insertion order.
+        """
+        _check(having, Having, "add_having")
+        self.having.append(having)
         return self
 
     def add_order_by(self, order_by: OrderBy) -> Self:
@@ -345,6 +359,11 @@ class SPARQLSelectQuery(SPARQLQuery):
 
         for group in self.group_by:
             parts += ("\n", outer, group.get_text())
+
+        if self.having:
+            parts += ("\n", outer, "HAVING")
+            for having in self.having:
+                parts += (" ", having.condition)
 
         if self.order_by:
             parts += ("\n", outer, "ORDER BY")
