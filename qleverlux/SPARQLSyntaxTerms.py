@@ -1,306 +1,233 @@
 """
-SPARQL Burger - A Python SPARQL query builder for programmatically generating SPARQL graph patterns and queries.
-Version 0.1
-Official webpage: http://pmitzias.com/SPARQLBurger
-Documentation: http://pmitzias.com/SPARQLBurger/docs.html
-Created by Panos Mitzias (http://www.pmitzias.com)
-Powered by Catalink Ltd (http://catalink.eu)
+SPARQL syntax terms: the leaf nodes used to build a query.
+
+Every term renders itself with ``get_text()``. Terms that can appear directly
+inside a graph pattern also implement ``emit_into()``, which appends their
+rendering to a list of string fragments; the enclosing pattern joins those
+fragments once, rather than concatenating strings at every level.
+
+Derived from SPARQL Burger, created by Panos Mitzias (http://pmitzias.com/SPARQLBurger)
+and powered by Catalink Ltd (http://catalink.eu).
+Rewritten for qleverlux by Rob Sanderson (robert.sanderson@yale.edu).
 """
 
+from __future__ import annotations
 
-class AbstractTerm:
-    def __str__(self):
+from abc import ABC, abstractmethod
+from collections.abc import Sequence
+from dataclasses import dataclass
+
+__all__ = [
+    "INDENT_UNIT",
+    "AbstractTerm",
+    "Binding",
+    "Bound",
+    "Filter",
+    "GroupBy",
+    "Having",
+    "IfClause",
+    "OrderBy",
+    "Prefix",
+    "Triple",
+    "Values",
+    "Variable",
+    "in_brackets",
+    "indent",
+]
+
+#: One level of indentation in the generated SPARQL.
+INDENT_UNIT = "   "
+
+# Indentation strings are recomputed constantly while rendering, and nesting is
+# never more than a handful of levels deep, so memoize them in a flat list.
+_INDENTS: list[str] = [""]
+
+
+def indent(depth: int) -> str:
+    """Return the indentation string for the given nesting depth."""
+    try:
+        return _INDENTS[depth]
+    except IndexError:
+        while len(_INDENTS) <= depth:
+            _INDENTS.append(_INDENTS[-1] + INDENT_UNIT)
+        return _INDENTS[depth]
+
+
+class AbstractTerm(ABC):
+    """Base class for anything that can render itself as SPARQL."""
+
+    __slots__ = ()
+
+    @abstractmethod
+    def get_text(self, indentation_depth: int = 0) -> str:
+        """Render this term as SPARQL text."""
+
+    def emit_into(self, parts: list[str], indentation_depth: int = 0) -> None:
+        """
+        Append this term's fragments as an element of an enclosing graph pattern.
+
+        The default is the form used by triples: one indented, self-terminating
+        line. Terms that nest (patterns, sub-selects, blank nodes) override it.
+        """
+        parts.append(indent(indentation_depth + 1))
+        parts.append(self.get_text())
+
+    def __str__(self) -> str:
         return self.get_text()
 
-    def __repr__(self):
+    def __repr__(self) -> str:
+        # Dataclass terms generate a more informative repr; this covers the
+        # mutable container terms, whose contents are too large to show.
         return f"{self.__class__.__name__}(...)"
 
 
-class Prefix(AbstractTerm):
-    def __init__(self, prefix, namespace):
-        """
-        The Prefix class constructor.
-        :param prefix: <str> The prefix (e.g. "ex").
-        :param namespace: <str> The namespace (e.g. "http://www.example.com#").
-        """
-        self.prefix = prefix
-        self.namespace = namespace
-
-    def get_text(self):
-        """
-        Generates the text for the given prefix (e.g. "PREFIX ex: <http://www.example.com#>")
-        :return: <str> The prefix definition text. Returns empty string if an exception was raised.
-        """
-        try:
-            return "PREFIX %s: <%s>\n" % (self.prefix, self.namespace)
-        except Exception:
-            print("Error 1 @ Prefix.get_text()")
-            return ""
-
-
-class Triple(AbstractTerm):
-    def __init__(self, subject, predicate, object):
-        """
-        The Triple class constructor.
-        :param subject: <str> The subject string (e.g. "?person")
-        :param predicate: <str> The predicate string (e.g. "ex:hasName")
-        :param object: <str> The object string (e.g. "\'John\'@en")
-        """
-        self.subject = str(subject)
-        self.predicate = str(predicate)
-        self.object = str(object)
-
-    def get_text(self):
-        """
-        Generates the text for the given triple.
-        :return: <str> The triple definition text. Returns empty string if an exception was raised.
-        """
-        try:
-            return "%s %s %s . \n" % (self.subject, self.predicate, self.object)
-        except Exception:
-            print("Error 1 @ Triple.get_text()")
-            return ""
-
-
-class Filter(AbstractTerm):
-    def __init__(self, expression):
-        """
-        The Filter class constructor.
-        :param expression: <str> The expression to get in the filter (e.g. "?age > 30")
-        """
-        self.expression = expression
-
-    def get_text(self):
-        """
-        Generates the text for the given filter.
-        :return: <str> The filter definition text. Returns empty string if an exception was raised.
-        """
-        try:
-            return "FILTER (%s)" % (self.expression,)
-        except Exception:
-            print("Error 1 @ Filter.get_text()")
-            return ""
-
-
-class Having(AbstractTerm):
-    def __init__(self, expression):
-        """
-        The Having class constructor.
-        :param expression: <str> The expression to get in the having filter (e.g. "?age > 30")
-        """
-        self.expression = expression
-
-    def get_text(self):
-        """
-        Generates the text for the given having filter.
-        :return: <str> The filter definition text. Returns empty string if an exception was raised.
-        """
-        try:
-            return "HAVING (%s)" % (self.expression,)
-        except Exception:
-            print("Error 1 @ Filter.get_text()")
-            return ""
-
-
-class Binding(AbstractTerm):
-    def __init__(self, value, variable):
-        """
-        The Binding class constructor.
-        :param value: <str> A string value to get in the BIND first part (e.g. "John")
-         OR <obj> Another object (e.g. IfClause) to be nested.
-        :param variable: <str> The variable to be bound to this value (e.g. "?name")
-        """
-        self.value = value
-        self.variable = variable
-
-    def get_text(self):
-        """
-        Generates the text for the given binding (e.g. "BIND('John' AS ?name)" or "BIND(IF(BOUND(...)) AS ?name") )
-        :return: <str> The binding definition text. Returns empty string if an exception was raised.
-        """
-        try:
-            if type(self.value) is str:
-                value_text = self.value
-            else:
-                value_text = self.value.get_text()
-
-            return "BIND (%s AS %s)" % (value_text, self.variable)
-
-        except Exception:
-            print("Error 1 @ Binding.get_text()")
-            return ""
-
-
-class Bound(AbstractTerm):
-    def __init__(self, variable):
-        """
-        The Bound class constructor.
-        :param variable: <str> The variable to be checked if it is bound (e.g. "?name")
-         OR <obj> Another object to be nested.
-        """
-        self.variable = variable
-
-    def get_text(self):
-        """
-        Generates the text for the given BOUND clause (e.g. "BOUND (?name)" )
-        :return: <str> The bound definition text. Returns empty string if an exception was raised.
-        """
-        try:
-            if type(self.variable) is str:
-                variable_text = self.variable
-            else:
-                variable_text = self.variable.get_text()
-
-            return "BOUND (%s)" % (variable_text,)
-
-        except Exception:
-            print("Error 1 @ Bound.get_text()")
-            return ""
-
-
-class IfClause(AbstractTerm):
-    def __init__(self, condition, true_value, false_value):
-        """
-        The IfClause class constructor.
-        :param condition: <str> The condition for the IF clause OR <obj> Another object to be nested.
-        :param true_value: <str> The value for when IF condition is True OR <obj> Another object to be nested.
-        :param false_value: <str> The value for when IF condition is False OR <obj> Another object to be nested.
-        """
-        self.condition = condition
-        self.true_value = true_value
-        self.false_value = false_value
-
-    def get_text(self):
-        """
-        Generates the text for the given BOUND clause (e.g. "IF(?age > 18, 'adult', 'minor')" )
-        :return: <str> The if clause definition text. Returns empty string if an exception was raised.
-        """
-        try:
-            # Check for nested condition (e.g. a nested if condition)
-            if type(self.condition) is str:
-                condition_text = self.condition
-            else:
-                condition_text = self.condition.get_text()
-
-            # Check for nested value (e.g. a nested if value)
-            if type(self.true_value) is str:
-                true_value_text = self.true_value
-            else:
-                true_value_text = self.true_value.get_text()
-
-            # Check for nested value (e.g. a nested if value)
-            if type(self.false_value) is str:
-                false_value_text = self.false_value
-            else:
-                false_value_text = self.false_value.get_text()
-
-            return "IF (%s, %s, %s)" % (condition_text, true_value_text, false_value_text)
-
-        except Exception:
-            print("Error 1 @ IfClause.get_text()")
-            return ""
-
-
-class GroupBy(AbstractTerm):
-    def __init__(self, variables):
-        """
-        The GroupBy class constructor.
-        :param variables: <list> A list of variables as strings that will be used for the grouping
-        """
-        self.variables = variables
-
-    def get_text(self):
-        """
-        Generates the text for the given GROUP BY expression (e.g. "GROUP BY ?person ?age")
-        :return: <str> The GROUP BY definition text. Returns empty string if an exception was raised.
-        """
-        try:
-            return "GROUP BY %s" % (" ".join(self.variables),)
-
-        except Exception:
-            print("Error 1 @ GroupBy.get_text()")
-            return ""
-
-
-class OrderBy(AbstractTerm):
-    def __init__(self, variables, descending=False):
-        """
-        The OrderBy class constructor.
-        :param variables: <list> A list of variables as strings that will be used for the ordering
-        :param descending: <bool> True if the ordering should be done in descending order
-        """
-        self.variables = variables
-        self.descending = descending
-        self.order = "DESC" if descending else "ASC"
-
-    def get_text(self):
-        """
-        Generates the text for the given ORDER BY expression (e.g. "ORDER BY ?person ?age")
-        :return: <str> The ORDER BY definition text. Returns empty string if an exception was raised.
-        """
-        try:
-            order_text = " ".join(self.variables)
-            return "%s(%s)" % (self.order, order_text)
-
-        except Exception:
-            print("Error 1 @ OrderBy.get_text()")
-            return ""
-
-
-class Values(AbstractTerm):
-    def __init__(self, values, name):
-        """
-        The Values class constructor.
-        :param values: <list> A list of variables as strings that should be
-                                gathered under the same variable.
-        :param name: <str> The name of the resulting variable.
-        """
-        self.values = values
-        self.name = name
-
-    def get_text(self):
-        """
-        Generate the text for the given VALUES expression (e.g.
-        "VALUES ?person {<"https://www.wikidata.org/entity/42">}
-        :return: <str> The VALUES defenition text. Returns empty string if an
-                        exception was raised.
-        """
-        try:
-            enclosed_values = [in_brackets(value) for value in self.values]
-            return "VALUES %s {%s}" % (self.name, " ".join(enclosed_values))
-        except Exception:
-            print("Error 1 @ Values.get_text()")
-            return ""
+def text_of(value: str | AbstractTerm) -> str:
+    """Render a value that may be either literal SPARQL text or a nested term."""
+    return value if isinstance(value, str) else value.get_text()
 
 
 def in_brackets(uri: str) -> str:
-    """Encloses a given URI in brackets (i.e. "<" and ">").
-    If the uri already has brackets, nothing happens.
-    :returns: <str> A URI string enclosed in brackets.
+    """
+    Enclose a URI in angle brackets, leaving anything else untouched.
+
+    Already-bracketed URIs and non-URI tokens (variables, prefixed names) are
+    returned unchanged.
     """
     if uri.startswith("<"):
         return uri
-    elif uri.startswith("http"):
-        return "<%s>" % uri
-    else:
-        return uri
+    if uri.startswith("http"):
+        return f"<{uri}>"
+    return uri
 
 
+@dataclass(slots=True, eq=False)
+class Prefix(AbstractTerm):
+    """A PREFIX declaration, e.g. ``PREFIX ex: <http://www.example.com#>``."""
+
+    prefix: str
+    namespace: str
+
+    def get_text(self, indentation_depth: int = 0) -> str:
+        return f"PREFIX {self.prefix}: <{self.namespace}>\n"
+
+
+@dataclass(slots=True, eq=False)
+class Triple(AbstractTerm):
+    """A single triple pattern, e.g. ``?person ex:hasName 'John'@en``."""
+
+    subject: str
+    predicate: str
+    object: str
+
+    def __post_init__(self) -> None:
+        # Callers pass variables, literals and other terms interchangeably.
+        self.subject = str(self.subject)
+        self.predicate = str(self.predicate)
+        self.object = str(self.object)
+
+    def get_text(self, indentation_depth: int = 0) -> str:
+        return f"{self.subject} {self.predicate} {self.object} . \n"
+
+
+@dataclass(slots=True, eq=False)
+class Filter(AbstractTerm):
+    """A FILTER expression, e.g. ``FILTER (?age > 30)``."""
+
+    expression: str
+
+    def get_text(self, indentation_depth: int = 0) -> str:
+        return f"FILTER ({self.expression})"
+
+
+@dataclass(slots=True, eq=False)
+class Having(AbstractTerm):
+    """A HAVING expression, e.g. ``HAVING (COUNT(?x) > 2)``."""
+
+    expression: str
+
+    def get_text(self, indentation_depth: int = 0) -> str:
+        return f"HAVING ({self.expression})"
+
+
+@dataclass(slots=True, eq=False)
+class Binding(AbstractTerm):
+    """A BIND expression. The bound value may itself be a term, e.g. an IfClause."""
+
+    value: str | AbstractTerm
+    variable: str
+
+    def get_text(self, indentation_depth: int = 0) -> str:
+        return f"BIND ({text_of(self.value)} AS {self.variable})"
+
+
+@dataclass(slots=True, eq=False)
+class Bound(AbstractTerm):
+    """A BOUND test, e.g. ``BOUND (?name)``."""
+
+    variable: str | AbstractTerm
+
+    def get_text(self, indentation_depth: int = 0) -> str:
+        return f"BOUND ({text_of(self.variable)})"
+
+
+@dataclass(slots=True, eq=False)
+class IfClause(AbstractTerm):
+    """An IF expression, e.g. ``IF (?age > 18, 'adult', 'minor')``. Nestable."""
+
+    condition: str | AbstractTerm
+    true_value: str | AbstractTerm
+    false_value: str | AbstractTerm
+
+    def get_text(self, indentation_depth: int = 0) -> str:
+        return (
+            f"IF ({text_of(self.condition)}, "
+            f"{text_of(self.true_value)}, "
+            f"{text_of(self.false_value)})"
+        )
+
+
+@dataclass(slots=True, eq=False)
+class GroupBy(AbstractTerm):
+    """A GROUP BY clause over one or more variables."""
+
+    variables: Sequence[str]
+
+    def get_text(self, indentation_depth: int = 0) -> str:
+        return f"GROUP BY {' '.join(self.variables)}"
+
+
+@dataclass(slots=True, eq=False)
+class OrderBy(AbstractTerm):
+    """One ordering condition, e.g. ``DESC(?score)``."""
+
+    variables: Sequence[str]
+    descending: bool = False
+
+    @property
+    def order(self) -> str:
+        return "DESC" if self.descending else "ASC"
+
+    def get_text(self, indentation_depth: int = 0) -> str:
+        return f"{self.order}({' '.join(self.variables)})"
+
+
+@dataclass(slots=True, eq=False)
+class Values(AbstractTerm):
+    """A VALUES clause binding a variable to a fixed set of terms."""
+
+    values: Sequence[str]
+    name: str
+
+    def get_text(self, indentation_depth: int = 0) -> str:
+        enclosed = " ".join(in_brackets(value) for value in self.values)
+        return f"VALUES {self.name} {{{enclosed}}}"
+
+
+@dataclass(slots=True, eq=False)
 class Variable(AbstractTerm):
-    def __init__(self, name):
-        """
-        The Variable class constructor.
-        :param name: <str> The name of the variable.
-        """
-        self.name = name
+    """A variable reference. The name is given without the leading ``?``."""
 
-    def get_text(self):
-        """
-        Generate the text for the given variable.
-        :return: <str> The variable text. Returns empty string if an exception was raised.
-        """
-        try:
-            return "?%s" % self.name
-        except Exception:
-            print("Error 1 @ Variable.get_text()")
-            return ""
+    name: str
+
+    def get_text(self, indentation_depth: int = 0) -> str:
+        return f"?{self.name}"

@@ -59,6 +59,11 @@ async def api_get_translate(scope: scopeEnum, q: str):
     return await local_module.mt.do_translate(scope, q)
 
 
+@app.get("/api/ai-translate/{scope}", operation_id="ai_translate_string_query")
+async def api_get_ai_translate(scope: scopeEnum, q: str):
+    return await local_module.mt.do_ai_translate(scope, q)
+
+
 @app.get("/api/related-list/{scope}", operation_id="get_related_list")
 async def api_get_related_list(scope: scopeEnum, name: str, uri: str, page: int = 1):
     return await local_module.mt.do_related_list(scope, name, uri, page)
@@ -848,6 +853,9 @@ class QLeverLuxMiddleTier:
         jqs = urllib.parse.quote(jqs)
         # js["_link"] = f"{self.config.mt_uri}api/search/{scope}?q={jqs}&page=1"
         return JSONResponse(content=js)
+
+    async def do_ai_translate(self, scope: scopeEnum, q: str, prevQuery: str = ""):
+        return JSONResponse(content={"saw": {"q": q, "prevQuery": prevQuery}})
 
     async def do_get_record(
         self, scope: classEnum, identifier: UUID, profile: profileEnum = None
