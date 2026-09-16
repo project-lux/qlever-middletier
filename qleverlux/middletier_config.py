@@ -6,9 +6,9 @@ import sys
 from argparse import ArgumentParser
 from getpass import getuser
 
+import luxql.config as lconfig
 from dotenv import load_dotenv
 from luxql import JsonReader, LuxConfig
-from luxql import luxql as luxql_mod
 from pydantic import BaseModel
 
 from qleverlux.sparql import SparqlTranslator
@@ -27,12 +27,15 @@ except ImportError:
 
     USE_STR_ENUM = False
 
-if "--pgpass" in sys.argv or "--qlpass" in sys.argv:
+if "--pgpass" in sys.argv:
     print("Don't put passwords in the command line, as they're visible via ps")
-    print("Instead use the .env file with QLMT_PGPASS / QLMT_QLPASS")
+    print("Instead use the .env file with QLMT_PGPASS")
     sys.exit(1)
 
-load_dotenv()
+
+loaded = load_dotenv(dotenv_path=os.path.join(os.getcwd(), ".env"), override=True)
+if not loaded:
+    print(f"Warning: No .env file found in {os.getcwd()}")
 
 
 class MTConfig:
@@ -55,6 +58,11 @@ class MTConfig:
         self.use_pg_data_cache = (
             os.getenv("QLMT_USE_PG_DATA_CACHE", "false").lower() == "true"
         )
+
+        self.lmdb_binary_uuid_keys = (
+            os.getenv("QLMT_LMDB_BINARY_UUID_KEYS", "true").lower() == "true"
+        )
+        self.lmdb_json_path = os.getenv("QLMT_LMDB_JSON_PATH", "")
 
         self.lmdb_path = os.getenv("QLMT_LMDB_PATH", "")
         if self.lmdb_path == "":
@@ -91,6 +99,7 @@ class MTConfig:
 
         # Page Length for one search results page
         self.page_length = int(os.getenv("QLMT_PAGELENGTH", 20))
+        self.facet_page_length = int(os.getenv("QLMT_FACET_PAGELENGTH", 20))
 
         # Source value to run as a portal
         # Options: YPM, YCBA, YUAG, PMC, IPCH
@@ -555,7 +564,7 @@ class MTConfig:
         # Init LuxQL FIXME: pass search_config through from env/cli
         self.lux_config = LuxConfig()
         # recache it into the module so auto configs use it
-        luxql_mod._cached_lux_config = self.lux_config
+        lconfig._cached_lux_config = self.lux_config
 
         self.lux_config.lux_config["terms"]["work"]["workCreationOrPublicationDate"] = {
             "label": "Creation or Publication Date",

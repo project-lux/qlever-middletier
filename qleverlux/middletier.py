@@ -19,10 +19,10 @@ from psycopg.rows import dict_row
 
 try:
     from google import genai
+    from google.genai import types
 except ImportError:
     genai = None
     types = None
-
 try:
     import lmstudio
 except ImportError:
@@ -117,6 +117,18 @@ class QLeverLuxMiddleTier:
         self.lmdb_db = None
         self.open_requests = 0
         self.warning_request_limit = 16
+
+        if self.config.ai_translate_enabled:
+            if self.config.ai_translate_model.startswith("gemini"):
+                client = genai.Client(
+                    vertexai=True,
+                    project=self.config.ai_translate_project,
+                    location="global",
+                )
+                self.ai_translate_client = client
+            else:
+                # TODO: Use lmstudio for local model
+                self.ai_translate_client = None
 
         if not os.path.exists("hal_cache"):
             os.makedirs("hal_cache")
@@ -496,10 +508,15 @@ class QLeverLuxMiddleTier:
         # Now look for json in lmdb and hal on disk
         if self.lmdb_env is not None:
             with self.lmdb_env.begin(buffers=True) as txn:
-                uu = UUID(identifier).bytes
+                if self.config.lmdb_binary_uuid_keys:
+                    uu = UUID(identifier).bytes
+                else:
+                    uu = identifier.encode("utf-8")
                 value = txn.get(key=uu, db=self.lmdb_db)
                 if value:
                     js = json.loads(zlib.decompress(value).decode())
+                    if self.config.lmdb_json_path:
+                        js = js[self.config.lmdb_json_path]
 
         if self.config.use_disk_hal_cache:
             pass
@@ -563,7 +580,7 @@ class QLeverLuxMiddleTier:
             except ValueError as e:
                 return JSONResponse(status_code=400, content={"error": str(e)})
 
-        print(qt)
+        # print(qt)
         try:
             res = await self.fetch_qlever_sparql(qt)
             print(res["time"])
@@ -613,6 +630,7 @@ class QLeverLuxMiddleTier:
             "totalItems": 0,
         }
         qt = self.make_sparql_query(scope, q)
+        print(qt)
 
         try:
             res = await self.fetch_qlever_sparql(qt)
@@ -634,7 +652,7 @@ class QLeverLuxMiddleTier:
         name: str,
         page: int = 1,
         sort: str = "",
-        pageLength: int = 20,
+        pageLength: int = -1,
     ):
         """
         Retrieve facet values for a given facet name and query.
@@ -654,16 +672,24 @@ class QLeverLuxMiddleTier:
             await asyncio.sleep(self.config.facet_delay / 1000)
         scope = scope.value
 
-        offset = (int(page) - 1) * self.config.page_length
+        if pageLength < 1:
+            pageLength = self.config.facet_page_length
+        offset = (int(page) - 1) * pageLength
         soffset = (offset // 60) * 60
         sort = sort.strip()
+        uri_sort = ""
         if sort:
             try:
-                sort, ascdesc = sort.split(":")
-                ascdesc = ascdesc.upper().strip()
-                sort = sort.strip()
+                if ":" not in sort:
+                    ascdesc = sort.strip().lower()
+                else:
+                    sort, ascdesc = sort.split(":")
+                    ascdesc = ascdesc.upper().strip()
+                    sort = sort.strip()
+                uri_sort = f"&sort={ascdesc}"
             except Exception:
                 ascdesc = sort.upper().strip()
+                uri_sort = f"&sort={ascdesc}"
                 sort = ""
         else:
             sort = ""
@@ -676,7 +702,7 @@ class QLeverLuxMiddleTier:
         uq = urllib.parse.quote(q)
         js = {
             "@context": "https://linked.art/ns/v1/search.json",
-            "id": f"{self.config.mt_uri}api/facets/{scope}?q={uq}&name={name}&page={page}&pageLength={self.config.page_length}",
+            "id": f"{self.config.mt_uri}api/facets/{scope}?q={uq}&name={name}&page={page}&pageLength={pageLength}",
             "type": "OrderedCollectionPage",
             "partOf": {"type": "OrderedCollection", "totalItems": 0},
             "orderedItems": [],
@@ -711,7 +737,7 @@ class QLeverLuxMiddleTier:
             parsed, pred, scope=scope, offset=soffset, sort=sort, order=ascdesc
         )
         qt = spq.get_text()
-        # print(qt)
+        print(qt)
         #
         try:
             res = await self.fetch_qlever_sparql(qt)
@@ -726,7 +752,7 @@ class QLeverLuxMiddleTier:
         js["partOf"]["totalItems"] = res["total"] + soffset
         js["_timing"] = res["time"]
 
-        for r in res["results"][offset % 60 : offset % 60 + self.config.page_length]:
+        for r in res["results"][offset % 60 : offset % 60 + pageLength]:
             val = r[0]
             ct = r[1]
             if type(val) is str and val.startswith("http"):
@@ -757,14 +783,15 @@ class QLeverLuxMiddleTier:
                     "totalItems": ct,
                 }
             )
+
         if page > 1:
             js["prev"] = {
-                "id": f"{self.config.mt_uri}api/facets/{scope}?q={uq}&name={name}&page={page - 1}&pageLength={self.config.page_length}",
+                "id": f"{self.config.mt_uri}api/facets/{scope}?q={uq}&name={name}&page={page - 1}&pageLength={pageLength}{uri_sort}",
                 "type": "OrderedCollectionPage",
             }
-        if offset + self.config.page_length < js["partOf"]["totalItems"]:
+        if (offset + pageLength) < js["partOf"]["totalItems"]:
             js["next"] = {
-                "id": f"{self.config.mt_uri}api/facets/{scope}?q={uq}&name={name}&page={page + 1}&pageLength={self.config.page_length}",
+                "id": f"{self.config.mt_uri}api/facets/{scope}?q={uq}&name={name}&page={page + 1}&pageLength={pageLength}{uri_sort}",
                 "type": "OrderedCollectionPage",
             }
 
@@ -865,6 +892,54 @@ class QLeverLuxMiddleTier:
         jqs = urllib.parse.quote(jqs)
         # js["_link"] = f"{self.config.mt_uri}api/search/{scope}?q={jqs}&page=1"
         return JSONResponse(content=js)
+
+    def post_process(self, query, scope=None):
+        new = {}
+        if "p" in query:
+            # BOOL
+            new[query["f"]] = [self.post_process(x, scope) for x in query["p"]]
+        elif "r" in query:
+            # Change scope
+            scope = scopes[scope].get(query["f"], scope)
+            new[query["f"]] = self.post_process(query["r"], scope)
+        else:
+            if False and "d" in query and query["d"]:
+                # This is where we reach out RAG style
+                # or use tool calling in the model
+                new["OR"] = [{"id": x} for x in []]
+                return new
+
+            if query["f"] in ["height", "width", "depth", "dimension"]:
+                query["v"] = float(query["v"])
+            elif query["f"] in ["hasDigitalImage"]:
+                query["v"] = int(query["v"])
+            elif query["f"].lower() == "recordtype":
+                query["v"] = query["v"].lower()
+            new[query["f"]] = query["v"]
+            if "c" in query:
+                new["_comp"] = query["c"]
+        return new
+
+    def generate_gemini(self, prompt, which="build"):
+        contents = [
+            types.Content(role="user", parts=[types.Part.from_text(text=prompt)])
+        ]
+        output = []
+        cfg = generated_config if which == "build" else config_improve
+        for chunk in gemini.models.generate_content_stream(
+            model=gemini_model,
+            contents=contents,
+            config=cfg,
+        ):
+            output.append(chunk.text)
+        jstr = "".join(output)
+        try:
+            js = json.loads(jstr)
+            return js
+        except Exception:
+            print(jstr)
+            sys.stdout.flush()
+            return None
 
     async def do_ai_translate(self, scope: scopeEnum, q: str, prevQuery: str = ""):
         # TODO: put a flag in config to disable ai translate
