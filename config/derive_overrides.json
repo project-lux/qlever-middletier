@@ -1,0 +1,7 @@
+{
+  "facets.json": {
+    "patch": {
+      "workPartOfId": { "searchTermName": "partOfWork" }
+    }
+  }
+}

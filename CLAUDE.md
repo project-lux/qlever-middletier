@@ -94,8 +94,8 @@ hits across nearby pages) and the exact page is sliced out of the result list in
 `MTConfig` loads these at startup and `cache_sparql_queries()` precompiles everything to SPARQL text once, so
 runtime work is string substitution:
 
-- `queries/*.json` — ~90 named LUX JSON queries with `URI-HERE` placeholders. Generated from the LUX frontend's
-  `builder.js` by `files/translate_query.py`.
+- `queries/*.json` — ~90 named LUX JSON queries with `URI-HERE` placeholders. Generated from the Node.js middle
+  tier's `lib/build-query/` by `files/derive_from_upstream.py`.
 - `config/hal_links.json` — HAL relation → `{queryName, template, scope}`. Each becomes a count query;
   a non-zero count means the link is emitted on the record.
 - `config/related_list_scopes.json` — for each scope/related-list, `from-to` field-path → result scope.
@@ -126,6 +126,30 @@ rewritten mt→data before translation, outbound records data→mt (currently vi
 
 `QLMT_PORTAL` (YPM, YCBA, YUAG, PMC, IPCH) makes the translator inject `?uri lux:source lux:<portal>` into every
 pattern, turning the instance into a single-unit portal.
+
+## Regenerating the derived config
+
+`files/derive_from_upstream.py` re-derives `queries/*.json` and most of `config/` from two upstream checkouts —
+`../lux-middletier` (queries, `hal_links.json`) and `../lux-marklogic` (`facets.json`, `related_lists.json`,
+`terms_inverse.json`, `related_list_scopes.json`); `stopwords.json` comes from the advanced search config that
+`luxql` ships. It needs `node` on PATH but no npm install. It defaults to a dry run that reports the drift;
+`--write` applies, `--check` exits 1 when out of date, `--prune` deletes queries dropped upstream.
+
+`-b`/`--base-dir` (or `QLMT_BASE_DIR`) picks which middle tier gets updated — any directory holding `config/` and
+`queries/`, so a deployed instance can be refreshed without going through this checkout; `--config-path` and
+`--queries-path` cover instances that split them. Only the written files move with `--base-dir`: the predicate
+vocabulary still comes from whichever `qleverlux` is importable, else this checkout. Upstream checkouts are
+looked for beside this checkout, beside the installed `qleverlux`, then beside the instance, so a copy of the
+script dropped into an instance directory still works with no arguments.
+
+Two things it deliberately does not do. `config/sorts.json` maps LUX sort keys onto QLever predicate paths that
+have no upstream counterpart, so it is only audited, not written. And generated related-list relations whose hops
+have no predicate in `SparqlTranslator.scope_fields` are dropped with a message naming the missing predicate —
+add it to `sparql.py` to let the relation through. Hand corrections that must survive regeneration go in
+`<config-path>/derive_overrides.json` as per-file `patch`/`delete` rules; an instance without its own file falls
+back to this checkout's.
+
+`files/translate_query.py` is the earlier, regex-based version of the same idea and is superseded by it.
 
 ## Notes
 

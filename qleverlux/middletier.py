@@ -3,6 +3,7 @@ import os
 import sys
 import urllib
 import zlib
+from urllib.parse import quote_plus
 from uuid import UUID
 
 import aiohttp
@@ -71,9 +72,9 @@ async def api_get_translate(scope: scopeEnum, q: str):
     return await local_module.mt.do_translate(scope, q)
 
 
-@app.get("/api/ai-translate/{scope}", operation_id="ai_translate_string_query")
-async def api_get_ai_translate(scope: scopeEnum, q: str):
-    return await local_module.mt.do_ai_translate(scope, q)
+@app.get("/api/ai-translate", operation_id="ai_translate_string_query")
+async def api_get_ai_translate(q: str):
+    return await local_module.mt.do_ai_translate(q)
 
 
 @app.get("/api/related-list/{scope}", operation_id="get_related_list")
@@ -580,7 +581,8 @@ class QLeverLuxMiddleTier:
             except ValueError as e:
                 return JSONResponse(status_code=400, content={"error": str(e)})
 
-        # print(qt)
+        print("---query---")
+        print(qt)
         try:
             res = await self.fetch_qlever_sparql(qt)
             print(res["time"])
@@ -920,14 +922,18 @@ class QLeverLuxMiddleTier:
                 new["_comp"] = query["c"]
         return new
 
-    def generate_gemini(self, prompt, which="build"):
-        contents = [
-            types.Content(role="user", parts=[types.Part.from_text(text=prompt)])
-        ]
+    def gemini_translate(self, q, which="build"):
+        # pre-built things are on self.config
+        # client is on self
+        contents = [types.Content(role="user", parts=[types.Part.from_text(text=q)])]
         output = []
-        cfg = generated_config if which == "build" else config_improve
-        for chunk in gemini.models.generate_content_stream(
-            model=gemini_model,
+        cfg = (
+            self.config.translate_config
+            if which == "build"
+            else self.config.improve_config
+        )
+        for chunk in self.ai_translate_client.models.generate_content_stream(
+            model=self.config.ai_translate_model,
             contents=contents,
             config=cfg,
         ):
@@ -941,12 +947,58 @@ class QLeverLuxMiddleTier:
             sys.stdout.flush()
             return None
 
-    async def do_ai_translate(self, scope: scopeEnum, q: str, prevQuery: str = ""):
+    def ai_post_process(self, query, scope=None):
+        new = {}
+        if "p" in query:
+            # BOOL
+            new[query["f"]] = [self.ai_post_process(x, scope) for x in query["p"]]
+        elif "r" in query:
+            # Change scope
+            scope = scopes[scope].get(query["f"], scope)
+            new[query["f"]] = self.ai_post_process(query["r"], scope)
+        else:
+            if query["f"] in ["height", "width", "depth", "dimension"]:
+                query["v"] = float(query["v"])
+            elif query["f"] in ["hasDigitalImage"]:
+                query["v"] = int(query["v"])
+            elif query["f"].lower() == "recordtype":
+                query["v"] = query["v"].lower()
+            new[query["f"]] = query["v"]
+            if "c" in query:
+                new["_comp"] = query["c"]
+        return new
+
+    def ai_to_lux(self, js):
+        if type(js) is list:
+            js = {"options": js}
+
+        try:
+            results = []
+            for q in js["options"]:
+                qry = q["query"]
+                scope = q["scope"]
+                lq = self.ai_post_process(qry, scope)
+                results.append(lq)
+            return results
+        except Exception:
+            print("Failed to process:")
+            print(json.dumps(js, indent=2))
+            raise
+            return js
+
+    async def do_ai_translate(self, q: str, prevQuery: str = ""):
         # TODO: put a flag in config to disable ai translate
         if not self.config.ai_translate_enabled:
             return JSONResponse(content={}, status_code=404)
 
-        return JSONResponse(content={"saw": {"q": q, "prevQuery": prevQuery}})
+        if not q:
+            return JSONResponse(content={}, status_code=400)
+        else:
+            # For now, send only to gemini
+            qjs = self.gemini_translate(q)
+            print(qjs)
+            resp = self.ai_to_lux(qjs)
+            return JSONResponse(content=resp)
 
     async def do_get_record(
         self, scope: classEnum, identifier: UUID, profile: profileEnum = None
