@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import pytest
 
-from qleverlux.SPARQLQueryBuilder import (
+from qleverlux.sparql.builder import (
     BNode,
     GraphPattern,
     SelectQuery,
@@ -34,7 +34,7 @@ from qleverlux.SPARQLQueryBuilder import (
     SPARQLSelectQuery,
     SPARQLUpdateQuery,
 )
-from qleverlux.SPARQLSyntaxTerms import (
+from qleverlux.sparql.terms import (
     Binding,
     Bound,
     Filter,
@@ -945,7 +945,7 @@ def test_unsupported_example_is_still_unsupported(key: str, reason: str) -> None
     assert key in QUERIES
 
     if reason in MISSING_QUERY_FORMS:
-        import qleverlux.SPARQLQueryBuilder as builder
+        import qleverlux.sparql.builder as builder
 
         class_name = MISSING_QUERY_FORMS[reason]
         assert not hasattr(builder, class_name), (

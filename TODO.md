@@ -1,7 +1,7 @@
 # TODO: SPARQL the query builders cannot express
 
-Every construct listed here is one the `qleverlux.SPARQLQueryBuilder` /
-`SPARQLSyntaxTerms` classes have no way to produce. Each entry names the
+Every construct listed here is one the `qleverlux.sparql.builder` /
+`qleverlux.sparql.terms` classes have no way to produce. Each entry names the
 conformance test it comes from, shows the query that should be buildable once
 the gap is closed, and sketches the API that would close it.
 
@@ -33,7 +33,7 @@ is latent capability rather than something LUX needs.
 
 - **Plausibly useful**: `MINUS`, `VALUES` over a variable list, `ASK`.
   `ASK` in particular is the natural form for the HAL existence probes that
-  `middletier_config.py:565` currently writes as `SELECT ?uri … LIMIT 1` — though
+  `query/related.py` (`HAL_TEMPLATE`) currently writes as `SELECT ?uri … LIMIT 1` — though
   note those are hand-written strings today, not built with these classes.
 - **Not used here**: `CONSTRUCT`, `DESCRIBE`, `BASE`, dataset clauses, and all
   twelve update operations. Worth implementing only for completeness, or if the

@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     # 3.11+ only; annotations are strings here, so it is never needed at runtime.
     from typing import Self
 
-from qleverlux.SPARQLSyntaxTerms import (
+from qleverlux.sparql.terms import (
     AbstractTerm,
     Binding,
     Filter,

@@ -11,3 +11,9 @@ uvloop
 dotenv
 httpx[http2]
 git+https://github.com/project-lux/luxql.git
+
+# Optional, one per AI query translation backend (QLMT_AI_TRANSLATE_BACKEND).
+# All three imports are guarded, so install only the one you use.
+# google-genai   # gemini
+# lmstudio       # lmstudio
+# openai         # openai-compatible endpoints

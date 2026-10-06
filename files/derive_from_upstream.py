@@ -534,54 +534,130 @@ class RelatedListBuilder:
 
 
 def load_scope_fields():
-    """`SparqlTranslator.scope_fields`: the QLever predicate vocabulary.
+    """The QLever predicate vocabulary, from `qleverlux.query.predicates`.
 
     A related list relation is only usable if every hop in it has a `lux:`
     predicate here, so this is what decides which generated relations survive.
-    Read straight out of the source with `ast` rather than by instantiating the
-    translator, which would need a whole MTConfig.  Returns (path, fields), or
-    (None, None) if no copy of sparql.py yields the literal.
+    It used to be recovered by AST-parsing `SparqlTranslator.scope_fields` out
+    of sparql.py; the vocabulary is now a module-level constant, so an import
+    is enough.  Returns (path, fields), or (None, None) if no copy is found.
 
     An instance directory holds only config/ and queries/, so the vocabulary
     comes from the code serving it: whichever qleverlux is installed, else the
-    checkout this script lives in.
+    checkout this script lives in, read literally if it cannot be imported.
     """
+    try:
+        from qleverlux.query.predicates import SCOPE_FIELDS
+
+        import qleverlux.query.predicates as module
+
+        return module.__file__, SCOPE_FIELDS
+    except ImportError:
+        pass
+
     import ast
 
-    for path in sparql_candidates():
+    for path in predicates_candidates():
         try:
             with open(path) as fh:
                 tree = ast.parse(fh.read(), filename=path)
         except (OSError, SyntaxError):
             continue
         for node in ast.walk(tree):
-            if not isinstance(node, ast.Assign):
+            if not isinstance(node, ast.AnnAssign):
                 continue
-            for target in node.targets:
-                if (
-                    isinstance(target, ast.Attribute)
-                    and target.attr == "scope_fields"
-                    and isinstance(target.value, ast.Name)
-                    and target.value.id == "self"
-                ):
-                    try:
-                        return path, ast.literal_eval(node.value)
-                    except ValueError:
-                        break
+            if isinstance(node.target, ast.Name) and node.target.id == "SCOPE_FIELDS":
+                try:
+                    return path, ast.literal_eval(node.value)
+                except ValueError:
+                    break
     return None, None
 
 
-def sparql_candidates():
-    """Places qleverlux/sparql.py might be, best first."""
+def predicates_candidates():
+    """Places qleverlux/query/predicates.py might be, best first."""
     paths = []
     try:
         import qleverlux
 
-        paths.append(os.path.join(os.path.dirname(qleverlux.__file__), "sparql.py"))
+        paths.append(
+            os.path.join(
+                os.path.dirname(qleverlux.__file__), "query", "predicates.py"
+            )
+        )
     except ImportError:
         pass
-    paths.append(os.path.join(CODE_REPO, "qleverlux", "sparql.py"))
+    paths.append(os.path.join(CODE_REPO, "qleverlux", "query", "predicates.py"))
     return [p for i, p in enumerate(paths) if p not in paths[:i]]
+
+
+def load_json_reader():
+    """A `JsonReader` over the same `LuxConfig` the middle tier builds.
+
+    Returns (reader, reason_it_is_unavailable).  The middle tier patches a
+    couple of extra search terms into `LuxConfig`, so validating against a bare
+    one would reject queries that work in practice; prefer `qleverlux`'s.
+    """
+    try:
+        from luxql import JsonReader
+    except ImportError:
+        return None, "luxql is not installed"
+    try:
+        from qleverlux.query.catalogue import build_lux_config
+
+        return JsonReader(build_lux_config()), None
+    except ImportError:
+        pass
+    try:
+        from luxql import LuxConfig
+
+        return JsonReader(LuxConfig()), None
+    except Exception as e:  # pragma: no cover - luxql imported but unusable
+        return None, f"could not build a LuxConfig: {e}"
+
+
+def validate_queries(queries):
+    """Queries `LuxConfig` rejects, as [(name, scope, error)].
+
+    The middle tier reads every one of these at startup to precompile its HAL
+    count queries.  One that will not parse is caught there, logged, and the
+    HAL link it backs is simply missing from records - which is easy to miss.
+    Upstream describes MarkLogic's full vocabulary, so it can emit a query
+    using a relationship luxql has no term for in that scope.
+
+    Returns (invalid, reason_validation_was_skipped).
+    """
+    reader, reason = load_json_reader()
+    if reader is None:
+        return [], reason
+
+    invalid = []
+    for name in sorted(queries):
+        query = copy.deepcopy(queries[name])
+        scope = query.get("_scope")
+        if not scope:
+            invalid.append((name, None, "no _scope in the query"))
+            continue
+        try:
+            reader.read(query, scope)
+        except Exception as e:
+            invalid.append((name, scope, str(e)))
+    return invalid, None
+
+
+def hal_links_using(query_name, config_path, generated_hal=None):
+    """HAL relations that reference a query, for naming what a bad one costs."""
+    hal = generated_hal
+    if hal is None:
+        try:
+            hal = read_json(os.path.join(config_path, "hal_links.json"))
+        except Exception:
+            return []
+    return sorted(
+        rel
+        for rel, entry in hal.items()
+        if isinstance(entry, dict) and entry.get("queryName") == query_name
+    )
 
 
 def validate_related_list_scopes(related, search_terms, scope_fields):
@@ -589,7 +665,7 @@ def validate_related_list_scopes(related, search_terms, scope_fields):
 
     The generators upstream describe MarkLogic's full search vocabulary, which
     runs ahead of what sparql.py knows how to translate; keeping an unmapped
-    relation makes `MTConfig.make_related_query_stub` raise at startup.
+    relation makes `RelatedListBuilder.query_stub` raise at startup.
     """
     if not scope_fields:
         return related, []
@@ -606,7 +682,9 @@ def validate_related_list_scopes(related, search_terms, scope_fields):
                     # The last hop is resolved against the scope the relation
                     # returns, matching make_related_query_stub.
                     lookup = relation_scope if i == len(hops) - 1 else current
-                    if hop not in scope_fields.get(lookup, {}):
+                    # "" means the term exists but has no QLever predicate,
+                    # which is as unusable as the term being absent.
+                    if not scope_fields.get(lookup, {}).get(hop):
                         missing = f"{lookup}.{hop}"
                         break
                     target = search_terms.get(current, {}).get(hop, {})
@@ -625,14 +703,21 @@ def derive_related_lists(relation_names):
     return dict(sorted(relation_names.items()))
 
 
-def audit_sorts(sort_bindings, current_sorts, scopes):
+def audit_sorts(sort_bindings, current_sorts, scopes, ignore=()):
     """sorts.json maps LUX sort keys onto QLever `lux:` predicate paths, which
     have no upstream counterpart, so it can only be audited.  Sort keys are
     scoped by their name prefix; `anySortName` and the unprefixed keys apply to
-    every scope."""
+    every scope.
+
+    `ignore` names sort keys upstream still publishes but this middle tier
+    deliberately does not support, so they are not reported as gaps.  It comes
+    from `derive_overrides.json` under `sorts.json` -> `ignore`."""
+    ignore = set(ignore)
     upstream = {scope: set() for scope in scopes}
     unscoped = set()
     for key in sort_bindings:
+        if key in ignore:
+            continue
         for scope in scopes:
             if key.startswith(scope) and len(key) > len(scope):
                 upstream[scope].add(key)
@@ -936,6 +1021,22 @@ def main():
     if args.check:
         args.write = False
 
+    # Preflight: related_list_scopes.json can only be generated correctly if the
+    # predicate vocabulary is available to validate it against.  Check before
+    # anything is written, so a stale copy of this script cannot half-update an
+    # instance and leave it with relations the middle tier has to skip.
+    if args.validate and (not targets or "related_list_scopes" in targets):
+        if load_scope_fields()[1] is None:
+            sys.exit(
+                "error: no qleverlux predicate vocabulary found, so "
+                "related_list_scopes.json cannot be validated.\n"
+                "  qleverlux.query.predicates must be importable, or a copy of\n"
+                "  qleverlux/query/predicates.py must sit beside this script's\n"
+                "  checkout. If this script was copied into an instance, refresh\n"
+                "  it from the qleverlux checkout.\n"
+                "  Re-run with --no-validate to write it anyway."
+            )
+
     base_dir = os.path.abspath(os.path.expanduser(args.base_dir))
     config_path = os.path.abspath(args.config_path or os.path.join(base_dir, "config"))
     queries_path = os.path.abspath(
@@ -1050,6 +1151,40 @@ def main():
                 elif not args.prune:
                     print("    kept; pass --prune to delete")
 
+            if args.validate:
+                # Map against the HAL links this run would write, not the ones
+                # on disk: a new query and the link that uses it arrive together.
+                try:
+                    fresh_hal = derive_hal_links(dump)
+                except Exception:
+                    fresh_hal = None
+                invalid, why = validate_queries(queries)
+                if why:
+                    print(f"    ! cannot validate queries against LuxConfig: {why}")
+                elif invalid:
+                    # Only a query some HAL link references is read at startup,
+                    # so only those cost anything when they will not parse. The
+                    # rest are unused files and are worth one line, not ten.
+                    backing, unused = [], []
+                    for name, scope, err in invalid:
+                        rels = hal_links_using(name, config_path, fresh_hal)
+                        (backing if rels else unused).append((name, scope, err, rels))
+                    if backing:
+                        print(
+                            f"    {len(backing)} quer{'y' if len(backing) == 1 else 'ies'} "
+                            "LuxConfig rejects that HAL links reference; the middle "
+                            "tier drops them at startup and those links will be "
+                            "missing from records:"
+                        )
+                        for name, scope, err, rels in backing:
+                            print(f"      {name} ({scope}) -> {', '.join(rels)}")
+                            print(f"        {err}")
+                    if unused:
+                        print(
+                            f"    {len(unused)} more LuxConfig rejects, but nothing "
+                            f"references them: {', '.join(n for n, _, _, _ in unused)}"
+                        )
+
         # config/*.json ------------------------------------------------------ #
         generated = {}
         if "hal_links" in targets:
@@ -1066,10 +1201,25 @@ def main():
             if args.validate:
                 sparql_path, scope_fields = load_scope_fields()
                 if scope_fields is None:
+                    # Writing this file unvalidated produces relations naming
+                    # predicates QLever has no term for, which the middle tier
+                    # then has to skip at startup.  Refuse rather than write it.
                     print(
-                        "  ! no qleverlux/sparql.py found, skipping predicate "
-                        "validation (pass --no-validate to silence)"
+                        "  ! no qleverlux predicate vocabulary found: cannot "
+                        "validate related_list_scopes.json",
+                        file=sys.stderr,
                     )
+                    print(
+                        "    qleverlux.query.predicates must be importable, or a "
+                        "copy of qleverlux/query/predicates.py must sit beside "
+                        "this script's checkout.",
+                        file=sys.stderr,
+                    )
+                    print(
+                        "    Re-run with --no-validate to write it anyway.",
+                        file=sys.stderr,
+                    )
+                    sys.exit(2)
                 else:
                     related, dropped = validate_related_list_scopes(
                         related, full_terms, scope_fields
@@ -1101,7 +1251,15 @@ def main():
             sorts_path = os.path.join(config_path, "sorts.json")
             with open(sorts_path) as fh:
                 current_sorts = json.load(fh)
-            report = audit_sorts(sort_bindings, current_sorts, list(current_sorts))
+            ignored_sorts = (overrides.get("sorts.json") or {}).get("ignore", [])
+            report = audit_sorts(
+                sort_bindings, current_sorts, list(current_sorts), ignored_sorts
+            )
+            if ignored_sorts:
+                print(
+                    f"config/sorts.json: ignoring {len(ignored_sorts)} upstream sort "
+                    f"key(s) this middle tier does not support: {sorted(ignored_sorts)}"
+                )
             if report:
                 print("config/sorts.json: AUDIT (values are QLever predicates, "
                       "so this file is maintained by hand)")

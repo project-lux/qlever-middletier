@@ -26,14 +26,14 @@ import inspect
 
 import pytest
 
-import qleverlux.SPARQLQueryBuilder as builder_module
-from qleverlux.SPARQLQueryBuilder import (
+import qleverlux.sparql.builder as builder_module
+from qleverlux.sparql.builder import (
     GraphPattern,
     SelectQuery,
     SPARQLSelectQuery,
     SPARQLUpdateQuery,
 )
-from qleverlux.SPARQLSyntaxTerms import (
+from qleverlux.sparql.terms import (
     Binding,
     Filter,
     GroupBy,

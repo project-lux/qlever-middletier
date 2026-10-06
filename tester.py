@@ -1,37 +1,40 @@
-# read query string from user, translate to json, translate to sparql, spit out the query
-#
+#!/usr/bin/env python
+"""Read a query from stdin, print the SPARQL it translates to.
+
+The fastest feedback loop for query-translation changes: it exercises the
+parser -> JsonReader -> SparqlTranslator chain without needing QLever, a
+database, or the middle tier. Accepts either a simple string query or a LUX
+JSON query.
+"""
 
 import json
-from luxql import JsonReader, LuxConfig
-from qleverlux.sparql import SparqlTranslator
+import sys
+
+from luxql import JsonReader
 from luxql.string_parser import QueryParser
 
-query_parser = QueryParser()
-cfg = LuxConfig()
-rdr = JsonReader(cfg)
-st = SparqlTranslator(cfg)
+from qleverlux.query.catalogue import build_lux_config
+from qleverlux.query.translator import SparqlTranslator
 
-query_string = input("Enter your query string: ")
 
-if query_string[0] == "{":
-    print(query_string)
-    qjs = json.loads(query_string)
-else:
-    q = query_parser.parse(query_string)
-    # now translate AST into JSON query
-    qjs = q.to_json()
+def main(scope="item"):
+    cfg = build_lux_config()
+    rdr = JsonReader(cfg)
+    st = SparqlTranslator(cfg)
+    query_parser = QueryParser()
 
-print(qjs)
+    query_string = input("Enter your query string: ")
 
-scope = "item"
-parsed = rdr.read(qjs, scope)
-spq = st.translate_search(parsed, scope=scope)
-qt = spq.get_text()
-print(qt)
+    if query_string.lstrip().startswith("{"):
+        qjs = json.loads(query_string)
+    else:
+        qjs = query_parser.parse(query_string).to_json()
 
-# pred = "lux:agentOfItemBeginning"
-# soffset = 0
-# sort = ""
-# ascdesc = ""
-# fspq = st.translate_facet(parsed, pred, scope=scope, offset=soffset, sort=sort, order=ascdesc)
-# print(fspq.get_text())
+    print(json.dumps(qjs, indent=2))
+
+    parsed = rdr.read(qjs, scope)
+    print(st.translate_search(parsed, scope=scope).get_text())
+
+
+if __name__ == "__main__":
+    main(sys.argv[1] if len(sys.argv) > 1 else "item")
