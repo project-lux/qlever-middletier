@@ -62,7 +62,7 @@ Start the UI locally, rather than via docker:
 Install luxql:  https://github.com/project-lux/luxql/
 And pip install -e .
 
-python ./qleverlux/middletier.py --help
+python -m qleverlux.server --help
 
 
 ## Notes ... ignore from here

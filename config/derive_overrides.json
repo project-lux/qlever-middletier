@@ -1,0 +1,30 @@
+{
+  "facets.json": {
+    "patch": {
+      "workPartOfId": {
+        "searchTermName": "partOfWork"
+      },
+      "setCurationAgentId": {
+        "searchTermName": "curatedBy"
+      },
+      "setCreationOrPublicationDate": {
+        "searchTermName": "setCreationOrPublicationDate"
+      },
+      "workCreationOrPublicationDate": {
+        "searchTermName": "workCreationOrPublicationDate"
+      }
+    },
+    "_why": "Upstream names some search terms differently from luxql; without these patches the facet is deleted at startup. The deletes are features this middle tier does not support.",
+    "delete": [
+      "setLastModifiedById",
+      "setLastModifiedDate"
+    ]
+  },
+  "sorts.json": {
+    "_why": "Sort keys upstream still publishes for a retired feature: sets were once user-editable collections and these found the recently modified ones. Not supported, so not reported as missing predicates.",
+    "ignore": [
+      "setLastModifiedById",
+      "setLastModifiedDate"
+    ]
+  }
+}

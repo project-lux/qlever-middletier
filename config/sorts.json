@@ -1,22 +1,24 @@
 {
   "item": {
     "anySortName": "lux:itemSortName",
-    "itemProductionDate": "lux:startOfItemBeginning",
-    "itemEncounteredDate": "lux:startOfItemEncounter",
-    "itemDimensionValue": "lux:dimension",
-    "itemDepthDimensionValue": "lux:depth",
-    "itemHeightDimensionValue": "lux:height",
-    "itemWidthDimensionValue": "lux:width",
+    "archiveSortId": "lux:sortIdentifier",
+    "itemArchiveSortId": "lux:sortIdentifier",
     "itemClassificationConceptName": "lux:itemClassification/lux:conceptSortName",
-    "itemEncounterPlaceName": "lux:placeOfItemEncounter/lux:placeSortName",
+    "itemDepthDimensionValue": "lux:depth",
+    "itemDimensionValue": "lux:dimension",
     "itemEncounterAgentName": "lux:agentOfItemEncounter/lux:agentSortName",
-    "itemProductionInfluencedByAgentName": "lux:agentInfluenceOfItem/lux:agentSortName",
-    "itemMaterialConceptName": "lux:material/lux:conceptSortName",
-    "itemProductionPlaceName": "lux:placeOfItemProduction/lux:placeSortName",
-    "itemProductionAgentName": "lux:agentOfItemProduction/lux:agentSortName",
-    "itemTechniqueConceptName": "lux:typeOfItemProduction/lux:conceptSortName",
+    "itemEncounterPlaceName": "lux:placeOfItemEncounter/lux:placeSortName",
+    "itemEncounteredDate": "lux:startOfItemEncounter",
     "itemHasDigitalImage": "lux:itemHasDigitalImage",
-    "itemRecordType": "lux:recordType"
+    "itemHeightDimensionValue": "lux:height",
+    "itemMaterialConceptName": "lux:material/lux:conceptSortName",
+    "itemProductionAgentName": "lux:agentOfItemBeginning/lux:agentSortName",
+    "itemProductionDate": "lux:startOfItemBeginning",
+    "itemProductionInfluencedByAgentName": "lux:agentInfluenceOfItemBeginning/lux:agentSortName",
+    "itemProductionPlaceName": "lux:placeOfItemBeginning/lux:placeSortName",
+    "itemRecordType": "a",
+    "itemTechniqueConceptName": "lux:typeOfItemBeginning/lux:conceptSortName",
+    "itemWidthDimensionValue": "lux:width"
   },
   "work": {
     "anySortName": "lux:workSortName",
@@ -27,26 +29,28 @@
     "workPublicationPlaceName": "lux:placeOfWorkPublication/lux:placeSortName",
     "workPublicationAgentName": "lux:agentOfWorkPublication/lux:agentSortName",
     "workHasDigitalImage": "lux:workHasDigitalImage",
-    "workRecordType": "lux:recordType"
+    "workRecordType": "a"
   },
   "set": {
     "anySortName": "lux:setSortName",
+    "archiveSortId": "lux:sortIdentifier",
+    "setArchiveSortId": "lux:sortIdentifier",
     "setClassificationConceptName": "lux:setClassification/lux:conceptSortName",
     "setCreationAgentName": "lux:agentOfSetBeginning/lux:agentSortName",
-    "setCreationPlaceName": "lux:placeOfSetBeginning/lux:placeSortName",
     "setCreationDate": "lux:startOfSetBeginning",
+    "setCreationPlaceName": "lux:placeOfSetBeginning/lux:placeSortName",
     "setCurationAgentName": "lux:setCuratedBy/lux:agentSortName",
     "setHasDigitalImage": "lux:setHasDigitalImage",
     "setPublicationAgentName": "lux:agentOfSetPublication/lux:agentSortName",
-    "setPublicationPlaceName": "lux:placeOfSetPublication/lux:placeSortName",
-    "setPublicationDate": "lux:startOfSetPublication"
+    "setPublicationDate": "lux:startOfSetPublication",
+    "setPublicationPlaceName": "lux:placeOfSetPublication/lux:placeSortName"
   },
   "agent": {
     "anySortName": "lux:agentSortName",
     "agentEndDate": "lux:startOfAgentEnding",
     "agentStartDate": "lux:startOfAgentBeginning",
     "agentHasDigitalImage": "lux:agentHasDigitalImage",
-    "agentRecordType": "lux:recordType",
+    "agentRecordType": "a",
     "agentStartPlaceName": "lux:placeOfAgentBeginning/lux:placeSortName",
     "agentClassificationConceptName": "lux:agentClassification/lux:conceptSortName",
     "agentEndPlaceName": "lux:placeOfAgentEnding/lux:placeSortName",
@@ -61,14 +65,14 @@
   },
   "concept": {
     "anySortName": "lux:conceptSortName",
-    "conceptRecordType": "lux:recordType",
+    "conceptRecordType": "a",
     "conceptClassificationConceptName": "lux:conceptClassification/lux:conceptSortName"
   },
   "event": {
     "anySortName": "lux:eventSortName",
     "eventStartDate": "lux:startOfEvent",
     "eventEndDate": "lux:endOfEvent",
-    "eventRecordType": "lux:recordType",
+    "eventRecordType": "a",
     "eventCarriedOutByAgentName": "lux:agentOfEvent/lux:agentSortName",
     "eventClassificationConceptName": "lux:eventClassification/lux:conceptSortName",
     "eventTookPlaceAtPlaceName": "lux:placeOfEvent/lux:placeSortName"
