@@ -25,11 +25,12 @@ from qleverlux.enums import scope_for_class
 
 
 class HalService:
-    def __init__(self, settings, catalogue, qlever, hal_cache):
+    def __init__(self, settings, catalogue, qlever, hal_cache, uris):
         self.settings = settings
         self.catalogue = catalogue
         self.qlever = qlever
         self.hal_cache = hal_cache
+        self.uris = uris
 
     async def _probe(self, qt):
         """Run one candidate query, treating any failure as "no results"."""
@@ -82,11 +83,15 @@ class HalService:
 
     async def links(self, scope, identifier):
         """The ``_links`` block for one record, from cache or freshly computed."""
-        cached = self.hal_cache.get(identifier)
+        # Where the data URI has no class, one identifier is several records
+        # (Wikidata's Q2 is a place, a group and a concept), each with links
+        # of its own
+        key = identifier if self.uris.classed else f"{identifier}-{scope}"
+        cached = self.hal_cache.get(key)
         if cached is not None:
             return cached
 
-        uri = f"{self.settings.data_uri}data/{scope}/{identifier}"
+        uri = self.uris.data_record(scope, identifier)
         hscope = scope_for_class(scope)
 
         links = {}
@@ -102,5 +107,5 @@ class HalService:
                 href = self._search_href(hal, uri)
             links[hal] = {"href": href, "_estimate": 1}
 
-        await self.hal_cache.put(identifier, links)
+        await self.hal_cache.put(key, links)
         return links

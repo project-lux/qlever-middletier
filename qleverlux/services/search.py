@@ -123,7 +123,9 @@ class SearchService:
         except Exception as e:
             print(f"Error translating search: {e}")
             return None
-        return spq.get_text()
+        txt = spq.get_text()
+        print(txt)
+        return txt
 
     def translate_string_query(self, scope, q):
         """Simple string query -> the equivalent LUX JSON query."""
@@ -186,8 +188,11 @@ class SearchService:
 
         start = offset % OFFSET_GRANULARITY
         for r in res["results"][start : start + pageLength]:
+            print(r)
+            # r[1] is the record's la: class, e.g. https://linked.art/ns/terms/Person
+            la_type = r[1].rsplit("/", 1)[-1]
             js["orderedItems"].append(
-                {"id": self.uris.outbound_record(r[0]), "type": "Object"}
+                {"id": self.uris.outbound_record(r[0], la_type), "type": la_type}
             )
         return JSONResponse(content=js)
 

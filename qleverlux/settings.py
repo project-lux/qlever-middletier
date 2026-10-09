@@ -54,6 +54,7 @@ NO_CLI = frozenset(
         "pgsslmode",
         "pgtable_hal",
         "lmdb_binary_uuid_keys",
+        "lmdb_key_format",
         "lmdb_json_path",
         "facet_page_length",
     }
@@ -90,6 +91,10 @@ class Settings(BaseSettings):
     lmdb_path: str = ""
     use_lmdb_data_cache: Bool = False
     lmdb_binary_uuid_keys: Bool = True
+    #: "uuid" (16 raw bytes), "text" (the identifier as UTF-8), or "qid" (a
+    #: Wikidata Q number plus the store's character for the record's type).
+    #: Empty falls back to lmdb_binary_uuid_keys: true is uuid, false text.
+    lmdb_key_format: str = ""
     lmdb_json_path: str = ""
 
     # -- QLever SPARQL endpoint
@@ -120,6 +125,10 @@ class Settings(BaseSettings):
     )
     replace_port: int = Field(default=-1, alias="QLMT_EXTERNAL_PORT")
     replace_path: str = Field(default="", alias="QLMT_EXTERNAL_PATH")
+    #: A record's URI in the data, after data_uri. ``{class}`` is the record
+    #: class from the URL path and ``{id}`` its identifier. Data whose URIs
+    #: carry no class (Wikidata's, "{id}") get it from the record's type.
+    record_path: str = "data/{class}/{id}"
 
     # -- search behaviour
     page_length: int = Field(default=20, alias="QLMT_PAGELENGTH")
@@ -169,6 +178,14 @@ class Settings(BaseSettings):
     def _derive(self):
         if not self.lmdb_path:
             self.use_lmdb_data_cache = False
+        if not self.lmdb_key_format:
+            self.lmdb_key_format = "uuid" if self.lmdb_binary_uuid_keys else "text"
+        if self.lmdb_key_format not in ("uuid", "text", "qid"):
+            raise ValueError(
+                f"QLMT_LMDB_KEY_FORMAT must be uuid, text or qid, not {self.lmdb_key_format!r}"
+            )
+        if "{id}" not in self.record_path:
+            raise ValueError(f"QLMT_RECORD_PATH has no {{id}}: {self.record_path!r}")
         return self
 
     # -- computed ---------------------------------------------------------
@@ -198,13 +215,14 @@ class Settings(BaseSettings):
         print()
         print(f"Postgres:       {self.pghost or 'localhost'}:{self.pgport}/{self.pgdb}")
         print(f"QLever:         {self.sparql_endpoint}")
-        print(f"LMDB:           {self.lmdb_path}")
+        print(f"LMDB:           {self.lmdb_path} ({self.lmdb_key_format} keys)")
         print(f"Use HTTPX:      {self.use_httpx}")
         print()
         print(f"Postgres HAL:   {self.use_pg_hal_cache}")
         print(f"Disk HAL:       {self.use_disk_hal_cache}")
         print(f"Internal URI:   {self.data_uri}")
         print(f"External URI:   {self.mt_uri}")
+        print(f"Record path:    {self.record_path}")
         print()
         print(f"Queue Size:     {self.queue_size}")
         print(f"App Queue Size: {self.max_app_queue_size}")

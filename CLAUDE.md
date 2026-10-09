@@ -291,9 +291,14 @@ Placeholders used across the templates: `URI-HERE`, `V_TARGET_URI`, `V_FROM_URI`
 ### Caching layers
 
 - Record JSON: PostgreSQL `lux_data_cache` (`QLMT_USE_PG_DATA_CACHE`) and/or LMDB (`QLMT_LMDB_PATH`, zlib-
-  compressed values keyed by raw UUID bytes). Loaded by `files/load-json-to-postgres.py`. `RecordCache`
-  (`clients/record_cache.py`) picks between them; with both PostgreSQL tables on, one joined query fetches the
-  record and its links together.
+  compressed values). Loaded by `files/load-json-to-postgres.py`. `RecordCache` (`clients/record_cache.py`)
+  picks between them; with both PostgreSQL tables on, one joined query fetches the record and its links
+  together. LMDB keys follow `QLMT_LMDB_KEY_FORMAT`: `uuid` (raw UUID bytes, LUX), `text`, or `qid` for the
+  Wikidata store written by `../data-pipeline/make_wikidata_lmdb.py` — a 4-byte Q number plus a character for
+  the record's type, because one Q-id is cached once per type (Q90 is a place and a concept). The type comes
+  from the class in the URL, and the character from the store's own `types` table. The same format decides
+  what the record route accepts as an identifier (`normalise_identifier`): a non-UUID on a `uuid` instance is
+  a 422.
 - HAL links: disk (`hal_cache/*.json`, default) or PostgreSQL `hal_data_cache`, behind `HalCache`. Computing
   them is expensive — one query per candidate relation — so a cache miss is a slow request.
 - SPARQL responses: in-process `alru_cache` on `QLeverClient`.
@@ -305,6 +310,14 @@ Data uses `QLMT_DATAURI` (`https://lux.collections.yale.edu/`); responses must u
 `UriRewriter` (`presentation/uris.py`): `inbound()` mt→data before translation, `outbound()` /
 `outbound_record()` / `outbound_json()` data→mt on the way out (the last still via a `json.dumps`/`loads` round
 trip). Any new endpoint needs both directions — use the rewriter rather than `.replace()` in a handler.
+
+Records are always served at `<mt_uri>data/<class>/<id>`; where they sit in the data is `QLMT_DATAURI` +
+`QLMT_RECORD_PATH` (default `data/{class}/{id}`). With the class in the data URI, outbound is the old string
+prefix swap, byte-identical to before. Wikidata's URIs have none (`QLMT_RECORD_PATH={id}`), so outbound needs
+the record's Linked Art type: `outbound_json` walks the document and rewrites each node with both `id` and
+`type`, and search passes the `?type` its query returns. A URI with no known type — related-list entries,
+facet values — is left as the data URI, which `inbound()` passes through unchanged, so links still work. In
+that mode one identifier is several records, so the HAL cache key is `<id>-<class>` rather than `<id>`.
 
 Note `mt_uri` has no trailing slash unless `QLMT_EXTERNAL_PATH` provides one, and every URI is built by
 concatenation (`f"{mt_uri}data/…"`), so a deployment must set `QLMT_EXTERNAL_PATH=/`.

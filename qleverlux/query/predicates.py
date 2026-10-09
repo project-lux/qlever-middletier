@@ -36,6 +36,19 @@ _DATE_SUFFIXES = {
 #: Leaf fields that are plain numeric measurements.
 _DIMENSIONS = ("height", "width", "depth", "weight", "dimension")
 
+#: Scope -> the Linked Art classes a record in it can have. Every record is
+#: typed twice, ``lux:<Scope>`` and ``la:<Class>`` (the data pipeline's
+#: PREFIX_BY_TYPE, inverted); search returns the latter as the result's type.
+SCOPE_TYPES = {
+    "item": ("HumanMadeObject", "DigitalObject"),
+    "work": ("LinguisticObject", "VisualItem"),
+    "agent": ("Person", "Group"),
+    "place": ("Place",),
+    "concept": ("Type", "Language", "Material", "Currency", "MeasurementUnit"),
+    "event": ("Activity", "Event", "Period"),
+    "set": ("Set",),
+}
+
 
 #: Relationship terms: scope -> LUX search term -> lux: predicate name.
 SCOPE_FIELDS: dict[str, dict[str, str]] = {

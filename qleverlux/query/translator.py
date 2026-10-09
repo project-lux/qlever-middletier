@@ -85,9 +85,9 @@ class SparqlTranslator:
         for pfx, uri in self.prefixes.items():
             sparql.add_prefix(Prefix(pfx, uri))
         if sort and sort != "relevance":
-            sparql.add_variables(["?uri", "(MIN(?sortWithDefault) AS ?sort)"])
+            sparql.add_variables(["?uri", "?type", "(MIN(?sortWithDefault) AS ?sort)"])
         else:
-            sparql.add_variables(["?uri", "(SUM(?score) AS ?sscore)"])
+            sparql.add_variables(["?uri", "?type", "(SUM(?score) AS ?sscore)"])
             self.calculate_scores = True
 
         where = Pattern()
@@ -96,14 +96,12 @@ class SparqlTranslator:
             t = Triple("?uri", "lux:source", f"lux:{self.portal}")
             where.add_triples([t])
 
-        if scope is not None and scope != "any":
-            t = Triple("?uri", "a", f"lux:{scope.title()}")
-            where.add_triples([t])
+        self.add_scope_type(where, scope)
 
         query.var = "?uri"
         self.translate_query(query, where)
 
-        gby = GroupBy(["?uri"])
+        gby = GroupBy(["?uri", "?type"])
         sparql.add_group_by(gby)
 
         if sort == "relevance":
@@ -129,7 +127,24 @@ class SparqlTranslator:
         sparql.set_where_pattern(where)
         return sparql
 
-    def _multi_where(self, branches):
+    def add_scope_type(self, pattern, scope, with_type=True):
+        """Restrict ``?uri`` to ``scope`` and bind its Linked Art class to ``?type``.
+
+        The class is what a search result reports as its ``type``. With no
+        scope, or ``any``, ``?type`` ranges over every class of every scope.
+        A count has no use for the class, so ``with_type=False`` leaves it out.
+        """
+        if scope is not None and scope != "any":
+            pattern.add_triples([Triple("?uri", "a", f"lux:{scope.title()}")])
+            classes = predicates.SCOPE_TYPES[scope]
+        else:
+            classes = [c for cs in predicates.SCOPE_TYPES.values() for c in cs]
+        if not with_type:
+            return
+        pattern.add_triples([Triple("?uri", "a", "?type")])
+        pattern.add_filter(Filter(" || ".join(f"?type = la:{c}" for c in classes)))
+
+    def _multi_where(self, branches, with_type=True):
         """The UNION of one pattern per branch, each rooted in its own scope.
 
         ``branches`` is [(scope, parsed_query), ...]. Each alternative carries
@@ -145,8 +160,7 @@ class SparqlTranslator:
             clause = Pattern() if index == 0 else Pattern(union=True)
             if self.portal is not None:
                 clause.add_triples([Triple("?uri", "lux:source", f"lux:{self.portal}")])
-            if scope is not None and scope != "any":
-                clause.add_triples([Triple("?uri", "a", f"lux:{scope.title()}")])
+            self.add_scope_type(clause, scope, with_type)
             query.var = "?uri"
             self.translate_query(query, clause)
             where.add_nested_graph_pattern(clause)
@@ -178,12 +192,12 @@ class SparqlTranslator:
         for pfx, uri in self.prefixes.items():
             sparql.add_prefix(Prefix(pfx, uri))
         if sort and sort != "relevance":
-            sparql.add_variables(["?uri", "(MIN(?sortWithDefault) AS ?sort)"])
+            sparql.add_variables(["?uri", "?type", "(MIN(?sortWithDefault) AS ?sort)"])
         else:
-            sparql.add_variables(["?uri", "(SUM(?score) AS ?sscore)"])
+            sparql.add_variables(["?uri", "?type", "(SUM(?score) AS ?sscore)"])
 
         where = self._multi_where(branches)
-        sparql.add_group_by(GroupBy(["?uri"]))
+        sparql.add_group_by(GroupBy(["?uri", "?type"]))
 
         if sort == "relevance" or not sort:
             bs = [f"COALESCE(?score_{x}, 0)" for x in self.scored]
@@ -225,7 +239,7 @@ class SparqlTranslator:
 
         inner = SelectQuery()
         inner.add_variables(["?uri"])
-        inner.set_where_pattern(self._multi_where(branches))
+        inner.set_where_pattern(self._multi_where(branches, with_type=False))
         inner.add_group_by(GroupBy(["?uri"]))
 
         top = SelectQuery()

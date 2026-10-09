@@ -87,3 +87,29 @@ def scope_for_class(scope):
         print(f"MISSED SCOPE IN HAL: {scope}")
         return scope
     return hscope
+
+
+#: Record class -> the Linked Art type a record of that class has. Where several
+#: types share a class (concept), this is the one a store keyed by type uses.
+CLASS_TO_TYPE = {
+    "object": "HumanMadeObject",
+    "digital": "DigitalObject",
+    "text": "LinguisticObject",
+    "visual": "VisualItem",
+    "person": "Person",
+    "group": "Group",
+    "place": "Place",
+    "concept": "Type",
+    "event": "Event",
+    "period": "Period",
+    "activity": "Activity",
+    "set": "Set",
+}
+
+#: Linked Art type -> the record class in its URL path.
+TYPE_TO_CLASS = {t: c for c, t in CLASS_TO_TYPE.items()} | {
+    "Language": "concept",
+    "Material": "concept",
+    "Currency": "concept",
+    "MeasurementUnit": "concept",
+}

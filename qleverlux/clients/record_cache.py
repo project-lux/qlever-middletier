@@ -33,10 +33,12 @@ class RecordCache:
         await self.postgres.aclose()
         self.lmdb.close()
 
-    async def fetch(self, identifier):
+    async def fetch(self, identifier, record_class=None):
         """Return ``[record, hal_links]``, or None if the record is not cached.
 
         Either element may be None: the caches are independently configurable.
+        ``record_class`` is the class from the URL; only an LMDB keyed by type
+        reads it.
         """
         js = None
         hal = None
@@ -53,7 +55,7 @@ class RecordCache:
             else:
                 return None
 
-        from_lmdb = self.lmdb.get(identifier)
+        from_lmdb = self.lmdb.get(identifier, record_class)
         if from_lmdb is not None:
             js = from_lmdb
 

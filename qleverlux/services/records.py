@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from fastapi.responses import JSONResponse
 
+from qleverlux.clients.lmdb_store import normalise_identifier
+
 #: AAT terms used to pick a record's primary name.
 AAT_ENGLISH = "http://vocab.getty.edu/aat/300388277"
 AAT_PRIMARY = "http://vocab.getty.edu/aat/300404670"
@@ -72,6 +74,17 @@ class RecordService:
             },
         ]
 
+    def fix_broken_record(self, js):
+        try:
+            js["identified_by"].remove(None)
+        except:
+            pass
+        for x in js["identified_by"]:
+            if "classified_as" in x:
+                for y in x["classified_as"]:
+                    y["equivalent"] = [{"id": y["id"]}]
+        return js
+
     def project(self, js, profile):
         """The cut-down record returned for the name / results profiles."""
         js2 = {
@@ -92,10 +105,13 @@ class RecordService:
         scope = str(scope.value)
         if profile is not None:
             profile = profile.value
-        identifier = str(identifier)
+        try:
+            identifier = normalise_identifier(self.settings.lmdb_key_format, identifier)
+        except ValueError as e:
+            return JSONResponse(content={"error": str(e)}, status_code=422)
 
         try:
-            res = await self.cache.fetch(identifier)
+            res = await self.cache.fetch(identifier, scope)
         except Exception as e:
             return JSONResponse(content={"error": str(e)}, status_code=500)
 
@@ -109,12 +125,12 @@ class RecordService:
         if not js:
             return JSONResponse(content={}, status_code=404)
 
+        # js = self.fix_broken_record(js)
+
         if not profile:
             links = {
                 "curies": self._curies(),
-                "self": {
-                    "href": f"{self.settings.mt_uri}data/{scope}/{identifier}"
-                },
+                "self": {"href": self.uris.mt_record(scope, identifier)},
             }
             if cache_links:
                 links.update(cache_links)

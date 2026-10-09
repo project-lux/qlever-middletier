@@ -47,7 +47,9 @@ class MiddleTier:
             catalogue if catalogue is not None else QueryCatalogue(self.settings)
         )
 
-        self.uris = UriRewriter(self.settings.data_uri, self.settings.mt_uri)
+        self.uris = UriRewriter(
+            self.settings.data_uri, self.settings.mt_uri, self.settings.record_path
+        )
         self.qlever = QLeverClient(self.settings)
         self.postgres = PostgresCache(self.settings)
         self.record_cache = RecordCache(self.settings, self.postgres)
@@ -60,7 +62,7 @@ class MiddleTier:
         self.related = RelatedListService(*common)
         self.stats = StatsService(self.settings, self.catalogue, self.qlever)
         self.hal = HalService(
-            self.settings, self.catalogue, self.qlever, self.hal_cache
+            self.settings, self.catalogue, self.qlever, self.hal_cache, self.uris
         )
         self.records = RecordService(
             self.settings, self.record_cache, self.hal, self.uris
