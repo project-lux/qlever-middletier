@@ -123,7 +123,10 @@ class RecordService:
                 cache_links = res[1]
 
         if not js:
-            return JSONResponse(content={}, status_code=404)
+            return JSONResponse(
+                content={"error": f"couldn't find {repr(identifier)} in lmdb"},
+                status_code=404,
+            )
 
         # js = self.fix_broken_record(js)
 
