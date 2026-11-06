@@ -18,7 +18,7 @@ documents. QLever answers "which URIs match?"; the caches answer "what does this
 pip install -e .                        # plus luxql: git+https://github.com/project-lux/luxql.git
 pip install -r requirements.txt
 
-python uvicorn-serve.py                 # dev: HTTP on :5001, single process
+python uvicorn-serve.py                 # dev: HTTP on QLMT_MTPORT, single process
 python serve.py                         # hypercorn HTTPS/2 on QLMT_MTPORT (needs files/<cert_name>.pem + -key.pem)
 python workers.py                       # hypercorn multi-process
 python tester.py [scope]                # REPL: type a query string or JSON, prints the generated SPARQL

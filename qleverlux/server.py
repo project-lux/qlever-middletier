@@ -18,9 +18,6 @@ import uvloop
 
 from qleverlux.settings import load_settings
 
-#: Port the development server listens on.
-DEV_PORT = 5001
-
 
 def _hypercorn_config(settings, *, tls=True, workers=None):
     from hypercorn.config import Config as HyperConfig
@@ -45,13 +42,18 @@ def _hypercorn_config(settings, *, tls=True, workers=None):
     return hconfig
 
 
-def serve_dev(settings=None, port=DEV_PORT):
-    """uvicorn over plain HTTP, for development."""
+def serve_dev(settings=None, port=None):
+    """uvicorn over plain HTTP, for development.
+
+    Listens on ``settings.mtport`` unless ``port`` is given.
+    """
     import uvicorn
 
     from qleverlux.app import app
 
     settings = settings if settings is not None else load_settings()
+    if port is None:
+        port = settings.mtport
 
     async def main():
         uvloop.install()
