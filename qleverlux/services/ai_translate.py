@@ -100,6 +100,8 @@ class AiTranslateService:
             options = []
             for option in js["options"]:
                 scope = option["scope"]
+                if scope == "ALL":
+                    scope = "item"
                 query = self.post_process(option["query"], scope)
                 query["_scope"] = scope
                 options.append(
