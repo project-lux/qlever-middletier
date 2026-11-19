@@ -12,6 +12,7 @@ Either way :meth:`RecordStore.get` answers the Linked Art record itself.
 
 from __future__ import annotations
 
+import random
 import uuid as uuidlib
 import zlib
 from collections.abc import Iterator
@@ -111,6 +112,30 @@ class RecordStore:
                 if bound is not None and key >= bound:
                     return
                 yield (uuid_str(key) if self.binary_keys else key.decode()), self._decode(value)
+
+    def sample(self, count: int, seed: int = 0) -> Iterator[dict]:
+        """Yields about ``count`` records spread evenly over the store, without reading the rest.
+
+        Each one is the first record at or after a random UUID, so the cost is ``count`` seeks
+        rather than a walk over every record (minutes on full LUX). UUID keys are uniform, so this
+        samples evenly; neighbouring seeks can land on the same record, which is only dropped.
+        Asking for the whole store or more just scans it.
+        """
+        if count >= len(self):
+            yield from (record for _, record in self.scan())
+            return
+        rng = random.Random(seed)
+        points = sorted(uuidlib.UUID(int=rng.getrandbits(128)) for _ in range(count))
+        last = None
+        with self.env.begin(db=self.db, buffers=True) as txn:
+            cursor = txn.cursor()
+            for point in points:  # in key order, so the seeks move forward through the file
+                if not cursor.set_range(point.bytes if self.binary_keys else str(point).encode()):
+                    break  # past the last key; every later point is too
+                key = bytes(cursor.key())
+                if key != last:
+                    last = key
+                    yield self._decode(cursor.value())
 
     def partitions(self, count: int) -> list[tuple[bytes | None, bytes | None]]:
         """Splits the key space into about ``count`` ranges of similar size, for parallel scans."""

@@ -102,16 +102,18 @@ def cmd_kinds(args):
     from .records import RecordStore
 
     records = RecordStore(args.records)
-    kinds, scanned = collections.Counter(), 0
-    step = max(1, len(records) // args.sample)
-    with records.env.begin(db=records.db) as txn:
-        for _, value in itertools.islice(txn.cursor(), 0, None, step):
-            record = records._decode(value)
-            scanned += 1
-            for statement in as_list(record.get("referred_to_by")):
-                for cx in as_list(statement.get("classified_as")):
-                    for aat in aat_ids(cx):
-                        kinds[(aat, cx.get("_label") or "")] += 1  # _label: only to name the kind here
+    total = len(records)
+    print(f"kinds: sampling {min(args.sample, total):,} of {total:,} records", flush=True)
+    kinds, scanned, started, reported = collections.Counter(), 0, time.time(), time.time()
+    for record in records.sample(args.sample):
+        scanned += 1
+        for statement in as_list(record.get("referred_to_by")):
+            for cx in as_list(statement.get("classified_as")):
+                for aat in aat_ids(cx):
+                    kinds[(aat, cx.get("_label") or "")] += 1  # _label: only to name the kind here
+        if time.time() - reported >= 10:
+            reported = time.time()
+            print(f"kinds: {scanned:,} sampled ({scanned / (reported - started):,.0f}/s)", flush=True)
     print(f"statement kinds in {scanned:,} sampled records:")
     for (aat, label), n in kinds.most_common(40):
         print(f"  {aat}  {n:>8,}  {label}")
