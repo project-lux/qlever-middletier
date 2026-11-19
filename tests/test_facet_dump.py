@@ -120,3 +120,12 @@ def test_complete_scope_is_not_redone_and_missing_scope_is_reported(endpoint, tm
     assert all("SELECT DISTINCT ?p" in q for q in FakeQLever.queries[asked:])
     assert FacetDump(out, "agent").meta["complete"]
     assert not FacetDump(out, "work").enabled
+
+
+def test_works_keep_their_carrier_type_however_common():
+    facets = Facets.__new__(Facets)  # ranking only: no endpoint needed
+    facets.df, facets.total = {"object type": {"books": 77, "maps": 5}}, 100
+    facets.scope = "work"
+    assert facets._rank("object type", {"books": 1, "maps": 1}) == ["books", "maps"]  # Books is on 77%
+    facets.scope = "set"
+    assert facets._rank("object type", {"books": 3, "maps": 1}) == ["maps"]  # elsewhere it says nothing

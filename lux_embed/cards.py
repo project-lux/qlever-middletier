@@ -43,7 +43,9 @@ from .linkedart import (
 from .records import SCOPE_OF_CLASS, RecordStore
 
 LIST = 6  # values per field
-GENERIC_TYPES = {"300133025"}  # "works (art)": a blanket class LUX adds beside the specific type
+# Blanket classes LUX adds beside the specific type: "works (art)", and "Collection Item", which is on
+# 99.8% of objects (it showed up in cards as "items").
+GENERIC_TYPES = {"300133025", "300404024"}
 CHAIN = 6  # ancestors per hierarchy
 
 
@@ -55,6 +57,7 @@ class CardBuilder:
     def __init__(self, records: RecordStore, labels: LabelStore, max_note_words: int = 300):
         self.records, self.labels, self.max_note_words = records, labels, max_note_words
         self._parents: dict[str, list[str]] = {}
+        self._generics: dict[str, bool] = {}
 
     # -- shared pieces ---------------------------------------------------------------------------
 
@@ -120,7 +123,31 @@ class CardBuilder:
 
     def _facets(self, parts: list[str], facets: dict, fields: list[tuple[str, str]]) -> None:
         for kind, name in fields:
-            self._field(parts, name, self.labels.labels(facets.get(kind, []), LIST))
+            values = facets.get(kind, [])
+            if kind in ("object type", "work type"):
+                values = [v for v in values if not self._generic(v)]
+            self._field(parts, name, self.labels.labels(values, LIST))
+
+    def _generic(self, concept: str) -> bool:
+        """Whether a facet value is one of the blanket GENERIC_TYPES, by the AAT its record names."""
+        key = concept.rsplit("/", 1)[-1]
+        if key not in self._generics:
+            self._generics[key] = bool(aat_ids(self.records.get(key) or {}) & GENERIC_TYPES)
+        return self._generics[key]
+
+    def _holding_only(self, r: dict) -> bool:
+        """A holding with nothing of its own: it carries a work (a text: the library case) and has no
+        maker, place, technique, date, material or statement. Its card would only repeat the work's
+        (library books are Books + Collection Item + a library), so it gets none, and the work card
+        says "Realized as: Books". Objects that *show* a work (prints, specimens, coins) are the
+        thing itself and always keep their card."""
+        if not any(ref_ids(r.get("carries"))) or any(ref_ids(r.get("made_of"))):
+            return False
+        for part in event_parts(r.get("produced_by")):
+            if part.get("timespan") or any(any(ref_ids(part.get(key)))
+                                           for key in ("carried_out_by", "took_place_at", "technique")):
+                return False
+        return not statements(r, 1)
 
     # -- per class -------------------------------------------------------------------------------
 
@@ -128,6 +155,8 @@ class CardBuilder:
         title = primary_name(record)
         scope = SCOPE_OF_CLASS.get(record.get("type", ""))
         if not title or not scope:
+            return None
+        if scope == "item" and self._holding_only(record):
             return None
         parts: list[str] = []
         self._field(parts, "Also known as", alternate_names(record, title, 3))

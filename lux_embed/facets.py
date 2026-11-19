@@ -59,6 +59,9 @@ SCOPE_DATES = {
 TOP = {"work": 5, "agent": 8, "set": 10}
 TFIDF_SCOPES = {"agent", "set"}
 UBIQUITOUS = 0.5  # a value on more than half of all objects ("works") says nothing about anyone
+# Kinds kept however common. A work's carrier type is what tells a book from a journal, and on full
+# LUX Books is on 77% of objects; the blanket "Collection Item" (99.8%) is dropped by the cards.
+KEEP_UBIQUITOUS = {("work", "object type")}
 # Targets per batched query. On full LUX a query costs QLever about 0.2 s fixed plus ~29 us per
 # target (it scans each facet predicate and joins), so big batches pay: work extraction ran at
 # 1.8k targets/s at 400 and 18k/s at 8000, and agent at 8000 ran at 10k/s with no timeouts.
@@ -159,7 +162,8 @@ class Facets:
 
     def _rank(self, kind: str, values: dict[str, int]) -> list[str]:
         df = self.df.get(kind, {})
-        values = {v: n for v, n in values.items() if df.get(v, 0) <= UBIQUITOUS * self.total}
+        if (self.scope, kind) not in KEEP_UBIQUITOUS:
+            values = {v: n for v, n in values.items() if df.get(v, 0) <= UBIQUITOUS * self.total}
         if self.scope in TFIDF_SCOPES:
             score = {v: n * math.log((self.total + 1) / (df.get(v, 0) + 1)) for v, n in values.items()}
         else:

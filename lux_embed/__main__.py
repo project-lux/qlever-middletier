@@ -96,6 +96,8 @@ def _export_cards(args):
     members = (uuid for uuid, _ in labels.scope_members(args.scope, resume))
     if args.limit:
         members = itertools.islice(members, args.limit)
+    seen = itertools.count()
+    members = (uuid for uuid, _ in zip(members, seen))  # counts the records read; not all get a card
     workers = card_workers(args.card_workers)
     print(f"{args.scope}: building cards in {f'{workers} worker processes' if workers else 'one thread'}, "
           f"{'resuming after ' + resume if resume else 'from the start'} ({writer.meta['count']:,} done)", flush=True)
@@ -114,6 +116,9 @@ def _export_cards(args):
             print(f"{args.scope}: {writer.meta['count']:,} cards, {share:.1%} of the key space "
                   f"({rate:,.0f}/s, ~{left / 60:,.0f} min left)", flush=True)
     writer.finish(limit=args.limit)
+    read = next(seen)
+    print(f"{args.scope}: {read:,} records read this run, {done:,} cards ({read - done:,} without one: "
+          f"no name, or a holding with nothing of its own)", flush=True)
     print(f"{args.scope}: complete, {writer.meta['count']:,} cards in {time.time() - started:,.0f}s -> {args.out}"
           + (f" (--limit {args.limit:,} trial; --restart for the full scope)" if args.limit else ""))
     writer.close()
