@@ -26,7 +26,7 @@ SELECT ?set ?name ?score WHERE {
 
 | Predicate | Object | Meaning |
 | --- | --- | --- |
-| `vec:similarTo` | IRI(s) and/or literal(s) | **Required.** An IRI uses that record's stored vector. A literal is encoded as an EmbeddingGemma 2 `SearchQuery`; the encoder loads on first use. For several seeds, give a list (`vec:similarTo <a>, <b>, <c>`) or repeat the triple; at most 100. |
+| `vec:similarTo` | IRI(s) and/or literal(s) | **Required.** An IRI uses that record's stored vector. A literal is encoded with the model the store was built with (recorded in its meta; older stores are EmbeddingGemma 2), using that model's query prompt (`SearchQuery`, or Harrier's `web_search_query`). Every scope must share one model. The encoder loads on first use. For several seeds, give a list (`vec:similarTo <a>, <b>, <c>`) or repeat the triple; at most 100. |
 | `vec:combine` | `"max"`, `"each"`, `"mean"` | How several seeds combine (see below). Default `"max"`. |
 | `vec:includeSeeds` | `true` / `false` | Default `false`: seed IRIs are left out of the results, and their slots are refilled so `topK` rows still come back. |
 | `vec:score` | variable | Cosine similarity. |

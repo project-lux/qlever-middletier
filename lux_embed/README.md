@@ -37,7 +37,7 @@ $PY -m lux_embed query --store $DATA/vectors.lmdb --labels $DATA/labels.lmdb --s
 - **Model:** EmbeddingGemma 2 unless `embed --model` names another model with a profile in `encoder.py`. The profile sets the document format, the query prompt, and whether the model can be truncated. Today the only alternative is `microsoft/harrier-oss-v1-0.6b`. It produces 1024d vectors and wasn't trained for truncation, so it is used at full width in every class.
   - The store records its model. `query` encodes with that model, and `embed` won't resume a store built with a different one.
   - Every class in a store must use the same model, because cross-class queries reuse one query vector.
-  - The `sparql_service` sidecar still always loads EmbeddingGemma 2, so it can't serve a Harrier store yet.
+  - The `sparql_service` sidecar encodes text queries with the model the store records.
 - **Trial runs:** `--limit N` marks the class as a trial. Use `--restart` for the full build.
 - **Vector storage:** `--vector-dtype float16` halves the space taken by the exact vectors (about 30 GB → 15 GB for MDS). That's safe for unit vectors; only inference must avoid f16.
 
