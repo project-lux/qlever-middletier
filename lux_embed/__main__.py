@@ -2,8 +2,9 @@
 
     python -m lux_embed labels  --records R.lmdb --labels L.lmdb            # Pass 1 (once per dataset)
     python -m lux_embed kinds   --records R.lmdb                            # statement kinds, for the skip list
-    python -m lux_embed cards   --records R.lmdb --labels L.lmdb --scope agent --limit 5 [--qlever URL]
-    python -m lux_embed embed   --records R.lmdb --labels L.lmdb --store V.lmdb --scope agent [--qlever URL]
+    python -m lux_embed facets  --qlever URL --out F.lmdb [--scope agent]   # Stage 1 offline, beside QLever
+    python -m lux_embed cards   --records R.lmdb --labels L.lmdb --scope agent --limit 5 [--qlever URL | --facets F.lmdb]
+    python -m lux_embed embed   --records R.lmdb --labels L.lmdb --store V.lmdb --scope agent [--qlever URL | --facets F.lmdb]
     python -m lux_embed index   --store V.lmdb --scope agent
     python -m lux_embed query   --store V.lmdb --labels L.lmdb --scope agent "dutch landscape painters"
 
@@ -61,7 +62,16 @@ def _open(args, need_facets: bool):
 
     records, labels = RecordStore(args.records), LabelStore(args.labels)
     facets = None
-    if need_facets and args.qlever and args.scope in FACET_SCOPES:
+    if need_facets and args.qlever and args.facets:
+        raise SystemExit("--qlever and --facets are alternatives; give one")
+    if need_facets and args.facets and args.scope in FACET_SCOPES:
+        from .facet_dump import FacetDump
+
+        facets = FacetDump(args.facets, args.scope)
+        if not facets.enabled:
+            raise SystemExit(f"{args.facets} has no {args.scope} facets; run `facets --scope {args.scope}` "
+                             f"beside QLever, or drop --facets to build cards without them")
+    elif need_facets and args.qlever and args.scope in FACET_SCOPES:
         facets = Facets(QLever(args.qlever), args.scope, cache_dir=os.path.dirname(os.path.abspath(args.labels)))
         if not facets.enabled:
             print(f"facets: the endpoint has none of the {args.scope} facet predicates; cards go without", flush=True)
@@ -75,6 +85,15 @@ def cmd_labels(args):
     started = time.time()
     total = build_labels(args.records, args.labels, workers=args.workers)
     print(f"labelled {total:,} records in {time.time() - started:,.0f}s -> {args.labels}")
+
+
+def cmd_facets(args):
+    from .facet_dump import FACET_SCOPES as DUMP_SCOPES, dump_scope
+    from .facets import QLever
+
+    qlever = QLever(args.qlever, timeout=args.timeout)
+    for scope in [args.scope] if args.scope else DUMP_SCOPES:
+        dump_scope(qlever, scope, args.out, batch=args.batch, workers=args.workers, restart=args.restart)
 
 
 def cmd_kinds(args):
@@ -205,6 +224,7 @@ def main(argv=None):
             p.add_argument("--scope", required=True, choices=sorted(DEFAULT_DIMS))
         if "cards" in needs:
             p.add_argument("--qlever", default=None, help="QLever endpoint for Stage 1 facets, e.g. http://localhost:7011")
+            p.add_argument("--facets", default=None, help="Stage 1 facets extracted by `facets`, instead of --qlever")
             p.add_argument("--note-words", type=int, default=300)
         if "device" in needs:
             p.add_argument("--device", default="auto", help="auto | cuda | mps | cpu")
@@ -212,6 +232,14 @@ def main(argv=None):
 
     p = add("labels", cmd_labels, "records", "labels")
     p.add_argument("--workers", type=int, default=0)
+    p = add("facets", cmd_facets)
+    p.add_argument("--qlever", required=True, help="QLever endpoint serving the dataset, e.g. http://localhost:7011")
+    p.add_argument("--out", required=True, help="facet LMDB directory to write (copy it to the embedding machine)")
+    p.add_argument("--scope", default=None, choices=sorted(FACET_SCOPES), help="one scope (default: all three)")
+    p.add_argument("--batch", type=int, default=FACET_BATCH, help="targets per QLever query")
+    p.add_argument("--workers", type=int, default=4, help="concurrent QLever queries")
+    p.add_argument("--timeout", type=float, default=120, help="seconds per QLever query before the batch is split")
+    p.add_argument("--restart", action="store_true", help="re-extract a scope already done")
     p = add("kinds", cmd_kinds, "records")
     p.add_argument("--sample", type=int, default=200_000)
     p = add("cards", cmd_cards, "records", "labels", "scope", "cards")
