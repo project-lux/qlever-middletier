@@ -1,11 +1,15 @@
-"""Stage 3: EmbeddingGemma 2, text-only, as the model card prescribes.
+"""Stage 3: the sentence encoder, EmbeddingGemma 2 by default, each model used as its card prescribes.
 
 * bf16 where the device supports it, else f32 - never f16, whose range EmbeddingGemma 2 overflows
   into NaNs or silently degraded vectors;
-* documents are formatted ``title: {title} | text: {text}`` by hand (``prompt_name="Document"``
-  would insert ``title: none``); queries use ``prompt_name="SearchQuery"``;
-* Matryoshka truncation through ``truncate_dim``, then re-normalized in f32, since bf16 inference
-  leaves norms a few parts per thousand off 1.
+* EmbeddingGemma 2: documents are formatted ``title: {title} | text: {text}`` by hand
+  (``prompt_name="Document"`` would insert ``title: none``); queries use ``prompt_name="SearchQuery"``;
+  Matryoshka truncation through ``truncate_dim``;
+* Harrier OSS v1 (Qwen3, last-token pooling, 1024d): documents take no instruction, queries take
+  its ``web_search_query`` prompt; no Matryoshka training, so it is used at full width only;
+* vectors are re-normalized in f32, since bf16 inference leaves norms a few parts per thousand off 1.
+
+A store records the model it was built with (``meta["model"]``); query it with the same one.
 """
 
 from __future__ import annotations
@@ -15,6 +19,22 @@ import os
 import numpy as np
 
 MODEL = "google/embeddinggemma-2"
+
+# Per-model use: document format, query prompt, Matryoshka support, extra load arguments.
+PROFILES = {
+    "google/embeddinggemma-2": {
+        "document": "title: {title} | text: {text}",
+        "query_prompt_name": "SearchQuery",
+        "matryoshka": True,
+        "config_kwargs": {"vision_config": None, "audio_config": None},  # the 270M text model only
+    },
+    "microsoft/harrier-oss-v1-0.6b": {
+        "document": "{title}\n{text}",
+        "query_prompt_name": "web_search_query",
+        "matryoshka": False,
+        "config_kwargs": {},
+    },
+}
 
 
 def pick_device(requested: str = "auto") -> str:
@@ -34,25 +54,35 @@ class Encoder:
         import torch
         from sentence_transformers import SentenceTransformer
 
+        if model not in PROFILES:
+            raise ValueError(f"no profile for {model!r}; known: {', '.join(PROFILES)}")
+        self.profile = PROFILES[model]
         self.device = pick_device(device)
         if dtype == "auto":
             bf16 = (self.device == "cuda" and torch.cuda.is_bf16_supported()) or self.device == "mps"
             dtype = "bfloat16" if bf16 else "float32"
         if dtype not in ("bfloat16", "float32"):
-            raise ValueError("EmbeddingGemma 2 must run in bfloat16 or float32, never float16")
+            raise ValueError("encoders run in bfloat16 or float32, never float16")
         self.dtype = dtype
         self.model = SentenceTransformer(
             model,
             device=self.device,
-            config_kwargs={"vision_config": None, "audio_config": None},  # the 270M text model only
+            config_kwargs=self.profile["config_kwargs"],
             model_kwargs={"torch_dtype": getattr(torch, dtype)},
         )
         self.model.max_seq_length = max_seq_length
         self.name = model
+        dimension = getattr(self.model, "get_embedding_dimension", None) or self.model.get_sentence_embedding_dimension
+        self.native_dims = dimension()
 
-    @staticmethod
-    def document(title: str, text: str) -> str:
-        return f"title: {title} | text: {text}"
+    def check_dims(self, dims: int) -> None:
+        if dims > self.native_dims or (dims != self.native_dims and not self.profile["matryoshka"]):
+            raise ValueError(f"{self.name} gives {self.native_dims}d vectors"
+                             + ("" if self.profile["matryoshka"] else " and is not Matryoshka-trained")
+                             + f"; {dims}d is not available")
+
+    def document(self, title: str, text: str) -> str:
+        return self.profile["document"].format(title=title, text=text)
 
     def _finish(self, vectors: np.ndarray) -> np.ndarray:
         vectors = np.asarray(vectors, dtype=np.float32)
@@ -62,6 +92,7 @@ class Encoder:
         return vectors / norms
 
     def encode_documents(self, cards: list[tuple[str, str]], dims: int, batch_size: int = 64) -> np.ndarray:
+        self.check_dims(dims)
         texts = [self.document(title, text) for title, text in cards]
         vectors = self.model.encode(
             texts, batch_size=batch_size, truncate_dim=dims, normalize_embeddings=True, convert_to_numpy=True
@@ -69,8 +100,9 @@ class Encoder:
         return self._finish(vectors)
 
     def encode_query(self, query: str, dims: int) -> np.ndarray:
+        self.check_dims(dims)
         vector = self.model.encode(
-            [query], prompt_name="SearchQuery", truncate_dim=dims, normalize_embeddings=True, convert_to_numpy=True
+            [query], prompt_name=self.profile["query_prompt_name"], truncate_dim=dims, normalize_embeddings=True, convert_to_numpy=True
         )
         return self._finish(vector)[0]
 
