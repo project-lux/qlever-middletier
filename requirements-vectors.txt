@@ -1,0 +1,31 @@
+# Vector build (lux_embed) and the vector SERVICE sidecar (sparql_service).
+# The middle tier itself needs none of this; install it into its own venv.
+# Layering these compiled packages over the middle tier's environment has
+# segfaulted at interpreter exit, so keep the two apart.
+#
+#   python -m venv ../vectors/.venv
+#   ../vectors/.venv/bin/pip install -r requirements-vectors.txt
+#   ../vectors/.venv/bin/pip install ./path/to/USearch   # patched; see below
+#
+# Versions are the ones the MDS vectors were built and served with.
+
+# encoder (EmbeddingGemma 2). On CUDA, install a CUDA build of torch first.
+torch>=2.15
+# the processor config needs Pillow and torchvision even for text-only use
+sentence-transformers[image]>=6.1
+
+numpy>=2.5
+lmdb>=3.0
+orjson>=3.13
+
+# sidecar
+fastapi
+uvicorn
+httpx      # TestClient, for the tests
+pytest
+
+# USearch 3 is not listed: serving graphs in place needs DenseIndex.view_ram_buffer,
+# which upstream does not have yet. Check out USearch 840374af (3.0.0-rc.1), apply
+# files/usearch-view-ram-buffer.patch with `git apply`, and `pip install` the checkout.
+# Building graphs alone works on stock USearch 3; serving then copies each graph
+# into RAM instead of reading it from the LMDB mmap.

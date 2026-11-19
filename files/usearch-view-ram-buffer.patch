@@ -1,0 +1,1299 @@
+diff --git a/c/test.c b/c/test.c
+index 8b4bc893..1d44e6ce 100644
+--- a/c/test.c
++++ b/c/test.c
+@@ -1142,21 +1142,44 @@ void test_count_and_get(size_t const dimensions) {
+     expect(!outcome.message, outcome.message);
+     usearch_dense_index_t view = NULL;
+     usearch_dense_view_ram(&(usearch_dense_view_ram_t) {.index = &view, .outcome = &outcome, .path = path_view});
+-    // An implementation that cannot serve a mapping yet says so, and has no view to hold to the contract.
+-    if (outcome.status != usearch_status_unsupported_k) {
+-        expect(!outcome.message, outcome.message);
+-        usearch_dense_insert(
+-            &(usearch_dense_insert_t) {.index = view,
+-                                       .executor = executor,
+-                                       .outcome = &outcome,
+-                                       .count = 1,
+-                                       .keys = {keys, sizeof(usearch_key_t)},
+-                                       .vectors = {data, row_bytes, dimensions, usearch_scalar_f32_k}});
+-        expect_eq(outcome.status, usearch_status_read_only_k, "A view must refuse every mutation");
+-        usearch_dense_free(view);
+-    }
++    expect(!outcome.message, outcome.message);
++    usearch_dense_insert(
++        &(usearch_dense_insert_t) {.index = view,
++                                   .executor = executor,
++                                   .outcome = &outcome,
++                                   .count = 1,
++                                   .keys = {keys, sizeof(usearch_key_t)},
++                                   .vectors = {data, row_bytes, dimensions, usearch_scalar_f32_k}});
++    expect_eq(outcome.status, usearch_status_read_only_k, "A view must refuse every mutation");
++    usearch_dense_free(view);
+     remove(path);
+ 
++    // A monolith in the caller's memory is served in place as well, and refuses mutation the same way.
++    usearch_bytes_view_t monolith = {0};
++    usearch_dense_save_buffer(&(usearch_dense_save_buffer_t) {
++        .index = index, .executor = executor, .outcome = &outcome, .monolith = &monolith, .arena = arena});
++    expect(!outcome.message, outcome.message);
++    usearch_dense_index_t borrowed = NULL;
++    usearch_dense_view_ram_buffer(
++        &(usearch_dense_view_ram_buffer_t) {.index = &borrowed, .outcome = &outcome, .buffer = monolith});
++    expect(!outcome.message, outcome.message);
++    usearch_dense_index_description_t viewed_description = {0};
++    usearch_dense_describe(&(usearch_dense_describe_t) {
++        .index = borrowed, .executor = executor, .outcome = &outcome, .description = &viewed_description});
++    expect(!outcome.message, outcome.message);
++    usearch_dense_index_description_t saved_description = {0};
++    usearch_dense_describe(&(usearch_dense_describe_t) {
++        .index = index, .executor = executor, .outcome = &outcome, .description = &saved_description});
++    expect(!outcome.message, outcome.message);
++    expect(saved_description.size != 0, "The saved index holds entries");
++    expect_eq(viewed_description.size, saved_description.size, "A buffer view holds every entry its monolith saved");
++    usearch_dense_reserve(
++        &(usearch_dense_reserve_t) {.index = borrowed, .executor = executor, .outcome = &outcome, .capacity = 8});
++    expect_eq(outcome.status, usearch_status_read_only_k, "A buffer view must refuse every mutation");
++    usearch_dense_view_ram_buffer(&(usearch_dense_view_ram_buffer_t) {.index = &view, .outcome = &outcome});
++    expect_eq(outcome.status, usearch_status_invalid_argument_k, "An empty buffer holds no checkpoint");
++    usearch_dense_free(borrowed);
++
+     usearch_arena_free(arena);
+     free(data);
+     usearch_executor_free(executor);
+diff --git a/c/usearch/dense_index.h b/c/usearch/dense_index.h
+index 2527bde1..e638b5a2 100644
+--- a/c/usearch/dense_index.h
++++ b/c/usearch/dense_index.h
+@@ -598,15 +598,58 @@ typedef struct usearch_dense_view_ram_t {
+  *  @brief Serves a checkpoint in place through a memory mapping, as a read-only index.
+  *  @ref dense_index_serialization
+  *
+- *  Nothing is copied, so opening costs the headers alone and a traversal pays only for the pages
+- *  it touches. Every mutating verb on the handle reports @c usearch_status_read_only_k, and the
+- *  files must stay unmodified until the handle is freed.
++ *  The vectors, norms and neighbors of a checkpoint a RAM index saved are read through the mapping
++ *  rather than copied, for any geometry whose rows need no padding to whole kernel steps, so opening
++ *  costs the headers, the keys and the key map, and a traversal pays only for the pages it touches.
++ *  A column that does not match a shard's layout is copied instead, so the view answers exactly what
++ *  a load would. Every mutating verb on the handle reports @c usearch_status_read_only_k, and the
++ *  files must stay unmodified until the handle is freed. Shards are placed on every memory domain,
++ *  as a bare init places them.
+  *
+  *  @par Statuses:
+- *  - @c usearch_status_unsupported_k Always, as RAM shards cannot serve a mapping in place yet.
++ *  - @c usearch_status_invalid_argument_k The path is empty or does not parse.
++ *  - @c usearch_status_malformed_k The checkpoint or one of its headers does not parse.
++ *  - @c usearch_status_unsupported_k This build carries no variant for the checkpoint's scalar.
+  */
+ USEARCH_EXPORT void usearch_dense_view_ram(usearch_dense_view_ram_t* arguments);
+ 
++/** The arguments of @c usearch_dense_view_ram_buffer. */
++typedef struct usearch_dense_view_ram_buffer_t {
++
++    /** Output for the new, read-only index. */
++    usearch_dense_index_t* index;
++
++    /** Output for the outcome, final when the call returns. */
++    usearch_outcome_t* outcome;
++
++    /** One serialized monolith, or the manifest of several parts leading them, which the index
++     *  reads in place: it must stay alive and unmodified until the handle is freed. */
++    usearch_bytes_view_t buffer;
++
++    /** The memory domains to place shards on; part @c p is served by shard @c p. */
++    usearch_ram_options_t ram;
++} usearch_dense_view_ram_buffer_t;
++
++/**
++ *  @brief Serves a checkpoint held in memory in place, as a read-only index - the buffer form of
++ *      @c usearch_dense_view_ram, for checkpoints that live in a caller's own mapping, such as a
++ *      value of a memory-mapped key-value store.
++ *  @ref dense_index_serialization
++ *
++ *  Columns are borrowed from @c buffer when they start on a cache-line boundary - 64 bytes on most
++ *  CPUs, 128 on Apple's, so a page-aligned buffer always qualifies - and their rows match a shard's
++ *  layout, and copied otherwise; the keys and the key map are always built. Nothing ever
++ *  writes the buffer, so it may sit in read-only memory. Every mutating verb on the handle reports
++ *  @c usearch_status_read_only_k.
++ *
++ *  @par Statuses:
++ *  - @c usearch_status_invalid_argument_k The buffer is empty.
++ *  - @c usearch_status_malformed_k The checkpoint or one of its headers does not parse.
++ *  - @c usearch_status_unsupported_k This build carries no variant for the checkpoint's scalar.
++ *  - @c usearch_status_out_of_memory_k The keys, the key map or a copied column did not fit.
++ */
++USEARCH_EXPORT void usearch_dense_view_ram_buffer(usearch_dense_view_ram_buffer_t* arguments);
++
+ /** The arguments of @c usearch_dense_view_nvme. */
+ typedef struct usearch_dense_view_nvme_t {
+ 
+diff --git a/include/usearch/dense/ram_index.hpp b/include/usearch/dense/ram_index.hpp
+index 5ae43d8b..c38a28e2 100644
+--- a/include/usearch/dense/ram_index.hpp
++++ b/include/usearch/dense/ram_index.hpp
+@@ -1037,12 +1037,28 @@ struct ram_index {
+         while (chunks != max_chunks_k && chunk_schedule_t::nodes_before(chunks) < hosted_rows) ++chunks;
+         std::size_t const rows = chunk_schedule_t::nodes_before(chunks);
+         std::size_t bytes = sizeof(ram_index);
+-        bytes += rows * padded_row_values(geometry_) * sizeof(scalar_t);
+-        if (stores_norms()) bytes += rows * sizeof(vector_norms_t);
+-        bytes += rows * geometry_.connectivity * sizeof(node_id_t);
++        // A view's borrowed columns belong to the caller's buffer, so only its own copies count.
++        if (!vectors_.borrowed()) bytes += rows * padded_row_values(geometry_) * sizeof(scalar_t);
++        if (stores_norms() && !norms_.borrowed()) bytes += rows * sizeof(vector_norms_t);
++        if (!neighbors_.borrowed()) bytes += rows * geometry_.connectivity * sizeof(node_id_t);
+         return bytes + keyed_.memory_usage();
+     }
+ 
++    /** Whether the index serves a caller's checkpoint in place, read-only, through @ref view. */
++    bool viewed() const noexcept { return viewed_; }
++
++    /** Which of a view's columns read the caller's bytes in place rather than a copy. */
++    struct view_report_t {
++        bool vectors = false;
++        bool norms = false;
++        bool neighbors = false;
++    };
++
++    /** Which columns @ref view borrowed; all false for an index that copies its rows. */
++    view_report_t borrowed_columns() const noexcept {
++        return {vectors_.borrowed(), norms_.borrowed(), neighbors_.borrowed()};
++    }
++
+     /** The stored bytes of one node's vector - the ID-addressed read a key lookup or an export
+      *  resolves through; IDs at or above @ref size() name unpublished rows. */
+     vector_view_t vector(node_id_t node) const noexcept {
+@@ -2961,6 +2977,7 @@ struct ram_index {
+         using phase_t = typename refine_plan_t::phase_t;
+         auto [audit, status] = plan_health();
+         refine_plan_t plan {std::move(audit), typename refine_plan_t::part_bases_allocator_t {vectors_allocator_}};
++        if (viewed_) return {std::move(plan), status_t::read_only_k}; // Refining rewrites borrowed rows.
+         if (failed(status)) return {std::move(plan), status};
+         candidates_count_t const expansion_factor = non_zero_expansion_factor(config);
+         node_id_t const bound = min_of(nodes.bound, plan.audit.visible);
+@@ -3060,6 +3077,7 @@ struct ram_index {
+         using bitset_allocator_t = typename health_plan_t::bitset_allocator_t;
+         refine_plan_t plan {health_plan_t {bitset_allocator_t {vectors_allocator_}},
+                             typename refine_plan_t::part_bases_allocator_t {vectors_allocator_}};
++        if (viewed_) return {std::move(plan), status_t::read_only_k}; // Splitting forgets borrowed rows.
+         std::size_t const parts = receivers.size();
+         if (parts < 2) return {std::move(plan), status_t::config_mismatch_k};
+         for (std::size_t receiver = 0; receiver != parts; ++receiver) {
+@@ -3911,12 +3929,151 @@ struct ram_index {
+         return plan.finish();
+     }
+ 
++    /**
++     *  @brief Serves @p rows rows of @p columns in place as this empty index's whole graph,
++     *      read-only, borrowing every column whose bytes already match the chunks' layout.
++     *
++     *  A column is borrowed when it starts on a @c default_alignment_k boundary and its rows are
++     *  the chunks' own: vectors whose logical rows need no padding to whole kit steps, norms in
++     *  the index's own type, and neighbor rows of the index's connectivity that are already
++     *  compact - every ID below @p rows, sentinels only past the live ones, and slot 0 never the
++     *  sentinel, so no walk waits out a lock no writer will release. Any other column is copied
++     *  and repaired as @ref load does, and the keys always are, since the key map files them.
++     *
++     *  The borrowed bytes must stay alive and unmodified until the index dies; it never writes
++     *  them, so they may sit in a read-only mapping. The dispenser stays closed for good and no
++     *  chunk ever grows, so insertions, loads, reservations and refinements are refused rather
++     *  than writing over them.
++     *
++     *  @param[in] columns The rows' columns, as a monolith's header frames them.
++     *  @param[in] rows The rows to serve - the monolith's node count.
++     *  @param[in] key_of Row @c r takes the key <tt>key_of(r)</tt>.
++     *
++     *  @par Statuses:
++     *  - @c config_mismatch_k The index already holds rows or chunks, a column is too short for
++     *    @p rows, its neighbor rows are wider than the index's, norms are given to an index that
++     *    stores none, or the geometry is malformed.
++     *  - @c unknown_kind_k The dtype's kits cannot finalize the kernel.
++     *  - @c overflow_k @p rows pass the ID space.
++     *  - @c bad_alloc_k A copied column, the key column or the key map could not be allocated.
++     */
++    template <typename key_of_type_>
++    status_t view(columns_view_t columns, std::size_t rows, key_of_type_&& key_of) noexcept {
++        if (viewed_ || chunks_count_ || size()) return status_t::config_mismatch_k;
++        if (!kernel_supported<quads_kit_t>(kernel_)) return status_t::unknown_kind_k;
++        if (!geometry_.dimensions || geometry_.dimensions % nk::dimensions_per_value<scalar_t>() ||
++            !std::has_single_bit(static_cast<u32_t>(geometry_.connectivity)))
++            return status_t::config_mismatch_k;
++        if (rows > max_node_count_k) return status_t::overflow_k;
++        std::size_t const connectivity = geometry_.connectivity;
++        std::size_t const column_connectivity = columns.connectivity ? columns.connectivity : connectivity;
++        std::size_t const row_values = stored_row_values(geometry_);
++        std::size_t const row_bytes = row_values * sizeof(scalar_t);
++        std::size_t const neighbors_row_bytes = column_connectivity * sizeof(node_id_t);
++        if (column_connectivity > connectivity || columns.vectors.size() < rows * row_bytes ||
++            columns.neighbors.size() < rows * neighbors_row_bytes ||
++            (!columns.norms.empty() && (!stores_norms() || columns.norms.size() < rows * sizeof(vector_norms_t))))
++            return status_t::config_mismatch_k;
++
++        auto const aligned = [](bytes_view_t bytes) noexcept {
++            return reinterpret_cast<std::uintptr_t>(bytes.data()) % default_alignment_k == 0;
++        };
++        bool const borrows_vectors = padded_row_values(geometry_) == row_values && aligned(columns.vectors);
++        bool const borrows_norms = stores_norms() && !columns.norms.empty() && aligned(columns.norms);
++        bool const borrows_neighbors = column_connectivity == connectivity && aligned(columns.neighbors) &&
++                                       walkable_neighbor_rows_(columns.neighbors, rows);
++
++        status_t covered = borrows_vectors
++                               ? vectors_.borrow(reinterpret_cast<scalar_t const*>(columns.vectors.data()), rows,
++                                                 row_values)
++                               : vectors_.cover(rows, padded_row_values(geometry_));
++        if (succeeded(covered) && stores_norms())
++            covered = borrows_norms
++                          ? norms_.borrow(reinterpret_cast<vector_norms_t const*>(columns.norms.data()), rows)
++                          : norms_.cover(rows);
++        if (succeeded(covered))
++            covered = borrows_neighbors
++                          ? neighbors_.borrow(reinterpret_cast<node_id_t const*>(columns.neighbors.data()), rows,
++                                              connectivity)
++                          : neighbors_.cover(rows, connectivity, 0xFF);
++        if (succeeded(covered)) covered = keyed_.cover(rows);
++        if (failed(covered)) {
++            vectors_.reset(), norms_.reset(), neighbors_.reset();
++            return covered;
++        }
++
++        // Every chunk starts a run, so each copied column fills whole runs, as a load's steps do.
++        iota_view<node_id_t> const source_range {0, static_cast<node_id_t>(rows)};
++        for (std::size_t first = 0; first != rows;) {
++            location_t const location = chunk_schedule_t::locate(first);
++            std::size_t const run = min_of(rows - first, chunk_schedule_t::nodes_in(location.chunk));
++            if (!borrows_vectors)
++                for (std::size_t row = 0; row != run; ++row)
++                    std::memcpy(vectors_[location_t {location.chunk, row}],
++                                columns.vectors.data() + (first + row) * row_bytes, row_bytes);
++            if (stores_norms() && !borrows_norms) {
++                if (!columns.norms.empty())
++                    std::memcpy(&norms_[location], columns.norms.data() + first * sizeof(vector_norms_t),
++                                run * sizeof(vector_norms_t));
++                else
++                    for (std::size_t row = 0; row != run; ++row) {
++                        location_t const at {location.chunk, row};
++                        norm_ref_for(at) = norms(vector_for(at));
++                    }
++            }
++            if (!borrows_neighbors) {
++                node_id_t* const slots = neighbors_[location];
++                for (std::size_t row = 0; row != run; ++row) {
++                    std::memcpy(slots + row * connectivity,
++                                columns.neighbors.data() + (first + row) * neighbors_row_bytes, neighbors_row_bytes);
++                    for (std::size_t slot = column_connectivity; slot != connectivity; ++slot)
++                        slots[row * connectivity + slot] = node_id_unknown_k;
++                }
++                std::span<node_id_t> const copied {slots, run * connectivity};
++                rebase_neighbors(copied, source_range, node_id_t {0}, node_id_unknown_k);
++                compact_neighbors(copied, connectivity, static_cast<node_id_t>(first), node_id_unknown_k);
++            }
++            for (std::size_t row = 0; row != run; ++row)
++                keyed_.assign(static_cast<node_id_t>(first + row), key_of(static_cast<node_id_t>(first + row)));
++            first += run;
++        }
++        keyed_.publish(source_range);
++
++        // The chunks are final: no capacity remains, the ceiling sits at the rows, and the
++        // dispenser closes for good before the watermark publishes them.
++        chunks_count_ = static_cast<candidates_count_t>(chunk_schedule_t::chunks_for(rows));
++        atomic_ref<std::size_t>(ceiling_nodes_).store(rows, std::memory_order_relaxed);
++        atomic_ref<node_id_t>(last_allocated_id_).store(static_cast<node_id_t>(rows), std::memory_order_relaxed);
++        atomic_ref<node_id_t>(next_dispensed_id_).store(node_id_unknown_k, std::memory_order_relaxed);
++        viewed_ = true;
++        atomic_ref<node_id_t>(last_visible_id_).store(static_cast<node_id_t>(rows), std::memory_order_release);
++        return status_t::success_k;
++    }
++
+ #pragma endregion Checkpoints
+ 
+   private:
+ 
+ #pragma region Storage
+ 
++    /** Whether @p neighbors holds @p rows rows of the index's connectivity a walk reads as they
++     *  are: every ID below @p rows, the sentinel only past the live ones, and slot 0, the lock
++     *  word, never the sentinel - a published row with no neighbors names itself there. */
++    bool walkable_neighbor_rows_(bytes_view_t neighbors, std::size_t rows) const noexcept {
++        std::size_t const connectivity = geometry_.connectivity;
++        node_id_t const* const ids = reinterpret_cast<node_id_t const*>(neighbors.data());
++        for (std::size_t row = 0; row != rows; ++row) {
++            node_id_t const* const slots = ids + row * connectivity;
++            std::size_t slot = 0;
++            for (; slot != connectivity && slots[slot] != node_id_unknown_k; ++slot)
++                if (slots[slot] >= rows) return false;
++            if (!slot) return false;
++            for (; slot != connectivity; ++slot)
++                if (slots[slot] != node_id_unknown_k) return false;
++        }
++        return true;
++    }
++
+     /** Trampoline for @c dense::norms with hardened types - zeroed moments, without
+      *  touching the vector, when the rows keep none. */
+     inline vector_norms_t norms(vector_view_t vec) const noexcept {
+@@ -4125,6 +4282,8 @@ struct ram_index {
+      *  inside it becomes visible, which chains through the same atomics.
+      */
+     expected<std::size_t> create_next_chunk(std::size_t minimal_capacity) noexcept {
++        // A view's chunks are final: its columns may be borrowed, and no claim grows past them.
++        if (viewed_) return {0, status_t::read_only_k};
+         // Constructors allocate nothing, so the first growth is where a geometry or kernel is
+         // refused.
+         if (!kernel_supported<quads_kit_t>(kernel_)) return {0, status_t::unknown_kind_k};
+@@ -4511,6 +4670,7 @@ struct ram_index {
+     /** Reopens a closed dispenser at the watermark, past every row a load published meanwhile; an
+      *  open one stays as it is. */
+     void reopen_() noexcept {
++        if (viewed_) return; // A view's dispenser stays closed, so no batch ever claims over it.
+         node_id_t closed = node_id_unknown_k;
+         atomic_ref<node_id_t>(next_dispensed_id_)
+             .compare_exchange_strong(closed, atomic_ref<node_id_t>(last_visible_id_).load(std::memory_order_acquire),
+@@ -4652,6 +4812,7 @@ struct ram_index {
+      *  walk or lookup still reaching the index reads storage nothing frees, and its caller's epoch
+      *  discards what it read. */
+     void forget_(node_id_t visible) noexcept {
++        if (viewed_) return; // Forgetting rewrites the neighbor rows, which a view only borrows.
+         atomic_ref<node_id_t>(last_visible_id_).store(0, std::memory_order_release);
+         keyed_.forget();
+         node_id_t dispensed = visible;
+@@ -5765,6 +5926,10 @@ struct ram_index {
+      *  and successive growers are ordered by the acquire/release pair on @c remaining_capacity_,
+      *  which no release lifts while one is inside. @c create_next_chunk */
+     candidates_count_t chunks_count_ = 0;
++
++    /** Whether @ref view made the index a read-only server of a caller's checkpoint: its columns
++     *  may be borrowed, its dispenser stays closed, and nothing grows, forgets or relinks. */
++    bool viewed_ = false;
+ };
+ 
+ /**
+diff --git a/include/usearch/dense/ram_indexes.hpp b/include/usearch/dense/ram_indexes.hpp
+index 9d6b0ef7..e4599be8 100644
+--- a/include/usearch/dense/ram_indexes.hpp
++++ b/include/usearch/dense/ram_indexes.hpp
+@@ -185,10 +185,11 @@ struct ram_indexes {
+      *  by; nothing is placed by default. */
+     explicit ram_indexes(nk_kernel_kind_t kernel, geometry_t geometry, forkunion_allocator_t allocator,
+                          std::size_t line_bytes = default_alignment_k) noexcept
+-        : shards_(allocator), kernel_(kernel), geometry_(geometry), line_bytes_(line_bytes) {}
++        : view_mappings_(allocator), shards_(allocator), kernel_(kernel), geometry_(geometry), line_bytes_(line_bytes) {}
+     ram_indexes(ram_indexes&& other) noexcept
+-        : shards_(std::move(other.shards_)), kernel_(other.kernel_), geometry_(other.geometry_),
+-          line_bytes_(other.line_bytes_) {}
++        : view_mappings_(std::move(other.view_mappings_)), shards_(std::move(other.shards_)), kernel_(other.kernel_),
++          geometry_(other.geometry_), line_bytes_(other.line_bytes_),
++          viewed_(std::exchange(other.viewed_, false)) {}
+     ram_indexes& operator=(ram_indexes&& other) noexcept { return swap(other), *this; }
+     ram_indexes(ram_indexes const&) = delete;
+     ram_indexes& operator=(ram_indexes const&) = delete;
+@@ -198,10 +199,12 @@ struct ram_indexes {
+ 
+     /** Exchanges two indexes whole; a move implies the caller holds both exclusively. */
+     void swap(ram_indexes& other) noexcept {
++        std::swap(view_mappings_, other.view_mappings_);
+         shards_.swap(other.shards_);
+         std::swap(kernel_, other.kernel_);
+         std::swap(geometry_, other.geometry_);
+         std::swap(line_bytes_, other.line_bytes_);
++        std::swap(viewed_, other.viewed_);
+     }
+ 
+     /** Bounds every shard at @p rows, clamped to the ID space; zero means the ID space. Past it, an
+@@ -237,6 +240,7 @@ struct ram_indexes {
+      *    flight.
+      */
+     status_t emplace(std::unique_ptr<index_t>&& shard) noexcept {
++        if (viewed_) return status_t::read_only_k;
+         if (!shard || shard->kernel() != kernel_ || shard->geometry() != geometry_) return status_t::config_mismatch_k;
+         return shards_.emplace(std::move(shard));
+     }
+@@ -253,6 +257,7 @@ struct ram_indexes {
+      *  - @c contended_k A call holds the gate, or a batch or plan holds a shard's dispenser.
+      */
+     status_t clear() noexcept {
++        if (viewed_) return status_t::read_only_k;
+         unique_lock_t const held {gate_, std::try_to_lock};
+         if (!held) return status_t::contended_k;
+         if (status_t const closed = shards_.close(); failed(closed)) return closed;
+@@ -317,7 +322,10 @@ struct ram_indexes {
+      *  - @c config_mismatch_k The geometry is malformed, or a nonzero one in @p config differs.
+      *  - @c overflow_k A shard's share passes its ceiling or its chunk directory.
+      */
+-    expected<std::size_t> reserve(reserve_capacity_t config) noexcept { return shards_.reserve(config); }
++    expected<std::size_t> reserve(reserve_capacity_t config) noexcept {
++        if (viewed_) return {0, status_t::read_only_k};
++        return shards_.reserve(config);
++    }
+ 
+ #pragma endregion Measures and Reservation
+ 
+@@ -347,6 +355,7 @@ struct ram_indexes {
+                                      insert_config_t config = {}) noexcept {
+         insert_result_t result;
+         result.new_size = size();
++        if (viewed_) return {result, status_t::read_only_k};
+         if (shards_.empty()) return {result, status_t::uninitialized_k};
+         shared_lock_t const held {gate_};
+         if (shards_.sealed()) return {result, status_t::contended_k};
+@@ -432,6 +441,7 @@ struct ram_indexes {
+                                      insert_config_t config = {}) noexcept {
+         insert_result_t result;
+         result.new_size = size();
++        if (viewed_) return {result, status_t::read_only_k};
+         if (keys.size() != new_rows.rows) return {result, status_t::config_mismatch_k};
+         // Rows go into slots as wide as the geometry, and a row refused past the dispense would
+         // stall its shard.
+@@ -674,6 +684,7 @@ struct ram_indexes {
+      */
+     expected<insert_plan_t> plan_insert(std::size_t rows, executor_t& executor, insert_config_t config = {}) noexcept {
+         if (shards_.empty()) return {{}, status_t::uninitialized_k};
++        if (viewed_) return {{}, status_t::read_only_k};
+         shared_lock_t const held {gate_};
+         if (shards_.sealed()) return {{}, status_t::contended_k};
+         insert_plan_t plan {shards_.allocator()};
+@@ -1166,6 +1177,9 @@ struct ram_indexes {
+                                         executor_t const& executor) noexcept {
+         std::size_t const shards = shards_.size(), threads = executor.size();
+         if (!shards || !threads) return {{}, status_t::uninitialized_k};
++        if (viewed_) return {{}, status_t::read_only_k};
++        for (ram_indexes const* donor : donors)
++            if (donor && donor->viewed_) return {{}, status_t::read_only_k};
+         for (ram_indexes const* donor : donors)
+             if (!donor || donor == this || donor->kernel() != kernel() || donor->geometry() != geometry_)
+                 return {{}, status_t::config_mismatch_k};
+@@ -1270,6 +1284,9 @@ struct ram_indexes {
+                                        executor_t const& executor) noexcept {
+         std::size_t const shards = shards_.size(), threads = executor.size(), parts = receivers.size();
+         if (!shards || !threads) return {{}, status_t::uninitialized_k};
++        if (viewed_) return {{}, status_t::read_only_k};
++        for (ram_indexes const* receiver : receivers)
++            if (receiver && receiver->viewed_) return {{}, status_t::read_only_k};
+         if (parts < 2) return {{}, status_t::config_mismatch_k};
+         for (std::size_t receiver = 0; receiver != parts; ++receiver) {
+             ram_indexes const* into = receivers[receiver];
+@@ -2076,6 +2093,7 @@ struct ram_indexes {
+      *  - @c overflow_k A part passes a shard's bound.
+      */
+     expected<load_plan_t> plan_load(std::string_view path, load_config_t const& config) noexcept {
++        if (viewed_) return {{}, status_t::read_only_k};
+         return load_plan_t::open(shards_, {this}, path, config);
+     }
+ 
+@@ -2095,9 +2113,70 @@ struct ram_indexes {
+      *  - @c overflow_k A part passes a shard's bound.
+      */
+     expected<load_plan_t> plan_load(bytes_view_t buffer, load_config_t const& config) noexcept {
++        if (viewed_) return {{}, status_t::read_only_k};
+         return load_plan_t::open(shards_, {this}, buffer, config);
+     }
+ 
++    /**
++     *  @brief Serves the checkpoint held in @p buffer in place, read-only: a lone monolith, or the
++     *      manifest leading the buffer and the parts it lists, part @c p on live shard @c p.
++     *
++     *  Every column whose bytes already match a shard's layout is borrowed rather than copied - the
++     *  vectors, norms and neighbors of a checkpoint a RAM index saved, on a buffer aligned to
++     *  @c default_alignment_k, the cache line every chunk starts on, for any geometry whose rows
++     *  need no padding - so opening costs the keys and the key map, and
++     *  a walk pays only for the pages it touches. Columns that do not match are copied, so a view
++     *  of any valid checkpoint answers exactly what its load would.
++     *
++     *  The buffer must stay alive and unmodified until the index dies; nothing writes it, so it may
++     *  sit in a read-only mapping. Every mutating verb answers @c read_only_k from then on.
++     *
++     *  @par Statuses:
++     *  - @c uninitialized_k No shard is placed.
++     *  - @c contended_k A call holds the gate, or a batch or plan holds a shard's dispenser.
++     *  - @c config_mismatch_k The index holds entries or was viewed already, or the checkpoint's
++     *    geometry, dtypes or metric differ from the shards'.
++     *  - @c malformed_k The manifest lists no part, a part or its header does not parse, or its
++     *    connectivity or dimensions are unusable.
++     *  - @c overflow_k A part passes a shard's bound.
++     *  - @c bad_alloc_k A copied column, a key column or a key map could not be allocated.
++     */
++    status_t view(bytes_view_t buffer) noexcept {
++        if (viewed_) return status_t::config_mismatch_k;
++        growing_buffer<safegraphs_catalog_part_t, forkunion_allocator_t> parts {shards_.allocator()};
++        growing_buffer<safegraphs_named_column_t, forkunion_allocator_t> extra_columns {shards_.allocator()};
++        if (status_t const listed = checkpoint_source_t {buffer}.read_header(parts, extra_columns,
++                                                                             no_device_copy_t {}, shards_.allocator());
++            failed(listed))
++            return listed;
++        return view_parts_(to_span(parts));
++    }
++
++    /**
++     *  @brief Serves the checkpoint at @p path in place through read-only memory mappings, which
++     *      the index holds until it dies - the path form of the buffer @ref view.
++     *
++     *  @par Statuses:
++     *  - Those of the buffer form.
++     *  - @c invalid_argument_k The checkpoint or a part path does not parse.
++     */
++    status_t view(std::string_view path) noexcept {
++        if (viewed_) return status_t::config_mismatch_k;
++        growing_buffer<mapped_file_t, forkunion_allocator_t> mappings {shards_.allocator()};
++        growing_buffer<safegraphs_catalog_part_t, forkunion_allocator_t> parts {shards_.allocator()};
++        growing_buffer<safegraphs_named_column_t, forkunion_allocator_t> extra_columns {shards_.allocator()};
++        if (status_t const listed = safegraphs_catalog(path, mappings, parts, extra_columns, shards_.allocator());
++            failed(listed))
++            return listed;
++        status_t const viewed = view_parts_(to_span(parts));
++        // The shards borrow the mapped bytes, so the mappings live exactly as long as the index.
++        if (viewed_) view_mappings_ = std::move(mappings);
++        return viewed;
++    }
++
++    /** Whether the index serves a checkpoint in place through @ref view, refusing every write. */
++    bool viewed() const noexcept { return viewed_; }
++
+     /**
+      *  @brief Serializes the index under @p path - the one-shot over @ref plan_save, its steps
+      *      fanned out over @p executor.
+@@ -2945,6 +3024,18 @@ struct ram_indexes {
+         shards_.forget_entries();
+     }
+ 
++    /** Serves @p parts in place under the gate, part @c p on live shard @c p, through
++     *  @ref view_checkpoint_parts; the index turns read-only once any shard serves a part, so a
++     *  failure part-way never reopens a half-viewed shard to writes. */
++    status_t view_parts_(std::span<safegraphs_catalog_part_t const> parts) noexcept {
++        checkpoint_residency_t residency {this};
++        if (status_t const closed = residency.close(shards_); failed(closed)) return closed;
++        status_t const viewed = view_checkpoint_parts(shards_, residency, parts);
++        for (shard_t const& shard : shards_) viewed_ = viewed_ || shard.index->viewed();
++        shards_.reopen();
++        return viewed;
++    }
++
+     /** Closes every shard under the unique side, refusing a call in flight, a claim outstanding or
+      *  a plan holding the index closed with @c contended_k; closing moves nothing a reader sees, so
+      *  it moves no epoch. */
+@@ -3809,6 +3900,10 @@ struct ram_indexes {
+     using shared_lock_t = std::shared_lock<shared_mutex_t>;
+     using unique_lock_t = std::unique_lock<shared_mutex_t>;
+ 
++    /** The files a path @ref view mapped, which the shards' borrowed columns read; declared before
++     *  the shards, so they outlive them. */
++    growing_buffer<mapped_file_t, forkunion_allocator_t> view_mappings_;
++
+     /** The shards, their routing, the commit word every reader snapshots by and the epoch every
+      *  reader brackets itself with. */
+     shards_t shards_;
+@@ -3828,6 +3923,9 @@ struct ram_indexes {
+ 
+     /** The line every shard this index builds prefetches by. */
+     std::size_t line_bytes_;
++
++    /** Whether a @ref view made every shard a read-only server of a caller's checkpoint. */
++    bool viewed_ = false;
+ };
+ 
+ /**
+diff --git a/include/usearch/dense/shard_checkpoints.hpp b/include/usearch/dense/shard_checkpoints.hpp
+index 0fb60bbe..70b61383 100644
+--- a/include/usearch/dense/shard_checkpoints.hpp
++++ b/include/usearch/dense/shard_checkpoints.hpp
+@@ -599,6 +599,29 @@ struct [[nodiscard]] shard_save_plan {
+ template <typename index_type_>
+ concept widens_neighbors = requires(typename index_type_::columns_view_t columns) { columns.connectivity; };
+ 
++/** Whether @p part can load onto, or be viewed by, @p shards: three regular columns of their own
++ *  dtypes, its keys no wider than theirs, the metric it names agreeing with theirs, the geometry
++ *  @p first holds, and every column describing the same rows. */
++template <typename shards_type_>
++status_t vet_checkpoint_part(shards_type_ const& shards, safegraphs_catalog_part_t const& part,
++                             safegraphs_header_t const& first) noexcept {
++    using key_t = typename shards_type_::key_t;
++    safegraphs_header_t const& header = part.header;
++    if (header.key.offsets || header.value.offsets || header.neighbors.offsets ||
++        (!part.metric.empty() &&
++         nk_kernel_named(part.metric.characters, part.metric.view().size()) != shards[0].index->kernel()) ||
++        !safegraphs_key_widens(header.key.dtype, safegraphs_key_dtype<key_t>()) ||
++        header.value.dtype != shard_value_dtype<shards_type_>() || header.neighbors.dtype != dtype_t::u32_k ||
++        header.key.shape != column_shape_t {scalar_shape_t {}} || header.value.shape != first.value.shape ||
++        header.neighbors.shape != first.neighbors.shape)
++        return status_t::config_mismatch_k;
++    if (header.key.nodes() != part.nodes || header.value.nodes() != part.nodes ||
++        header.neighbors.nodes() != part.nodes ||
++        header.rows_of(part.monolith, header.key, 0, part.nodes).size() != part.nodes * header.key.row_bytes())
++        return status_t::malformed_k;
++    return status_t::success_k;
++}
++
+ /**
+  *  @brief One load in flight across every shard of a set: the mapped parts, one shard plan each,
+  *      and the flat steps their rows arrive in - one per part's share of one chunk or batch.
+@@ -854,20 +877,7 @@ struct [[nodiscard]] shard_load_plan {
+      *  keys no wider than theirs, the metric it names agreeing with theirs, the geometry @p first
+      *  holds, and every column describing the same rows. */
+     status_t vetted_part_(safegraphs_catalog_part_t const& part, safegraphs_header_t const& first) const noexcept {
+-        safegraphs_header_t const& header = part.header;
+-        if (header.key.offsets || header.value.offsets || header.neighbors.offsets ||
+-            (!part.metric.empty() &&
+-             nk_kernel_named(part.metric.characters, part.metric.view().size()) != (*shards_)[0].index->kernel()) ||
+-            !safegraphs_key_widens(header.key.dtype, safegraphs_key_dtype<key_t>()) ||
+-            header.value.dtype != shard_value_dtype<shards_type_>() || header.neighbors.dtype != dtype_t::u32_k ||
+-            header.key.shape != column_shape_t {scalar_shape_t {}} || header.value.shape != first.value.shape ||
+-            header.neighbors.shape != first.neighbors.shape)
+-            return status_t::config_mismatch_k;
+-        if (header.key.nodes() != part.nodes || header.value.nodes() != part.nodes ||
+-            header.neighbors.nodes() != part.nodes ||
+-            header.rows_of(part.monolith, header.key, 0, part.nodes).size() != part.nodes * header.key.row_bytes())
+-            return status_t::malformed_k;
+-        return status_t::success_k;
++        return vet_checkpoint_part(*shards_, part, first);
+     }
+ 
+     /**
+@@ -1014,6 +1024,70 @@ struct [[nodiscard]] shard_load_plan {
+     shards_type_* shards_ = nullptr;
+ };
+ 
++/**
++ *  @brief Serves the catalogued @p parts in place on the empty, never-grown @p shards, part @c p on
++ *      live shard @c p, each shard's own @c view borrowing the columns whose bytes match its layout.
++ *
++ *  The parts are vetted as a load vets them, and the residency opens shard generations where the
++ *  parts outnumber the placed shards; the caller closes the shards beforehand and reopens them
++ *  after, which leaves every viewed shard's dispenser closed for good. The parts' bytes must
++ *  outlive the shards.
++ *
++ *  @par Statuses:
++ *  - @c uninitialized_k No shard is placed.
++ *  - @c config_mismatch_k The shards hold entries or capacity, or the checkpoint's geometry, dtypes
++ *    or metric differ from the shards'.
++ *  - @c malformed_k The checkpoint lists no part, a part or its header does not parse, or its
++ *    connectivity or dimensions are unusable.
++ *  - @c overflow_k A part passes a shard's bound.
++ *  - @c bad_alloc_k A copied column, a key column or a key map could not be allocated.
++ */
++template <typename shards_type_, typename residency_type_>
++status_t view_checkpoint_parts(shards_type_& shards, residency_type_& residency,
++                               std::span<safegraphs_catalog_part_t const> parts) noexcept {
++    using index_t = typename shards_type_::index_t;
++    using key_t = typename shards_type_::key_t;
++    if (shards.empty()) return status_t::uninitialized_k;
++    if (parts.empty()) return status_t::malformed_k;
++    if (shards.entries() || shards.capacity()) return status_t::config_mismatch_k;
++    safegraphs_header_t const& first = parts[0].header;
++    for (safegraphs_catalog_part_t const& part : parts)
++        if (status_t const vetted = vet_checkpoint_part(shards, part, first); failed(vetted)) return vetted;
++    std::size_t const connectivity = regular_width(first.neighbors.shape).value_or(0);
++    std::size_t const dimensions = regular_width(first.value.shape).value_or(0);
++    if (!std::has_single_bit(static_cast<u32_t>(connectivity)) || !dimensions) return status_t::malformed_k;
++    if (dimensions != shards[0].index->dimensions() || connectivity > shards[0].index->connectivity())
++        return status_t::config_mismatch_k;
++    std::size_t const bound = shards.shard_capacity();
++    std::size_t total = 0;
++    for (safegraphs_catalog_part_t const& part : parts) {
++        if (part.nodes > bound) return status_t::overflow_k;
++        total += part.nodes;
++    }
++    for (std::size_t part = 0; part != parts.size(); ++part)
++        if (status_t const opened = residency.open_shard_for_part(shards, part); failed(opened)) return opened;
++
++    std::size_t const retired = shards.retired_shards();
++    for (std::size_t part = 0; part != parts.size(); ++part) {
++        safegraphs_catalog_part_t const& found = parts[part];
++        safegraphs_header_t const& header = found.header;
++        typename index_t::columns_view_t columns {
++            header.data_of(found.monolith, header.value), header.data_of(found.monolith, header.neighbors),
++            norms_column_of(header, found.monolith, shard_norms_dtype(shards))};
++        columns.connectivity = regular_width(header.neighbors.shape).value_or(0);
++        bytes_view_t const keys = header.rows_of(found.monolith, header.key, 0, found.nodes);
++        std::size_t const key_bytes = header.key.row_bytes();
++        dtype_t const key_dtype = header.key.dtype;
++        status_t const viewed =
++            shards[retired + part].index->view(columns, found.nodes, [&](node_id_t row) noexcept {
++                return safegraphs_widened_key<key_t>(keys.data() + row * key_bytes, key_dtype);
++            });
++        if (failed(viewed)) return viewed;
++    }
++    shards.reset_routing(total);
++    return status_t::success_k;
++}
++
+ #pragma endregion Loads
+ 
+ } // namespace unum::usearch::dense
+diff --git a/include/usearch/utilities/ram_buffers.hpp b/include/usearch/utilities/ram_buffers.hpp
+index 28e92985..21a58894 100644
+--- a/include/usearch/utilities/ram_buffers.hpp
++++ b/include/usearch/utilities/ram_buffers.hpp
+@@ -1121,11 +1121,14 @@ class chunked_column {
+     inline static constexpr std::size_t max_chunks_k = schedule_t::chunks_for(max_nodes_);
+ 
+     explicit chunked_column(allocator_t allocator) noexcept : allocator_(std::move(allocator)) {}
+-    chunked_column(chunked_column&& other) noexcept : chunks_(other.chunks_), allocator_(std::move(other.allocator_)) {
++    chunked_column(chunked_column&& other) noexcept
++        : chunks_(other.chunks_), borrowed_(std::exchange(other.borrowed_, false)),
++          allocator_(std::move(other.allocator_)) {
+         other.chunks_.fill(nullptr);
+     }
+     chunked_column& operator=(chunked_column&& other) noexcept {
+         std::swap(chunks_, other.chunks_);
++        std::swap(borrowed_, other.borrowed_);
+         std::swap(allocator_, other.allocator_);
+         return *this;
+     }
+@@ -1133,14 +1136,44 @@ class chunked_column {
+     chunked_column& operator=(chunked_column const&) = delete;
+     ~chunked_column() noexcept { reset(); }
+ 
++    /**
++     *  @brief Points the directory into one contiguous run of @p nodes values the caller owns, so
++     *      the column reads them in place: chunk @c c starts @c nodes_before(c) values past
++     *      @p values, and the last chunk may end past the run, where no reader indexes.
++     *
++     *  The column never writes, frees or grows a borrowed run, so it may sit in read-only memory;
++     *  the run must outlive the column, or its @ref reset.
++     *
++     *  @par Statuses:
++     *  - @c config_mismatch_k The column already holds chunks.
++     *  - @c overflow_k @p nodes passes the directory's @c max_nodes_.
++     */
++    status_t borrow(value_t const* values, std::size_t nodes) noexcept
++        requires std::is_trivially_copyable_v<value_t>
++    {
++        if (nodes > max_nodes_) return status_t::overflow_k;
++        for (value_t* const chunk : chunks_)
++            if (chunk) return status_t::config_mismatch_k;
++        value_t* const base = const_cast<value_t*>(values);
++        for (std::size_t chunk = 0, chunks = schedule_t::chunks_for(nodes); chunk != chunks; ++chunk)
++            chunks_[chunk] = base + schedule_t::nodes_before(chunk);
++        borrowed_ = nodes != 0;
++        return status_t::success_k;
++    }
++
++    /** Whether the chunks view a run the caller owns, which @ref borrow pointed them into. */
++    bool borrowed() const noexcept { return borrowed_; }
++
+     /**
+      *  Allocates, zeroes or builds, and publishes every chunk the first @p nodes nodes need and is
+      *  missing - safe on any thread.
+      *
+      *  @par Statuses:
+      *  - @c overflow_k @p nodes passes the directory's @c max_nodes_.
++     *  - @c read_only_k The column reads a borrowed run, which never grows.
+      */
+     status_t cover(std::size_t nodes) noexcept {
++        if (borrowed_) return status_t::read_only_k;
+         if (nodes > max_nodes_) return status_t::overflow_k;
+         for (std::size_t chunk = 0, chunks = schedule_t::chunks_for(nodes); chunk != chunks; ++chunk) {
+             atomic_ref<value_t*> slot {chunks_[chunk]};
+@@ -1217,11 +1250,13 @@ class chunked_column {
+         }
+     }
+ 
+-    /** Bytes the published chunks span. */
+-    std::size_t memory_usage() const noexcept { return capacity() * sizeof(value_t); }
++    /** Bytes the published chunks span; none for a borrowed run, which the caller owns. */
++    std::size_t memory_usage() const noexcept { return borrowed_ ? 0 : capacity() * sizeof(value_t); }
+ 
+-    /** Frees every chunk - single-threaded: the caller certifies no concurrent readers or writers. */
++    /** Frees every chunk, or forgets a borrowed run untouched - single-threaded: the caller
++     *  certifies no concurrent readers or writers. */
+     void reset() noexcept {
++        if (std::exchange(borrowed_, false)) return chunks_.fill(nullptr);
+         for (std::size_t index = 0; index != max_chunks_k; ++index)
+             if (value_t* const values = std::exchange(chunks_[index], nullptr))
+                 release_(values, schedule_t::nodes_in(index));
+@@ -1238,6 +1273,9 @@ class chunked_column {
+     /** One pointer per chunk, sized once and never reallocated; a null entry is a chunk no cover reached yet. */
+     std::array<value_t*, max_chunks_k> chunks_ {};
+ 
++    /** Whether @c chunks_ point into a run the caller owns, never allocated, written or freed here. */
++    bool borrowed_ = false;
++
+     [[no_unique_address]] allocator_t allocator_;
+ };
+ 
+@@ -1270,14 +1308,45 @@ class chunked_matrix {
+     chunked_matrix& operator=(chunked_matrix const&) = delete;
+     ~chunked_matrix() noexcept { reset(); }
+ 
++    /**
++     *  @brief Points the directory into one contiguous matrix of @p rows rows of @p columns values
++     *      the caller owns, so the matrix reads them in place: chunk @c c starts
++     *      <tt>nodes_before(c) * columns</tt> values past @p values, and the last chunk may end
++     *      past the matrix, where no reader indexes.
++     *
++     *  The matrix never writes, frees or grows borrowed rows, so they may sit in read-only memory;
++     *  they must outlive the matrix, or its @ref reset.
++     *
++     *  @par Statuses:
++     *  - @c config_mismatch_k The matrix already holds chunks, or @p columns is zero.
++     *  - @c overflow_k @p rows passes the directory's @c max_nodes_.
++     */
++    status_t borrow(value_t const* values, std::size_t rows, std::size_t columns) noexcept {
++        if (rows > max_nodes_) return status_t::overflow_k;
++        if (!columns) return status_t::config_mismatch_k;
++        for (value_t* const chunk : chunks_)
++            if (chunk) return status_t::config_mismatch_k;
++        columns_ = columns;
++        value_t* const base = const_cast<value_t*>(values);
++        for (std::size_t chunk = 0, chunks = schedule_t::chunks_for(rows); chunk != chunks; ++chunk)
++            chunks_[chunk] = base + schedule_t::nodes_before(chunk) * columns;
++        borrowed_ = rows != 0;
++        return status_t::success_k;
++    }
++
++    /** Whether the chunks view rows the caller owns, which @ref borrow pointed them into. */
++    bool borrowed() const noexcept { return borrowed_; }
++
+     /**
+      *  Allocates every chunk the first @p rows rows of @p columns values need and is missing, sets
+      *  each of its bytes to @p fill, and publishes it - safe on any thread.
+      *
+      *  @par Statuses:
+      *  - @c overflow_k @p rows passes the directory's @c max_nodes_.
++     *  - @c read_only_k The matrix reads borrowed rows, which never grow.
+      */
+     status_t cover(std::size_t rows, std::size_t columns, std::uint8_t fill = 0) noexcept {
++        if (borrowed_) return status_t::read_only_k;
+         if (rows > max_nodes_) return status_t::overflow_k;
+         if (columns_ != columns) columns_ = columns;
+         for (std::size_t chunk = 0, chunks = schedule_t::chunks_for(rows); chunk != chunks; ++chunk) {
+@@ -1310,9 +1379,10 @@ class chunked_matrix {
+         return rows + location.offset * columns_;
+     }
+ 
+-    /** Frees every chunk - single-threaded: the caller certifies no concurrent readers or
+-     *  writers. */
++    /** Frees every chunk, or forgets borrowed rows untouched - single-threaded: the caller
++     *  certifies no concurrent readers or writers. */
+     void reset() noexcept {
++        if (std::exchange(borrowed_, false)) return chunks_.fill(nullptr);
+         for (std::size_t index = 0; index != max_chunks_k; ++index)
+             if (value_t* const rows = std::exchange(chunks_[index], nullptr))
+                 allocator_.deallocate(rows, schedule_t::nodes_in(index) * columns_);
+@@ -1327,6 +1397,9 @@ class chunked_matrix {
+     /** Values per row, fixed by the first cover; zero before it. */
+     std::size_t columns_ = 0;
+ 
++    /** Whether @c chunks_ point into rows the caller owns, never allocated, written or freed here. */
++    bool borrowed_ = false;
++
+     [[no_unique_address]] allocator_t allocator_;
+ };
+ 
+diff --git a/python/dense_index.c b/python/dense_index.c
+index 2dcc4802..e71d9363 100644
+--- a/python/dense_index.c
++++ b/python/dense_index.c
+@@ -25,6 +25,10 @@
+ typedef struct DenseIndex {
+     PyObject ob_base;
+     usearch_dense_index_t handle;
++
++    /** A `memoryview` pinning the buffer a `view_ram_buffer` index reads in place, released only
++     *  after the handle is freed; NULL for every other index. */
++    PyObject* source;
+ } DenseIndex;
+ 
+ /** A sequential scan over the entries an index holds, in batches. */
+@@ -395,6 +399,8 @@ static void DenseIndex_dealloc(DenseIndex* self) {
+     Py_BEGIN_ALLOW_THREADS;
+     usearch_dense_free(self->handle);
+     Py_END_ALLOW_THREADS;
++    // The handle may have read the source until it was freed, so the pin goes only now.
++    Py_CLEAR(self->source);
+     Py_TYPE(self)->tp_free((PyObject*)self);
+ }
+ 
+@@ -3280,6 +3286,64 @@ static PyObject* DenseIndex_view_ram(PyTypeObject* type, PyObject* path_object)
+     return index_adopt(type, handle, &outcome);
+ }
+ 
++static char const doc_DenseIndex_view_ram_buffer[] =                                           //
++    "``view_ram_buffer(buffer, /, *, memory_domains=None) -> DenseIndex``\n"                    //
++    "\n"                                                                                         //
++    "Serves a checkpoint held in memory in place, as a read-only index: the vectors, norms\n"    //
++    "and neighbors are read straight out of `buffer` rather than copied, when it starts on\n"    //
++    "a cache-line boundary (page-aligned always qualifies) and its rows need no padding,\n"      //
++    "so a monolith inside a memory-mapped\n"                                                     //
++    "store, such as an LMDB value, is searched without a copy. Columns that do not match\n"      //
++    "are copied, and the keys always are. The index keeps a `memoryview` of `buffer` alive,\n"   //
++    "but the bytes must also stay unmodified - for LMDB, keep the read transaction open -\n"     //
++    "until the index is gone. Every mutating verb raises `ReadOnlyError`.\n"                     //
++    "Calls `usearch_dense_view_ram_buffer`.\n"                                                  //
++    "\n"                                                                                         //
++    "Args:\n"                                                                                    //
++    "  buffer (buffer): One serialized monolith, such as `save_buffer` returns, or a\n"          //
++    "    manifest leading its parts; C-contiguous.\n"                                           //
++    "  memory_domains (Sequence[int], optional): NUMA node IDs to place shards on.";
++
++static PyObject* DenseIndex_view_ram_buffer(PyTypeObject* type, PyObject* args, PyObject* kwargs) {
++    static char* keywords[] = {"", "memory_domains", NULL};
++    PyObject *buffer_object, *memory_domains_object = Py_None;
++    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|$O:view_ram_buffer", keywords, &buffer_object,
++                                     &memory_domains_object))
++        return NULL;
++    // The index reads the buffer for its whole life, so a memoryview pins the export until then.
++    PyObject* source = PyMemoryView_FromObject(buffer_object);
++    if (!source) return NULL;
++    Py_buffer const* const view = PyMemoryView_GET_BUFFER(source);
++    if (!PyBuffer_IsContiguous(view, 'C')) {
++        Py_DECREF(source);
++        PyErr_SetString(PyExc_ValueError, "the checkpoint buffer must be C-contiguous");
++        return NULL;
++    }
++    int32_t* memory_domains = NULL;
++    size_t memory_domains_count = 0;
++    if (usearch_py_ordinals_from_object(memory_domains_object, "memory_domains", &memory_domains,
++                                        &memory_domains_count) != 0) {
++        Py_DECREF(source);
++        return NULL;
++    }
++    usearch_dense_index_t handle = NULL;
++    usearch_outcome_t outcome = {0};
++    usearch_dense_view_ram_buffer_t arguments = {
++        .index = &handle,
++        .outcome = &outcome,
++        .buffer = {(uint8_t const*)view->buf, (size_t)view->len},
++        .ram = {memory_domains, memory_domains_count, 0, usearch_cpu_class_unknown_k},
++    };
++    Py_BEGIN_ALLOW_THREADS;
++    usearch_dense_view_ram_buffer(&arguments);
++    Py_END_ALLOW_THREADS;
++    PyMem_Free(memory_domains);
++    PyObject* const result = index_adopt(type, handle, &outcome);
++    if (result) ((DenseIndex*)result)->source = source;
++    else Py_DECREF(source);
++    return result;
++}
++
+ static char const doc_DenseIndex_view_nvme[] =                                               //
+     "``view_nvme(path, /, *, paths=None, executor=None, cpu_class=None) -> DenseIndex``\n"   //
+     "\n"                                                                                     //
+@@ -3440,6 +3504,8 @@ static PyMethodDef DenseIndex_methods[] = {
+     {"load_vram_buffer", (PyCFunction)DenseIndex_load_vram_buffer, usearch_py_method_flags_k | METH_CLASS,
+      doc_DenseIndex_load_vram_buffer},
+     {"view_ram", (PyCFunction)DenseIndex_view_ram, METH_O | METH_CLASS, doc_DenseIndex_view_ram},
++    {"view_ram_buffer", (PyCFunction)(void (*)(void))DenseIndex_view_ram_buffer, METH_VARARGS | METH_KEYWORDS | METH_CLASS,
++     doc_DenseIndex_view_ram_buffer},
+     {"view_nvme", (PyCFunction)DenseIndex_view_nvme, usearch_py_method_flags_k | METH_CLASS, doc_DenseIndex_view_nvme},
+     {"metadata_read", (PyCFunction)DenseIndex_metadata_read, usearch_py_method_flags_k | METH_STATIC,
+      doc_DenseIndex_metadata_read},
+diff --git a/python/usearch/lib.pyi b/python/usearch/lib.pyi
+index 8288dff5..a94d2d10 100644
+--- a/python/usearch/lib.pyi
++++ b/python/usearch/lib.pyi
+@@ -2034,6 +2034,11 @@ class DenseIndex:
+         """Serves a checkpoint in place through a memory mapping, read-only."""
+         ...
+ 
++    @classmethod
++    def view_ram_buffer(cls, buffer: Buffer, /, *, memory_domains: Sequence[int] | None = None) -> DenseIndex:
++        """Serves a checkpoint held in a buffer in place, read-only, borrowing its columns."""
++        ...
++
+     @classmethod
+     def view_nvme(
+         cls,
+diff --git a/src/dense_index.cuh b/src/dense_index.cuh
+index 67044044..0355d71f 100644
+--- a/src/dense_index.cuh
++++ b/src/dense_index.cuh
+@@ -706,11 +706,40 @@ USEARCH_EXPORT void usearch_dense_init_vram(usearch_dense_init_vram_t* arguments
+     propagate_error(usearch_status_success_k, outcome, nullptr);
+ }
+ 
++/** Serves the checkpoint @p buffer holds, or else the one at @p path, in place on fresh RAM shards
++ *  placed as @p ram names: the geometry comes from the checkpoint's own headers, and every column
++ *  whose bytes match a shard's layout is borrowed rather than copied. */
++static void view_dense_index(bytes_view_t buffer, std::string_view path, usearch_ram_options_t const& ram,
++                             usearch_dense_index_t* index, usearch_outcome_t* outcome) noexcept {
++    *index = nullptr;
++    if (buffer.empty() && path.empty())
++        return propagate_error(usearch_status_invalid_argument_k, outcome, "The checkpoint must not be empty"), void();
++    auto const [checkpoint, read_status] = buffer.empty()
++                                               ? safegraphs_read_metadata(path)
++                                               : safegraphs_read_metadata(checkpoint_source_t {buffer}, copy_off_device);
++    if (failed(read_status)) return propagate_error(read_status, outcome), void();
++    usearch_dense_metadata_t geometry {};
++    adopt_metadata(checkpoint, &geometry);
++    usearch_dense_index_t const viewed = with_variant(geometry, ram, outcome);
++    if (!viewed) return;
++    bool served = false;
++    visit_punned(*viewed, [&]<vendored_residency_t residency_>(punned_dense_index<residency_> punned) noexcept {
++        status_t const status = punned.verbs.view_in_place(punned.index, buffer, path);
++        served = succeeded(status) || propagate_error(status, outcome);
++    });
++    if (!served) return delete viewed, void();
++    *index = viewed;
++    propagate_error(usearch_status_success_k, outcome, nullptr);
++}
++
+ USEARCH_EXPORT void usearch_dense_view_ram(usearch_dense_view_ram_t* arguments) {
+     call_outcome_t outcome(*arguments);
+-    *arguments->index = nullptr;
+-    propagate_error(usearch_status_unsupported_k, outcome,
+-                    "RAM shards copy a checkpoint in and cannot serve a mapping in place yet");
++    view_dense_index({}, as_text(arguments->path), usearch_ram_options_t {}, arguments->index, outcome);
++}
++
++USEARCH_EXPORT void usearch_dense_view_ram_buffer(usearch_dense_view_ram_buffer_t* arguments) {
++    call_outcome_t outcome(*arguments);
++    view_dense_index(as_bytes(arguments->buffer), {}, arguments->ram, arguments->index, outcome);
+ }
+ 
+ USEARCH_EXPORT void usearch_dense_view_nvme(usearch_dense_view_nvme_t* arguments) {
+diff --git a/src/dense_punned.cuh b/src/dense_punned.cuh
+index d4a26532..3c86c3db 100644
+--- a/src/dense_punned.cuh
++++ b/src/dense_punned.cuh
+@@ -113,6 +113,10 @@ struct dense_verbs {
+     status_t (*view)(void* index, std::string_view path, std::span<std::string_view const> paths,
+                      usearch_ram_options_t const* ram, usearch_executor_t executor) noexcept;
+ 
++    /** Serves a checkpoint in place on fresh RAM shards: the one @p buffer holds when it holds any
++     *  bytes, else the file at @p path, mapped; @c unsupported_k off RAM. */
++    status_t (*view_in_place)(void* index, bytes_view_t buffer, std::string_view path) noexcept;
++
+     // Shape
+     nk_kernel_kind_t (*kernel)(void const* index) noexcept;
+     dense::geometry_t (*geometry)(void const* index) noexcept;
+diff --git a/src/dense_specializations.cuh b/src/dense_specializations.cuh
+index c4a43b73..a7bbd36e 100644
+--- a/src/dense_specializations.cuh
++++ b/src/dense_specializations.cuh
+@@ -347,6 +347,11 @@ struct specialized_index {
+         }
+         else return status_t::unsupported_k;
+     }
++    static status_t view_in_place(void* index, bytes_view_t buffer, std::string_view path) noexcept {
++        if constexpr (!viewed_k && is_ram_index<index_type_>)
++            return buffer.empty() ? of(index).view(path) : of(index).view(buffer);
++        else return status_t::unsupported_k;
++    }
+ 
+     static nk_kernel_kind_t kernel(void const* index) noexcept { return of(index).kernel(); }
+     static dense::geometry_t geometry(void const* index) noexcept {
+@@ -372,8 +377,11 @@ struct specialized_index {
+         else return of(index).storage_requirements(save_config_of());
+     }
+ 
+-    static status_t serves_writes(void const*) noexcept {
+-        return viewed_k ? status_t::read_only_k : status_t::success_k;
++    static status_t serves_writes(void const* index) noexcept {
++        if constexpr (viewed_k) return status_t::read_only_k;
++        else if constexpr (is_ram_index<index_type_>)
++            return of(index).viewed() ? status_t::read_only_k : status_t::success_k;
++        else return status_t::success_k;
+     }
+     static status_t reserve(void* index, std::size_t capacity) noexcept {
+         if constexpr (viewed_k) return status_t::read_only_k;
+@@ -769,6 +777,7 @@ struct specialized_index {
+             .bound_shards = &bound_shards,
+             .emplace = &emplace,
+             .view = &view,
++            .view_in_place = &view_in_place,
+             // Shape
+             .kernel = &kernel,
+             .geometry = &geometry,
+diff --git a/src_stub/dense.cpp b/src_stub/dense.cpp
+index 1f065628..86e1c1c6 100644
+--- a/src_stub/dense.cpp
++++ b/src_stub/dense.cpp
+@@ -497,6 +497,21 @@ void usearch_dense_view_ram(usearch_dense_view_ram_t* arguments) {
+     *arguments->index = index;
+ }
+ 
++void usearch_dense_view_ram_buffer(usearch_dense_view_ram_buffer_t* arguments) {
++    deferred_outcome_t outcome(arguments->outcome);
++    *arguments->index = nullptr;
++    if (!arguments->buffer.data || !arguments->buffer.length)
++        return propagate_error(usearch_status_invalid_argument_k, outcome, "The checkpoint must not be empty");
++    bytes_view_t const buffer = as_readable_bytes(arguments->buffer);
++    // Entries are copied out of the buffer, so only the view's refusals are mirrored, not its zero cost.
++    usearch_dense_index_handle_t* const index = open_parts<usearch_dense_index_handle_t>(
++        buffer, usearch_bytes_view_t {},
++        [&](bytes_view_t part) { return open_checkpoint<usearch_dense_index_handle_t>(part, outcome); }, outcome);
++    if (!index) return;
++    index->borrowed = true;
++    *arguments->index = index;
++}
++
+ void usearch_dense_view_nvme(usearch_dense_view_nvme_t* arguments) {
+     if (through_executor<usearch_dense_view_nvme>(arguments)) return;
+     deferred_outcome_t outcome(arguments->outcome);
+diff --git a/src_stub/lib.hpp b/src_stub/lib.hpp
+index 0209eb84..f85b5255 100644
+--- a/src_stub/lib.hpp
++++ b/src_stub/lib.hpp
+@@ -756,6 +756,10 @@ struct handle {
+     /** The checkpoint a @c view_ram verb serves from, whose presence refuses every mutating verb. */
+     mapped_file_t served;
+ 
++    /** Whether a @c view_ram_buffer verb opened the handle over a caller's buffer, which refuses
++     *  every mutating verb as a mapping does. */
++    bool borrowed = false;
++
+     /** The residency the handle answers as, so an NVMe view refuses a save as the engine's does. */
+     usearch_residency_t residency = usearch_residency_ram_k;
+ 
+@@ -836,7 +840,8 @@ bool reject_oversubscribed(handle_ const& index, usearch_keys_view_t keys, std::
+ /** Refuses a mutating verb on a handle that serves its checkpoint in place. */
+ template <typename handle_>
+ bool reject_read_only(handle_ const& index, usearch_outcome_t* outcome) {
+-    return reject_if(static_cast<bool>(index.served), usearch_status_read_only_k, "The handle is a read-only view",
++    return reject_if(static_cast<bool>(index.served) || index.borrowed, usearch_status_read_only_k,
++                     "The handle is a read-only view",
+                      outcome);
+ }
+ 
+diff --git a/test/dense.py b/test/dense.py
+index f950e8ac..09c3ddd5 100644
+--- a/test/dense.py
++++ b/test/dense.py
+@@ -13,6 +13,7 @@ Date: August 16, 2026
+ 
+ import asyncio
+ import gc
++import mmap
+ import os
+ import weakref
+ from collections.abc import Callable
+@@ -26,6 +27,7 @@ import pytest
+ from base import (
+     BATCH_SIZES,
+     BF16_EPSILON,
++    BITWISE_METRICS,
+     INPUT_DTYPES,
+     QUANTIZATIONS,
+     SETTINGS,
+@@ -61,6 +63,7 @@ from usearch import (
+     GPUClass,
+     InvalidArgumentError,
+     Key,
++    MalformedError,
+     Match,
+     Matches,
+     Monolith,
+@@ -1166,6 +1169,124 @@ def test_view_serves_in_place_and_refuses_mutation(executor, tmp_path):
+     assert raised.value.status is Status.READ_ONLY
+ 
+ 
++def page_aligned_copy(data: bytes, *, offset: int = 0) -> memoryview:
++    """*data* copied *offset* bytes past a page boundary - where a memory-mapped store, such as an
++    LMDB value padded to its page, hands a checkpoint over."""
++    page = mmap.PAGESIZE
++    backing = np.zeros(len(data) + offset + 2 * page, dtype=np.uint8)
++    start = (-backing.ctypes.data) % page + offset
++    backing[start : start + len(data)] = np.frombuffer(data, dtype=np.uint8)
++    return memoryview(backing)[start : start + len(data)]
++
++
++def searched_columns(index: DenseIndex, queries, **options) -> tuple[npt.NDArray, ...]:
++    """The keys, distances and counts one search answers, copied out of their arena. The search runs
++    on the calling thread, whose walks break ties in one order every time, unlike a pool's."""
++    found = index.search(queries, 10, Arena(), expansion_factor=64, **options)
++    return keys_to_integers(np.array(found.keys)), np.array(found.distances), np.array(found.counts)
++
++
++def assert_same_matches(got: tuple[npt.NDArray, ...], expected: tuple[npt.NDArray, ...]) -> None:
++    """The same keys, distances and counts, element for element."""
++    for got_column, expected_column in zip(got, expected, strict=True):
++        np.testing.assert_array_equal(got_column, expected_column)
++
++
++@pytest.mark.parametrize("quantization", QUANTIZATIONS)
++@pytest.mark.parametrize("metric", SPATIAL_METRICS)
++def test_view_ram_buffer_borrows_and_answers_as_its_load(executor, metric, quantization):
++    """A page-aligned monolith's rows are read in place, and the view answers exactly as its load."""
++    index, vectors = build_index(512, 64, executor, metric=metric, quantization=quantization)
++    monolith = bytes(memoryview(index.on(executor).save_buffer(Arena(executor))))
++    loaded = DenseIndex.load_ram_buffer(monolith)
++    viewed = DenseIndex.view_ram_buffer(page_aligned_copy(monolith))
++    assert len(viewed) == len(loaded) == 512
++    assert_same_matches(searched_columns(viewed, vectors[:32]), searched_columns(loaded, vectors[:32]))
++    # The vectors, norms and neighbors stay in the caller's buffer; the view owns its keys alone.
++    assert viewed.describe().memory_usage < loaded.describe().memory_usage
++
++
++@pytest.mark.parametrize("metric", BITWISE_METRICS)
++def test_view_ram_buffer_serves_packed_bits(executor, metric):
++    """Bit rows borrow like any other, and answer as their load."""
++    index = init_ram_or_skip(dimensions=256, metric=metric, quantization=Scalar.U1X8)
++    rows = random_vectors(256, 256, metric=metric)
++    index.on(executor).insert(np.arange(256), rows, dtype=Scalar.U1X8)
++    monolith = bytes(memoryview(index.on(executor).save_buffer(Arena(executor))))
++    viewed = DenseIndex.view_ram_buffer(page_aligned_copy(monolith))
++    loaded = DenseIndex.load_ram_buffer(monolith)
++    assert viewed.describe().memory_usage < loaded.describe().memory_usage
++    assert_same_matches(
++        searched_columns(viewed, rows[:16], dtype=Scalar.U1X8),
++        searched_columns(loaded, rows[:16], dtype=Scalar.U1X8),
++    )
++
++
++@pytest.mark.parametrize("offset", [0, 8, 48])
++@pytest.mark.parametrize("dimensions", [20, 64])
++def test_view_ram_buffer_copies_what_it_cannot_borrow(executor, offset, dimensions):
++    """Columns off a cache line, or rows the kernels pad, are copied, so the view still answers as
++    its load at any placement."""
++    index, vectors = build_index(300, dimensions, executor)
++    monolith = bytes(memoryview(index.on(executor).save_buffer(Arena(executor))))
++    loaded = DenseIndex.load_ram_buffer(monolith)
++    viewed = DenseIndex.view_ram_buffer(page_aligned_copy(monolith, offset=offset))
++    assert_same_matches(searched_columns(viewed, vectors[:16]), searched_columns(loaded, vectors[:16]))
++
++
++def test_view_ram_buffer_reads_keys_and_vectors(executor):
++    """Key lookups and exports read the borrowed rows through the copied key map."""
++    index, vectors = build_index(128, 64, executor)
++    monolith = bytes(memoryview(index.on(executor).save_buffer(Arena(executor))))
++    viewed = DenseIndex.view_ram_buffer(page_aligned_copy(monolith))
++    assert 7 in viewed and 128 not in viewed
++    assert viewed.count(7) == 1
++    exported = np.array(viewed.get(7, Arena(), outputs_dtype=Scalar.F32))
++    np.testing.assert_allclose(exported[0], vectors[7], atol=BF16_EPSILON * 4)
++
++
++def test_view_ram_buffer_refuses_every_mutation(executor):
++    """A view and its donors stay untouched: each mutating verb raises `ReadOnlyError`."""
++    index, vectors = build_index(64, 16, executor)
++    monolith = bytes(memoryview(index.on(executor).save_buffer(Arena(executor))))
++    viewed = DenseIndex.view_ram_buffer(page_aligned_copy(monolith))
++    other, _ = build_index(8, 16, executor, seed=1)
++    for mutate in (
++        lambda: viewed.on(executor).insert([999], vectors[:1]),
++        lambda: viewed.reserve(1024),
++        lambda: viewed.clear(),
++        lambda: viewed.on(executor).refine(),
++        lambda: viewed.on(executor).absorb(other),
++        lambda: other.on(executor).absorb(viewed),
++    ):
++        with pytest.raises(ReadOnlyError) as raised:
++            mutate()
++        assert raised.value.status is Status.READ_ONLY
++    assert len(viewed) == 64 and len(other) == 8
++    assert viewed.on(executor).search(vectors[:1], 1, Arena(executor))[0][0].key == 0
++
++
++def test_view_ram_buffer_pins_its_buffer(executor):
++    """The view holds an export of its buffer, so a `bytearray` cannot resize under it."""
++    index, vectors = build_index(64, 64, executor)
++    backing = bytearray(memoryview(index.on(executor).save_buffer(Arena(executor))))
++    viewed = DenseIndex.view_ram_buffer(backing)
++    with pytest.raises(BufferError):
++        backing.extend(b"\0")
++    assert viewed.search(vectors[:1], 1, Arena())[0][0].key == 0
++    del viewed
++    gc.collect()
++    backing.extend(b"\0")
++
++
++def test_view_ram_buffer_refuses_what_is_no_checkpoint():
++    """An empty buffer, or one with no checkpoint in it, creates no index."""
++    with pytest.raises(InvalidArgumentError):
++        DenseIndex.view_ram_buffer(b"")
++    with pytest.raises(MalformedError):
++        DenseIndex.view_ram_buffer(bytes(4096))
++
++
+ def test_encoded_path_is_read_as_a_path(executor, tmp_path):
+     """`os.fsencode` returns `bytes`, which still names a file."""
+     index, _ = build_index(8, 8, executor)
