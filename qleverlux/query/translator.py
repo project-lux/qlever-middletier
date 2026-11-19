@@ -179,8 +179,17 @@ class SparqlTranslator:
           around 5-30, an anywhere search around 500), so no fixed constant
           could do this. Dividing by one number cannot reorder anything, so a
           text-only ranking is exactly what it was before.
-        * vector: the cosine from the SERVICE, already 0..1. MAX rather than
-          SUM, so a record that joins several rows is not counted twice.
+        * vector: the cosine from the SERVICE (MAX rather than SUM, so a
+          record that joins several rows is not counted twice), min-max
+          scaled over this query's vector matches so the best is 1 and the
+          weakest 0. Raw cosines sit in a narrow, model-dependent band (about
+          0.7-0.9 for EmbeddingGemma 2, 0.5-0.75 for Harrier), so adding them
+          raw would let the model decide how much vector matches weigh against
+          text. Text-only matches have no cosine (0) and are kept out of the
+          minimum; a lone vector match counts as 1. Like the text max, this is
+          only needed when both kinds are present: on its own, scaling cannot
+          reorder anything, so a vector-only query keeps the raw cosine and its
+          single SERVICE call.
 
         The max needs the grouped scores of the whole result set, so the
         grouped SELECT appears twice: once to rank and once under MAX. It is
@@ -222,13 +231,19 @@ class SparqlTranslator:
         if self.scored:
             best = SelectQuery()
             best.add_variables(["(MAX(?ts) AS ?tmax)"])
+            if self.vector_scored:
+                # cosines are <= 1, so 2 keeps text-only matches (?vs = 0) out of the minimum
+                best.add_variables(["(MAX(?vs) AS ?vmax)", "(MIN(IF(?vs > 0, ?vs, 2)) AS ?vmin)"])
             best_where = Pattern()
             best_where.add_nested_select_query(grouped)
             best.set_where_pattern(best_where)
             outer_where.add_nested_select_query(best)
             # a zero or missing max divides to an error; COALESCE makes it 0
             terms.append(self._scaled("COALESCE(?ts / ?tmax, 0)", self.text_scale))
-        if self.vector_scored:
+            if self.vector_scored:
+                normalised = "COALESCE(IF(?vs > 0, IF(?vmax > ?vmin, (?vs - ?vmin) / (?vmax - ?vmin), 1), 0), 0)"
+                terms.append(self._scaled(normalised, self.vector_scale))
+        elif self.vector_scored:
             terms.append(self._scaled("COALESCE(?vs, 0)", self.vector_scale))
         outer_where.add_binding(Binding(" + ".join(terms), "?sscore"))
 
