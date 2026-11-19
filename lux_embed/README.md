@@ -6,6 +6,7 @@ This package builds per-class vector indexes (item, work, set, agent, place, con
 | --- | --- | --- |
 | Pass 1 | `labels` | One parallel scan writes UUID → (class, primary name). References in LUX records carry no usable labels, and `_label` is informative only. Names come from `identified_by`: English primary, then untagged primary, then any primary, then other names. The class column also serves as the index for enumerating one class. |
 | Stage 1 | (inside `embed` / `cards`, with `--qlever`) | Incoming facets from QLever, in batched `VALUES` queries:<br>• **works:** the creators, materials, types, places and dates of the objects carrying them<br>• **agents:** places, types, mediums, subjects and active span of what they made, ranked by tf-idf<br>• **sets:** top member creators, types and subjects<br>Values on more than half of all objects are dropped. Global frequencies are cached in `facet_df.json` next to the label store. Facet patterns whose predicates the endpoint lacks are skipped. |
+| Stage 1 offline | `facets` | The same facets, extracted once beside QLever into a portable LMDB (`--out facets.lmdb`). `cards` / `embed` then take `--facets facets.lmdb` instead of `--qlever`, so the embedding machine needs no endpoint. See below. |
 | Stage 2 | `cards` (preview) | One card per record, using the per-class field table in `cards.py`. Hierarchies (concept `broader`, place `part_of`) are walked in the records themselves. Statements are English or untagged, HTML-stripped, boilerplate kinds removed, and capped at 300 words. |
 | Stage 3 | `embed` | EmbeddingGemma 2 (text-only, 271M parameters). Runs in bf16 on CUDA/MPS, else f32, never f16. Documents use `title: … \| text: …`. Vectors use Matryoshka `truncate_dim` and are re-normalized in f32. The run resumes after the last committed 4096-row chunk. |
 | Graph | `index` (run by `embed` unless `--no-index`) | A bf16 HNSW graph over the stored vectors, published as the scope's next generation. Readers pick it up with `refresh()`. |
@@ -62,14 +63,44 @@ That's about 12 hours for all 14.3M MDS records. The full ~75M LUX instance is a
 
    Then make the model available locally, either with `huggingface-cli download google/embeddinggemma-2` or by copying the HF cache.
 4. **Inputs:**
-   - Build the label store on that machine (`labels`), or copy it over together with `facet_df.json`.
-   - Give `--qlever` the endpoint that serves the same dataset.
+   - Build the label store on that machine (`labels`), or copy it over.
+   - Facets: either give `--qlever` an endpoint serving the same dataset, or extract them beside QLever
+     and copy the result over (next section).
 5. **Batch sizes:** a 48–96 GB card takes much larger batches than MPS. Start with `--encode-batch 256 --batch 8192`, and run one `embed` process per class.
    - bf16 is picked automatically.
    - Keep `--max-seq-length 512` unless cards are being truncated.
 6. **Commands:** they're unchanged. Run `embed` per class in this order:
    1. `concept`, `place`, `event`, `set` first — small, and they validate the setup;
    2. then `agent`, `work`, `item`.
+
+## Extracting facets where QLever runs
+
+When the embedding machine can't reach QLever, extract Stage 1 on the QLever host. It needs only
+this repo's `lux_embed/` and Python 3.10+ with `lmdb`: no torch, and no record LMDB.
+
+```bash
+python -m lux_embed facets --qlever http://localhost:7011 --out facets.lmdb             # work, agent, set
+python -m lux_embed facets --qlever http://localhost:7011 --out facets.lmdb --scope set  # or one scope
+```
+
+- **What it does:** lists every target with an incoming join once (`targets-<scope>.txt`), then runs the
+  `embed` batches over it with `--workers` concurrent queries (default 4).
+- **What it stores:** the ranked, capped result per target, with values as UUIDs.
+- **Resuming:** rerunning resumes after the last committed batch. A completed scope is skipped unless
+  you pass `--restart`.
+- **Document frequencies:** `facet_df.json` is cached inside the output directory. It's needed only here,
+  because ranking happens at extraction time.
+
+Copy the whole directory, then:
+
+```bash
+$PY -m lux_embed embed --records $R --labels $DATA/labels.lmdb --store $DATA/vectors.lmdb \
+    --scope agent --facets facets.lmdb
+```
+
+The cards come out identical to `--qlever`. `--facets` on a scope that hasn't been extracted stops with an error.
+A partly extracted scope warns and builds the remaining cards without facets. Scopes other than
+work/agent/set ignore it.
 
 ## Known data notes (MDS)
 
