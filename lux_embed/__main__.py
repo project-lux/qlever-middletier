@@ -133,10 +133,14 @@ def cmd_embed(args):
     from .encoder import Encoder
 
     records, labels, builder, facets = _open(args, need_facets=True)
-    dims = args.dims or DEFAULT_DIMS[args.scope]
-    encoder = Encoder(device=args.device, max_seq_length=args.max_seq_length)
+    encoder = Encoder(device=args.device, max_seq_length=args.max_seq_length, model=args.model)
+    dims = args.dims or (DEFAULT_DIMS[args.scope] if encoder.profile["matryoshka"] else encoder.native_dims)
+    encoder.check_dims(dims)
     writer = VectorWriter(args.store, args.scope, dims, chunk_rows=args.chunk_rows, vector_dtype=args.vector_dtype,
                           model=encoder.name, restart=args.restart)
+    if writer.meta.get("model") not in (None, encoder.name):
+        raise SystemExit(f"{args.store} {args.scope} was started with {writer.meta['model']}; "
+                         f"use another --store, or --restart to rebuild it with {encoder.name}")
     if writer.complete:
         trial = f", a --limit {writer.meta['limit']:,} trial" if writer.meta.get("limit") else ""
         print(f"{args.scope}: already complete ({writer.count:,} vectors{trial}); --restart to rebuild")
@@ -197,11 +201,11 @@ def cmd_index(args):
 def cmd_query(args):
     from qleverlux.vectors.lmdb_vector_store import LmdbVectorStore
 
-    from .encoder import Encoder
+    from .encoder import MODEL, Encoder
     from .labels import LabelStore
 
     store, labels = LmdbVectorStore(args.store, args.scope), LabelStore(args.labels)
-    encoder = Encoder(device=args.device)
+    encoder = Encoder(device=args.device, model=store.meta.get("model") or MODEL)  # the model that built it
     vector = encoder.encode_query(args.text, store.meta["dimensions"])
     for iri, score in store.search_global(vector, args.top):
         print(f"{score:.3f}  {labels.label(iri) or '?'}  <{iri}>")
@@ -247,7 +251,10 @@ def main(argv=None):
     p.add_argument("--limit", type=int, default=5)
     p.add_argument("--after", default=None, help="start after this UUID")
     p = add("embed", cmd_embed, "records", "labels", "store", "scope", "cards", "device")
-    p.add_argument("--dims", type=int, default=0, help="Matryoshka dimension (default per scope)")
+    p.add_argument("--model", default="google/embeddinggemma-2",
+                   help="sentence encoder; one with a profile in encoder.py (e.g. microsoft/harrier-oss-v1-0.6b)")
+    p.add_argument("--dims", type=int, default=0, help="Matryoshka dimension (default per scope; full width "
+                   "for models without Matryoshka training)")
     p.add_argument("--limit", type=int, default=0, help="embed at most this many records (for trials)")
     p.add_argument("--batch", type=int, default=2048, help="records per card/facet batch")
     p.add_argument("--encode-batch", type=int, default=64)
