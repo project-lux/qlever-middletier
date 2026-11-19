@@ -31,6 +31,8 @@ from qleverlux.sparql.terms import (
     Variable,
     in_brackets,
     indent,
+    iri,
+    string_literal,
 )
 
 __all__ = [
@@ -56,4 +58,6 @@ __all__ = [
     "Variable",
     "in_brackets",
     "indent",
+    "iri",
+    "string_literal",
 ]

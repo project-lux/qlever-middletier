@@ -17,10 +17,20 @@ from qleverlux.sparql import (
     SelectQuery,
     Triple,
     Values,
+    iri,
+    string_literal,
 )
 from qleverlux.sparql import (
     GraphPattern as Pattern,
 )
+
+#: The search term answered by vector similarity rather than text search.
+SIMILAR_FIELD = "similar"
+
+#: Sort keys computed from the query itself rather than looked up in
+#: sorts.json: "relevance" (text and vector combined) and "similarity"
+#: (cosine alone, text only breaking ties).
+RANKED_SORTS = ("relevance", "similarity")
 
 
 class SparqlTranslator:
@@ -30,6 +40,7 @@ class SparqlTranslator:
         self.config = config
         self.counter = 0
         self.scored = []
+        self.vector_scored = []
         self.portal = None
         self.prefixes = {
             #            "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
@@ -40,6 +51,7 @@ class SparqlTranslator:
             "la": "https://linked.art/ns/terms/",
             "lux": "https://lux.collections.yale.edu/ns/",
             "view": "https://qlever.cs.uni-freiburg.de/materializedView/",
+            "vec": "http://lux.collections.yale.edu/ns/vec#",
         }
 
         self.text = TextSearchBuilder(stopwords=stopwords)
@@ -52,6 +64,27 @@ class SparqlTranslator:
         # query builder both read them off a translator instance.
         self.scope_leaf_fields = SCOPE_LEAF_FIELDS
         self.scope_fields = SCOPE_FIELDS
+
+        self.text_scale = 1.0
+        self.vector_scale = 1.0
+        self.vector_service = ""
+        self.vector_top_k = 100
+        self.vector_constrain_in_and = True
+
+    def configure_scoring(self, text_scale=1.0, vector_scale=1.0):
+        """Weights of the two relevance sources, each already 0..1. See _relevance_query."""
+        self.text_scale = text_scale
+        self.vector_scale = vector_scale
+
+    def configure_vectors(self, service="", top_k=100, constrain_in_and=True):
+        """Where the vector SERVICE is; an empty ``service`` disables ``similar``.
+
+        ``service`` is a bare URL. It is bracketed here, and the builder passes
+        a bracketed name through untouched because it contains a ``:``.
+        """
+        self.vector_service = iri(service) if service else ""
+        self.vector_top_k = int(top_k)
+        self.vector_constrain_in_and = constrain_in_and
 
     @property
     def stopwords(self):
@@ -73,6 +106,7 @@ class SparqlTranslator:
         # Implement translation logic here
         self.counter = 0
         self.scored = []
+        self.vector_scored = []
         self.calculate_scores = False
         self.calculate_scores = (
             True  # always calculate scores for now until cache key is fixed
@@ -84,7 +118,7 @@ class SparqlTranslator:
 
         for pfx, uri in self.prefixes.items():
             sparql.add_prefix(Prefix(pfx, uri))
-        if sort and sort != "relevance":
+        if sort and sort not in RANKED_SORTS:
             sparql.add_variables(["?uri", "?type", "(MIN(?sortWithDefault) AS ?sort)"])
         else:
             sparql.add_variables(["?uri", "?type", "(SUM(?score) AS ?sscore)"])
@@ -104,14 +138,10 @@ class SparqlTranslator:
         gby = GroupBy(["?uri", "?type"])
         sparql.add_group_by(gby)
 
-        if sort == "relevance":
-            bs = []
-            for x in self.scored:
-                bs.append(f"COALESCE(?score_{x}, 0)")
-            if bs:
-                where.add_binding(Binding(" + ".join(bs), "?score"))
-                ob = OrderBy(["?sscore"], True)
-                sparql.add_order_by(ob)
+        if sort in RANKED_SORTS:
+            ranked = self._relevance_query(where, limit, offset, by=sort, order=order)
+            if ranked is not None:
+                return ranked
         elif sort:
             spatt = Pattern(optional=True)
             spatt.add_triples([Triple("?uri", sort, "?sortValue")])
@@ -126,6 +156,89 @@ class SparqlTranslator:
 
         sparql.set_where_pattern(where)
         return sparql
+
+    @staticmethod
+    def _scaled(expr, scale):
+        return expr if scale == 1 else f"{expr} * {scale!r}"
+
+    def _relevance_query(self, where, limit, offset, by="relevance", order="DESC"):
+        """The query ranked by relevance or similarity, or None when no clause is scored.
+
+        ``by="similarity"`` ranks on the cosine alone, honouring ``order``;
+        text clauses still filter, and their raw score breaks ties - which
+        matters for ``similar OR text``, where text-only matches have no cosine.
+        It needs no per-query max, so it calls the vector SERVICE once. With no
+        ``similar`` clause in the query it falls back to relevance. Relevance
+        is always descending, as it always has been.
+
+        Two sources, each brought to 0..1 per result before they are added:
+
+        * text: the result's summed ``?score_N`` divided by the largest such
+          sum in this query, so the best text hit is 1. Raw view scores vary
+          by two orders of magnitude between queries (a name search tops out
+          around 5-30, an anywhere search around 500), so no fixed constant
+          could do this. Dividing by one number cannot reorder anything, so a
+          text-only ranking is exactly what it was before.
+        * vector: the cosine from the SERVICE, already 0..1. MAX rather than
+          SUM, so a record that joins several rows is not counted twice.
+
+        The max needs the grouped scores of the whole result set, so the
+        grouped SELECT appears twice: once to rank and once under MAX. It is
+        the same object, so the text is identical and QLever evaluates it once.
+        """
+        if not (self.scored or self.vector_scored):
+            return None
+        similarity = by == "similarity" and bool(self.vector_scored)
+        aggregates = []
+        if self.scored:
+            total = " + ".join(f"COALESCE(?score_{x}, 0)" for x in self.scored)
+            where.add_binding(Binding(total, "?tscore"))
+            aggregates.append("(SUM(?tscore) AS ?ts)")
+        if self.vector_scored:
+            total = " + ".join(f"COALESCE(?score_{x}, 0)" for x in self.vector_scored)
+            where.add_binding(Binding(total, "?vscore"))
+            aggregates.append("(MAX(?vscore) AS ?vs)")
+
+        grouped = SelectQuery()
+        grouped.add_variables(["?uri", "?type", *aggregates])
+        grouped.set_where_pattern(where)
+        grouped.add_group_by(GroupBy(["?uri", "?type"]))
+
+        outer_where = Pattern()
+        outer_where.add_nested_select_query(grouped)
+        if similarity:
+            outer_where.add_binding(Binding("COALESCE(?vs, 0)", "?sscore"))
+            ranked = SelectQuery(limit=limit or 0, offset=offset)
+            for pfx, uri in self.prefixes.items():
+                ranked.add_prefix(Prefix(pfx, uri))
+            ranked.add_variables(["?uri", "?type", "?sscore"])
+            ranked.set_where_pattern(outer_where)
+            ranked.add_order_by(OrderBy(["?sscore"], str(order).upper() != "ASC"))
+            if self.scored:
+                ranked.add_order_by(OrderBy(["?ts"], True))
+            return ranked
+
+        terms = []
+        if self.scored:
+            best = SelectQuery()
+            best.add_variables(["(MAX(?ts) AS ?tmax)"])
+            best_where = Pattern()
+            best_where.add_nested_select_query(grouped)
+            best.set_where_pattern(best_where)
+            outer_where.add_nested_select_query(best)
+            # a zero or missing max divides to an error; COALESCE makes it 0
+            terms.append(self._scaled("COALESCE(?ts / ?tmax, 0)", self.text_scale))
+        if self.vector_scored:
+            terms.append(self._scaled("COALESCE(?vs, 0)", self.vector_scale))
+        outer_where.add_binding(Binding(" + ".join(terms), "?sscore"))
+
+        ranked = SelectQuery(limit=limit or 0, offset=offset)
+        for pfx, uri in self.prefixes.items():
+            ranked.add_prefix(Prefix(pfx, uri))
+        ranked.add_variables(["?uri", "?type", "?sscore"])
+        ranked.set_where_pattern(outer_where)
+        ranked.add_order_by(OrderBy(["?sscore"], True))
+        return ranked
 
     def add_scope_type(self, pattern, scope, with_type=True):
         """Restrict ``?uri`` to ``scope`` and bind its Linked Art class to ``?type``.
@@ -183,6 +296,7 @@ class SparqlTranslator:
         """
         self.counter = 0
         self.scored = []
+        self.vector_scored = []
         self.calculate_scores = True
 
         if limit is None:
@@ -191,7 +305,7 @@ class SparqlTranslator:
             sparql = SelectQuery(limit=limit, offset=offset)
         for pfx, uri in self.prefixes.items():
             sparql.add_prefix(Prefix(pfx, uri))
-        if sort and sort != "relevance":
+        if sort and sort not in RANKED_SORTS:
             sparql.add_variables(["?uri", "?type", "(MIN(?sortWithDefault) AS ?sort)"])
         else:
             sparql.add_variables(["?uri", "?type", "(SUM(?score) AS ?sscore)"])
@@ -199,11 +313,10 @@ class SparqlTranslator:
         where = self._multi_where(branches)
         sparql.add_group_by(GroupBy(["?uri", "?type"]))
 
-        if sort == "relevance" or not sort:
-            bs = [f"COALESCE(?score_{x}, 0)" for x in self.scored]
-            if bs:
-                where.add_binding(Binding(" + ".join(bs), "?score"))
-                sparql.add_order_by(OrderBy(["?sscore"], True))
+        if not sort or sort in RANKED_SORTS:
+            ranked = self._relevance_query(where, limit, offset, by=sort or "relevance", order=order)
+            if ranked is not None:
+                return ranked
         else:
             # ``sort`` may be one predicate every branch shares, or one per
             # branch when the same sort key is spelled differently per scope
@@ -235,6 +348,7 @@ class SparqlTranslator:
         """``COUNT(*)`` over a multi-scope search, for HAL estimates."""
         self.counter = 0
         self.scored = []
+        self.vector_scored = []
         self.calculate_scores = True
 
         inner = SelectQuery()
@@ -286,6 +400,7 @@ class SparqlTranslator:
     def translate_search_related(self, query, scope=None):
         self.counter = 0
         self.scored = []
+        self.vector_scored = []
         self.calculate_scores = True
         sparql = SelectQuery(limit=100)
         for pfx, uri in self.prefixes.items():
@@ -471,6 +586,48 @@ class SparqlTranslator:
                 t = Triple(query.children[0].var, "lux:source", f"lux:{self.portal}")
                 parent.add_triples([t])
 
+    def translate_similar(self, query, parent, scope):
+        """A ``similar`` leaf: one SERVICE call to the vector sidecar.
+
+        The value is a record URI (whose stored vector is the seed) or free
+        text (encoded by the sidecar). The cosine becomes this clause's
+        ``?score_N``, which _relevance_query adds to the ranking.
+        """
+        if not self.vector_service:
+            raise ValueError("Similarity search is not configured")
+        value = query.value.strip()
+        if not value:
+            raise ValueError("Empty similarity query")
+        if value.startswith(("http://", "https://")):
+            seed = iri(value)
+        else:
+            seed = string_literal(value)
+
+        n = self.counter
+        triples = [
+            Triple(query.var, "vec:similarTo", seed),
+            Triple(query.var, "vec:score", f"?score_{n}"),
+            Triple(query.var, "vec:topK", str(self.vector_top_k)),
+            Triple(query.var, "vec:index", string_literal(scope)),
+        ]
+        if self.vector_constrain_in_and and self._has_and_siblings(query):
+            triples.append(Triple(query.var, "vec:mode", '"constrained"'))
+
+        svc = Pattern(service=self.vector_service)
+        svc.add_triples(triples)
+        parent.add_nested_graph_pattern(svc)
+        self.vector_scored.append(n)
+
+    @staticmethod
+    def _has_and_siblings(query):
+        """True when ``query`` is one of several children of an AND."""
+        parent = getattr(query, "parent", None)
+        return (
+            isinstance(parent, LuxBoolean)
+            and parent.field == "AND"
+            and len(parent.children) > 1
+        )
+
     def get_leaf_predicate(self, field, scope):
         """Leaf term -> predicate, or a [start, end] pair for dates."""
         return predicates.get_leaf_predicate(field, scope)
@@ -508,6 +665,8 @@ class SparqlTranslator:
                     parent.add_triples(
                         [Triple(query.var, pred, f'"{query.value.lower()}"')]
                     )
+            elif query.field == SIMILAR_FIELD:
+                self.translate_similar(query, parent, scope)
             elif query.field == "recordType":
                 parent.add_triples([Triple(query.var, "a", f"la:{query.value}")])
             elif query.field == self.name_field and query.complete:

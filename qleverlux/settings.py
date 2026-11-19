@@ -137,6 +137,25 @@ class Settings(BaseSettings):
     portal: str = ""
     use_stopwords: Bool = Field(default=True, alias="QLMT_USESTOPWORDS")
 
+    # -- relevance
+    #: Weights of the two relevance sources, each 0..1 per result before
+    #: weighting: text is the result's summed view score divided by the best
+    #: in that query, vector the cosine similarity.
+    text_score_scale: float = 1.0
+    vector_score_scale: float = 1.0
+
+    # -- vector similarity
+    #: The `similar` search term is answered by the vectors/sparql_service
+    #: sidecar through SERVICE. The URL is the one QLever
+    #: calls, so loopback means QLever's host. Empty disables the term.
+    vector_service: str = ""
+    #: Results per `similar` clause, so also the most a similar search returns.
+    vector_top_k: int = 100
+    #: Ask for `vec:mode "constrained"` when a similar clause is ANDed with
+    #: others, so a constraint too large for QLever to push down is an error
+    #: rather than a near-empty result. A lone clause always uses "auto".
+    vector_constrain_in_and: Bool = True
+
     # -- HAL link cache
     use_pg_hal_cache: Bool = Field(
         default=False, alias="QLMT_USE_POSTGRES_HAL_CACHE"

@@ -28,7 +28,9 @@ async def get_search(
         - q (url encoded dict): The search query.
         - page (int): The page number for pagination of results
         - pageLength (int): The number of results per page
-        - sort (str): How to sort the results, default by relevance to the query
+        - sort (str): How to sort the results, default by relevance to the query.
+          ``similarity:desc`` (or ``:asc``) orders by the cosine of a ``similar``
+          clause alone; without one it is relevance.
 
     Returns:
         - dict: The search results in the ActivityStreams CollectionPage format

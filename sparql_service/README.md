@@ -1,0 +1,75 @@
+# sparql_service — the LUX vector SERVICE for QLever
+
+This is a loopback sidecar that QLever calls through `SERVICE <http://127.0.0.1:8081/sparql> { … }`. It answers with `application/sparql-results+json` from the LMDB vector store built by `lux_embed`.
+
+```bash
+cd ~/Development/lux/qlever-middletier      # this repo's root; a separate process from the middle tier
+HF_HUB_OFFLINE=1 ../vectors/.venv/bin/python -m sparql_service --store ../vectors/data/mds/vectors.lmdb --port 8081
+curl -s http://127.0.0.1:8081/health      # scopes, sizes, generations, in-place serving
+```
+
+## Query contract
+
+```sparql
+PREFIX lux: <https://lux.collections.yale.edu/ns/>
+PREFIX vec: <http://lux.collections.yale.edu/ns/vec#>
+
+SELECT ?set ?name ?score WHERE {
+  ?set a lux:Set ; lux:setPrimaryName ?name .                 # graph constraint, evaluated by QLever
+  SERVICE <http://127.0.0.1:8081/sparql> {
+    ?set vec:similarTo "Roman coins" ;                         # text, or a LUX IRI: <https://…/data/…>
+         vec:score ?score ;                                    # cosine similarity (xsd:double)
+         vec:topK 5 .
+  }
+} ORDER BY DESC(?score)
+```
+
+| Predicate | Object | Meaning |
+| --- | --- | --- |
+| `vec:similarTo` | IRI(s) and/or literal(s) | **Required.** An IRI uses that record's stored vector. A literal is encoded as an EmbeddingGemma 2 `SearchQuery`; the encoder loads on first use. For several seeds, give a list (`vec:similarTo <a>, <b>, <c>`) or repeat the triple; at most 100. |
+| `vec:combine` | `"max"`, `"each"`, `"mean"` | How several seeds combine (see below). Default `"max"`. |
+| `vec:includeSeeds` | `true` / `false` | Default `false`: seed IRIs are left out of the results, and their slots are refilled so `topK` rows still come back. |
+| `vec:score` | variable | Cosine similarity. |
+| `vec:rank` | variable | 1-based rank. |
+| `vec:topK` | number | Results to return. Default 20, maximum 10,000. |
+| `vec:index` | `"concept"`, `"work,item"`, … | Restricts or chooses scopes. Optional: by default the scope is inferred from the IRIs' path segments (`object`/`digital` → item, `visual`/`text` → work, `person`/`group` → agent, `activity` → event, …). |
+| `vec:mode` | `"auto"`, `"constrained"`, `"global"` | `"constrained"` refuses to run without pushed-down candidates; see below. |
+
+## Several seeds: "similar to any of these records"
+
+```sparql
+SERVICE <http://127.0.0.1:8081/sparql> {
+  ?uri vec:similarTo <…/activity/A>, <…/activity/B>, <…/activity/C> ;
+       vec:score ?score ; vec:rank ?rank ; vec:topK 20 ; vec:combine "each" .
+}
+```
+
+One SERVICE call does it; there's no need for a UNION of single-seed calls.
+
+| `vec:combine` | Ranking | Order by | Use it for |
+| --- | --- | --- | --- |
+| `"max"` (default) | One ranking: each record scored by its best-matching seed. | `DESC(?score)` | "more like these" when the seeds are alike. The seed with the tightest neighbourhood can take every slot; with a war and two football tournaments as seeds, the top 6 were all tournaments. |
+| `"each"` | Each seed's own top hits, interleaved round-robin. | `?rank` (scores come from different seeds) | "similar to any of these" with every seed represented. |
+| `"mean"` | One search against the seeds' normalized centroid. | `DESC(?score)` | "similar to the group as a whole". |
+
+The SERVICE body may contain only these `vec:` triples about one subject variable. Anything else gets an HTTP 400 that says why, and QLever shows that message.
+
+## Modes
+
+- **Graph-first.** QLever pushes the join candidates as `VALUES` (measured on QLever 0.6.0: a POST with an `application/sparql-query` body, `VALUES (?x) { (<iri>) … }` appended at the end).
+  - Candidates are grouped by scope and scored **exactly**.
+  - Measured through QLever: 2,355 pushed sets took about 0.1 s; 50,687 pushed concepts (a `broader+` closure plus a text query) took about 1 s.
+- **Vector-first.** There's no `VALUES` (no constraint, or a join side QLever can't push).
+  - HNSW top-K per scope, then an exact rerank, merged by score.
+- **`vec:mode "constrained"`.** QLever pushes nothing when the sibling result exceeds `service-max-value-rows` (default 10,000; set at start with `qlever start service-max-value-rows=100000`), and it gives no warning.
+  - A global top-K joined against a large constraint then returns almost nothing.
+  - With this mode the service returns an error that names the cause. Use it on every graph-constrained query.
+
+## Behaviour notes
+
+- **`head.vars`** always equals the SERVICE's `SELECT` variables, which QLever requires.
+- **Cross-scope queries.** A wider query vector (e.g. a 768d concept) is sliced Matryoshka-style to a narrower index (512d item) and re-normalized. A narrower one can't query a wider index; use a text query.
+- **Deadline.** The default is 30 s (`--timeout`); past it the service returns 503. QLever has no SERVICE timeout of its own.
+- **New graphs.** New graph generations written by `lux_embed index` are picked up within 10 s. A scope whose graph isn't built yet shows as unavailable in `/health`.
+- **Concurrency.** One process. Searches run on FastAPI's worker threads without a USearch executor pool, because an idle pool busy-spins its workers. Index pages are served in place from the LMDB mmap (`view_ram_buffer`).
+- **Names in joins.** LUX has one primary name per language, so join a single English/sort name, or aggregate with `SAMPLE`, to avoid one row per language.

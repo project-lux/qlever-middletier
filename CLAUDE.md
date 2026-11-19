@@ -25,12 +25,22 @@ python tester.py [scope]                # REPL: type a query string or JSON, pri
 python -m pytest tests/ -q              # SPARQL builder conformance tests (W3C + SPARQL 1.1 suites)
 ```
 
+Vector similarity has two more commands, run from this root with their own venv (`requirements-vectors.txt`;
+the middle tier never imports them, enforced by `tests/test_import_boundaries.py`):
+
+```bash
+PY=../vectors/.venv/bin/python
+$PY -m lux_embed {labels,kinds,cards,embed,index,query} ...   # build the vector store offline; lux_embed/README.md
+HF_HUB_OFFLINE=1 $PY -m sparql_service --store ../vectors/data/mds/vectors.lmdb --port 8081   # the SERVICE sidecar
+$PY -m pytest tests/test_lux_embed.py tests/test_sparql_service.py tests/test_lmdb_vector_store.py -q
+```
+
 All three servers are three-line shims over `qleverlux/server.py` (`serve_dev` / `serve_https` /
 `run_workers`), which is also runnable as `python -m qleverlux.server [--dev|--workers]`. Connection pools are
 opened by the app's lifespan handler, so nothing has to remember to do it.
 
-The only tests are for `qleverlux/sparql/` (the query object model); the middle tier itself has none, so treat
-the compiled output as the contract when changing it — see "Verifying a change" below. `tester.py` is the fastest
+The tests cover `qleverlux/sparql/` (the query object model), the escaping helpers, the import boundary and the
+vector code; the request path and translator have none, so treat the compiled output as the contract when changing it — see "Verifying a change" below. `tester.py` is the fastest
 feedback loop for query-translation changes: it exercises the parser → JsonReader → SparqlTranslator chain
 without needing QLever running.
 
@@ -61,6 +71,9 @@ qleverlux/
   query/             predicates (vocabulary as data), text, translator, related, catalogue
   sparql/            builder + terms: the SPARQL object model
   presentation/      uris (the only place that knows mt_uri ↔ data_uri), envelopes
+  vectors/           lmdb_vector_store: the store lux_embed writes and sparql_service reads (not imported here)
+lux_embed/           offline vector build: record LMDB + QLever facets -> cards -> embeddings -> HNSW graph
+sparql_service/      the vector SERVICE QLever calls for `similar`; its README is the query contract
 ```
 
 Dependencies point one way: `api` → `services` → (`query`, `clients`, `presentation`) → `sparql`. Nothing under
@@ -185,13 +198,67 @@ inside a `GRAPH ?tf` pattern against `lux:<scope>Name`. Quoted phrases become `C
 the three text sources.
 
 The relevance chain has four links, and all four have to line up: each word binds `?tf_<clause>_<word>`; the
-clause sums those into `?score_<clause>`; `translate_leaf` records the clause number in `translator.scored`;
-and `translate_search` (only when `sort == "relevance"`) binds
-`?score = Σ COALESCE(?score_<clause>, 0)` and orders by `SUM(?score) AS ?sscore`. The per-word variables must
+clause sums those into `?score_<clause>`; `translate_leaf` records the clause number in `translator.scored`
+(a `similar` clause goes in `translator.vector_scored` instead); and `_relevance_query` (only when sorting by
+relevance) binds `?tscore = Σ COALESCE(?score_<clause>, 0)` and ranks on it, as below. The per-word variables must
 stay qualified by the clause counter — two text clauses in one query would otherwise both bind `?tf_0` and
 join on it — and a clause that produces a score but never reaches `scored` is silently dropped from the
 ranking. Stopwords (`config/stopwords.json`) are stripped; an all-stopword query raises `ValueError`,
 surfaced as a 400.
+
+Text and vector relevance are each brought to 0..1 per result before they are added, so neither swamps the
+other. `?sscore = text_scale × SUM(?tscore) / MAX over the query + vector_scale × MAX(cosine)`. The scales are
+`QLMT_TEXT_SCORE_SCALE` and `QLMT_VECTOR_SCORE_SCALE`, both 1 by default. The text part has to be relative to
+the query's own best hit because raw view scores have no fixed range: measured top scores run from 4
+(`name: landscape`) to 548 (`text: rembrandt`), so no constant squash fits both. Dividing by one number per
+query cannot reorder anything, so text-only rankings are exactly what they were. The max needs the whole
+grouped result, so the relevance query is `SELECT … { {grouped} {SELECT (MAX(?ts) AS ?tmax) {grouped}} }`.
+QLever shares the duplicated work for the text views (no measurable cost), but **not** for `SERVICE`: a mixed
+query calls the vector sidecar twice, about 40 ms extra. The 14/5/1 weights themselves are fixed when the
+index is built, not here.
+
+### Vector similarity (`similar`)
+
+luxql already ships a `similar` term ("are similar to") in every scope, with `relation: "text"`. Before it was
+wired up it fell through to keyword search on the words of the URI. `SparqlTranslator.translate_similar` now
+sends it to the `../vectors/sparql_service` sidecar (see its README for the contract) as one `SERVICE` call:
+
+```sparql
+SERVICE <http://127.0.0.1:8081/sparql> {
+   ?uri vec:similarTo <seed-uri> .      # or an escaped literal for free text
+   ?uri vec:score ?score_N .            # cosine, 0..1; ranked as described above
+   ?uri vec:topK 100 .
+   ?uri vec:index "item" .              # the leaf's scope, so vector-first search stays in scope
+}
+```
+
+- `QLMT_VECTOR_SERVICE` is the URL *as QLever sees it* (loopback means QLever's host). It is stored bare and
+  bracketed by `iri()`; the builder only adds a `:` to a service name with none, so `<…>` passes through. Empty
+  (the default) disables the term: `similar` is then a 400, not a silent keyword search.
+- `sort=similarity:desc` (or `:asc`) ranks on the cosine alone. Text clauses still filter, and their raw score
+  breaks ties, which orders the text-only matches of a `similar OR text` after the similar ones. Like
+  `relevance` it is computed by the translator (`RANKED_SORTS`), not looked up in `sorts.json`, so it works for
+  `multi` too. It needs no per-query max, so the sidecar is called once. With no `similar` clause it falls back
+  to relevance.
+- `QLMT_VECTOR_TOP_K` (default 100) is global for now, so it also caps the results and the estimate (≤ K).
+  Making it per-query needs luxql to carry an option on the leaf; it only passes `_options`, `_weight` and
+  `_complete` through today.
+- `vec:mode "constrained"` is added when the leaf is one of several children of an `AND`
+  (`QLMT_VECTOR_CONSTRAIN_IN_AND`), so a constraint too big for QLever to push down (`service-max-value-rows`)
+  is an error instead of a near-empty result. A lone `similar` uses the default `auto`, because its only
+  constraint is `?uri a lux:<Scope>`, which is far too big to push.
+- The sidecar (`sparql_service/`, contract in its README), the offline build (`lux_embed/`) and the store
+  they share (`qleverlux/vectors/lmdb_vector_store.py`) are all in this repo, but are separate commands in a
+  separate venv: the middle tier never rebuilds or imports any of it. The built data stays outside the repo
+  (`../vectors/data/`), and so does the USearch checkout. Serving in place needs USearch `840374af` with
+  `files/usearch-view-ram-buffer.patch` applied; drop the patch once upstream has `view_ram_buffer`. Their
+  tests skip without numpy, lmdb and usearch.
+  Two things to keep: slice HNSW results to `counts[row]` *before* `keys_to_integers` (the rest of the buffer
+  is garbage, and the walk returns at most `expansion_factor` hits), and never hold a `usearch.Executor`
+  past the call that needs it — an undrained one spins about two cores even when idle.
+- A value starting `http://`/`https://` is a seed record. Anything else is text. User values go through
+  `iri()` / `string_literal()` (`sparql/terms.py`), which reject or escape anything that could break out
+  of the term.
 
 Pagination is deliberately coarse: SPARQL is issued at offsets rounded down to multiples of 60 (so the alru cache
 hits across nearby pages) and the exact page is sliced out of the result list in Python.
@@ -383,8 +450,7 @@ back to this checkout's.
 
 ## Verifying a change
 
-Nothing outside `qleverlux/sparql/` has tests, so the practical check on a change to translation or the
-catalogue is that the compiled output is what you expect. Build a `QueryCatalogue` and dump everything it
+Translation and the catalogue have no tests, so the practical check on a change to either is that the compiled output is what you expect. Build a `QueryCatalogue` and dump everything it
 produces — `sparql_hal_queries`, `related_list_sparql`, `related_list_json`, `hal_related_list_tests`, plus
 `translate_search` / `translate_facet` output for a spread of scopes and query shapes — to sorted JSON before
 and after, and diff. A pure refactor should come out byte-identical; a behaviour change should show up only

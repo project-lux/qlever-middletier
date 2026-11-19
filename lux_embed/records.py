@@ -1,0 +1,121 @@
+"""Read-only access to a LUX record LMDB, and the record-class vocabulary.
+
+Two layouts are recognised automatically:
+
+* the middle tier's datacache (e.g. ``nrich_lux.lmdb``): sub-DB ``data``, key = the 36-character
+  UUID string, value = zlib JSON ``{"json": <Linked Art record>, "triples": ..., ...}``;
+* the data-pipeline distribution store: sub-DB ``data``, key = the 16-byte UUID, value = zlib JSON
+  of the bare Linked Art record.
+
+Either way :meth:`RecordStore.get` answers the Linked Art record itself.
+"""
+
+from __future__ import annotations
+
+import uuid as uuidlib
+import zlib
+from collections.abc import Iterator
+
+import lmdb
+
+try:  # orjson parses records ~3x faster; json is the fallback
+    import orjson
+
+    _loads = orjson.loads
+except ImportError:  # pragma: no cover
+    import json
+
+    _loads = json.loads
+
+DATA_PREFIX = "https://lux.collections.yale.edu/data/"
+
+# Linked Art class -> LUX core type ("scope"), as qleverlux's CLASS_TO_SCOPE folds them.
+SCOPE_OF_CLASS = {
+    "HumanMadeObject": "item",
+    "DigitalObject": "item",
+    "VisualItem": "work",
+    "LinguisticObject": "work",
+    "Set": "set",
+    "Person": "agent",
+    "Group": "agent",
+    "Place": "place",
+    "Type": "concept",
+    "Material": "concept",
+    "Language": "concept",
+    "Currency": "concept",
+    "MeasurementUnit": "concept",
+    "Activity": "event",
+    "Event": "event",
+    "Period": "event",
+}
+SCOPES = ("item", "work", "set", "agent", "place", "concept", "event")
+
+
+def uuid_of(iri_or_uuid: str) -> str:
+    """The UUID string at the end of a LUX IRI (or the argument itself, if already a UUID)."""
+    return iri_or_uuid.rstrip("/").rsplit("/", 1)[-1]
+
+
+def uuid_bytes(iri_or_uuid: str) -> bytes:
+    return uuidlib.UUID(uuid_of(iri_or_uuid)).bytes
+
+
+def uuid_str(raw: bytes) -> str:
+    return str(uuidlib.UUID(bytes=raw))
+
+
+class RecordStore:
+    """Read-only Linked Art records keyed by UUID.
+
+    ``lock=False`` is safe here: the record cache is written once and never while served.
+    """
+
+    def __init__(self, path: str, db: bytes = b"data"):
+        self.path = path
+        self.env = lmdb.open(path, readonly=True, lock=False, readahead=False, max_dbs=8, subdir=True)
+        self.db = self.env.open_db(db, create=False)
+        with self.env.begin(db=self.db) as txn:
+            first = next(iter(txn.cursor().iternext(values=False)), b"")
+        self.binary_keys = len(first) == 16
+
+    def __len__(self) -> int:
+        with self.env.begin(db=self.db) as txn:
+            return txn.stat(self.db)["entries"]
+
+    def _key(self, iri_or_uuid: str) -> bytes:
+        return uuid_bytes(iri_or_uuid) if self.binary_keys else uuid_of(iri_or_uuid).encode()
+
+    @staticmethod
+    def _decode(value: bytes) -> dict:
+        doc = _loads(zlib.decompress(value))
+        return doc["json"] if isinstance(doc, dict) and "json" in doc and "type" not in doc else doc
+
+    def get(self, iri_or_uuid: str, txn: lmdb.Transaction | None = None) -> dict | None:
+        if txn is None:
+            with self.env.begin(db=self.db) as own:
+                raw = own.get(self._key(iri_or_uuid))
+        else:
+            raw = txn.get(self._key(iri_or_uuid), db=self.db)
+        return None if raw is None else self._decode(raw)
+
+    def scan(self, first: bytes | None = None, bound: bytes | None = None) -> Iterator[tuple[str, dict]]:
+        """Yields ``(uuid, record)`` for keys in ``[first, bound)``, in key order."""
+        with self.env.begin(db=self.db, buffers=True) as txn:
+            cursor = txn.cursor()
+            if not (cursor.set_range(first) if first else cursor.first()):
+                return
+            for key, value in cursor:
+                key = bytes(key)
+                if bound is not None and key >= bound:
+                    return
+                yield (uuid_str(key) if self.binary_keys else key.decode()), self._decode(value)
+
+    def partitions(self, count: int) -> list[tuple[bytes | None, bytes | None]]:
+        """Splits the key space into about ``count`` ranges of similar size, for parallel scans."""
+        if self.binary_keys:
+            edges = [bytes([round(i * 256 / count)]) for i in range(1, count) if round(i * 256 / count) < 256]
+        else:  # lower-case hex strings: split on the first three hex digits
+            edges = [f"{round(i * 4096 / count):03x}".encode() for i in range(1, count) if round(i * 4096 / count) < 4096]
+        edges = sorted(set(edges))
+        bounds = [None, *edges]
+        return list(zip(bounds, [*edges, None]))
