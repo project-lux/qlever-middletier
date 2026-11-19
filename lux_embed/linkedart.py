@@ -19,14 +19,29 @@ DISPLAY_NAME = "300404669"  # also the "display date" of a timespan
 ENGLISH = "300388277"
 
 # Statement (referred_to_by) kinds that are boilerplate rather than description, by the AAT terms
-# Linked Art documents for them. MDS carries only Description (300435416), Biography (300435422) and
-# Note (300027200); run `python -m lux_embed kinds` on a new dataset to see what else it holds.
+# Linked Art documents for them. A statement is dropped if any of its classifications is listed.
+# Chosen from `python -m lux_embed kinds` on full LUX (2026-11), where library cataloguing adds most
+# of them; MDS carries only Description, Biography and Note. Kept on purpose: Description
+# (300435416, 300411780), Abstract, Table of Contents, Note, Imprint, Attribution/Transcribed,
+# Material/Medium, Culture, Biography, Period and Mint.
 SKIPPED_STATEMENTS = {
     "300026687",  # credit line (acknowledgments)
+    "300435418",  # credit line
     "300435434",  # copyright/licensing statement
     "300444174",  # provenance statement
+    "300435438",  # provenance (some units label it "descriptive note")
+    "300435439",  # acquisition statement: "Gift of ..."
     "300435430",  # dimensions statement
     "300311705",  # citation
+    "300133046",  # access statement: reading-room conditions
+    "300025883",  # visitors' statement (rides along with access)
+    "300435452",  # physical / collation statement: "xii, 345 p. : ill. ; 24 cm"
+    "300026497",  # bibliography statement: "Includes bibliographical references"
+    "300435435",  # edition statement
+    "300435433",  # language statement: language is a field, not prose
+    "300248479",  # location: shelving and building
+    "300054640",  # indexes note
+    "300053163",  # cartography note: scale and projection
 }
 
 # Meta-classifications of an agent's classified_as entries.

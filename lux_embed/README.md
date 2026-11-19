@@ -113,4 +113,6 @@ work/agent/set ignore it.
 
 - **Works:** these are all `VisualItem`. Their maker, place and date live on the carrying object, so work cards depend on Stage 1.
 - **Concepts:** mostly local terms with no `broader`, so their cards are short.
-- **Statement kinds:** only Description, Biography and Note occur. Re-run `kinds` on full LUX and extend `SKIPPED_STATEMENTS` in `linkedart.py` as needed.
+- **Statement kinds:** only Description, Biography and Note occur. Full LUX has many more, mostly from library
+  cataloguing (access, physical, bibliography, edition, language, location and provenance statements);
+  `SKIPPED_STATEMENTS` in `linkedart.py` drops those. Re-run `kinds` on a new dataset to check it.
