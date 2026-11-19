@@ -21,6 +21,7 @@ import io
 import json
 import math
 import os
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -58,6 +59,10 @@ SCOPE_DATES = {
 TOP = {"work": 5, "agent": 8, "set": 10}
 TFIDF_SCOPES = {"agent", "set"}
 UBIQUITOUS = 0.5  # a value on more than half of all objects ("works") says nothing about anyone
+# Targets per batched query. QLever's cost is mostly per query (it scans each facet predicate and
+# joins), not per target, so big batches pay: 400 -> 4000 took work extraction from 1.8k to 12k/s.
+# Heavier scopes may hit the server timeout at larger sizes; a failed batch is retried in halves.
+FACET_BATCH = 2000
 
 
 class QLever:
@@ -121,8 +126,11 @@ class Facets:
         kinds = {kind: pattern for _, usable in self.plans for kind, (pattern, _) in usable.items()}
         missing = {kind: pattern for kind, pattern in kinds.items() if kind not in cached["df"]}
         for kind, pattern in missing.items():
+            print(f"facets: counting how many objects carry each {kind} (once per dataset)...", flush=True)
+            started = time.time()
             rows = self.qlever.rows(f"SELECT ?v (COUNT(DISTINCT ?x) AS ?n) WHERE {{ {pattern} }} GROUP BY ?v")
             cached["df"][kind] = {v: int(n) for v, n in rows}
+            print(f"facets: {len(rows):,} {kind} values counted in {time.time() - started:,.0f}s", flush=True)
         if not cached["total"]:
             cached["total"] = int(self.qlever.rows("SELECT (COUNT(?x) AS ?n) WHERE { ?x a lux:Item }")[0][0])
         if missing or not os.path.exists(path):
@@ -181,6 +189,7 @@ class Facets:
             if len(targets) == 1:
                 print(f"facets: giving up on {targets[0]} ({error})", flush=True)
                 return []
+            print(f"facets: a batch of {len(targets)} failed ({error}); retrying it in halves", flush=True)
             half = len(targets) // 2
             return [*retry(targets[:half]), *retry(targets[half:])]
 
