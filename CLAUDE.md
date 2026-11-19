@@ -32,7 +32,7 @@ the middle tier never imports them, enforced by `tests/test_import_boundaries.py
 PY=../vectors/.venv/bin/python
 $PY -m lux_embed {labels,kinds,facets,cards,embed,index,query} ...   # build the vector store offline; lux_embed/README.md
 HF_HUB_OFFLINE=1 $PY -m sparql_service --store ../vectors/data/mds/vectors.lmdb --port 8081   # the SERVICE sidecar
-$PY -m pytest tests/test_lux_embed.py tests/test_facet_dump.py tests/test_sparql_service.py tests/test_lmdb_vector_store.py -q
+$PY -m pytest tests/test_lux_embed.py tests/test_facet_dump.py tests/test_labels.py tests/test_sparql_service.py tests/test_lmdb_vector_store.py -q
 ```
 
 All three servers are three-line shims over `qleverlux/server.py` (`serve_dev` / `serve_https` /

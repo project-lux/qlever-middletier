@@ -27,7 +27,7 @@ _worker_store: RecordStore | None = None
 
 def _init_worker(path: str) -> None:
     global _worker_store
-    _worker_store = RecordStore(path)
+    _worker_store = RecordStore(path, readahead=True)  # a sequential scan
 
 
 def _label_partition(bounds: tuple[bytes | None, bytes | None]) -> list[tuple[bytes, bytes]]:
@@ -40,14 +40,22 @@ def _label_partition(bounds: tuple[bytes | None, bytes | None]) -> list[tuple[by
     return out
 
 
-def build_labels(records_path: str, out_path: str, workers: int = 0, partitions: int = 4096) -> int:
-    """Scans every record in parallel and writes the label store; returns the records labelled."""
+def build_labels(records_path: str, out_path: str, workers: int = 0, partitions: int = 4096,
+                 report_every: float = 30.0) -> int:
+    """Scans every record in parallel and writes the label store; returns the records labelled.
+
+    Reports progress after every 1/16 of the partitions or ``report_every`` seconds, whichever
+    comes first. Partitions finish in key order, so nothing is reported until the first is done.
+    """
     store = RecordStore(records_path)
-    ranges = store.partitions(partitions)
+    ranges, expected = store.partitions(partitions), len(store)
     workers = workers or max(1, mp.cpu_count() - 2)
+    print(f"labels: scanning {expected:,} records in {len(ranges):,} partitions with {workers} workers",
+          flush=True)
     env = lmdb.open(out_path, map_size=1 << 40, max_dbs=2, subdir=True, sync=False, writemap=False)
     db = env.open_db(b"labels")
-    total, started = 0, time.time()
+    total, started, reported = 0, time.time(), time.time()
+    step = max(1, len(ranges) // 16)
     with mp.get_context("spawn").Pool(workers, initializer=_init_worker, initargs=(records_path,)) as pool:
         # `imap` keeps partition order, and partitions are key-ordered, so every put appends.
         for done, rows in enumerate(pool.imap(_label_partition, ranges, chunksize=4), 1):
@@ -55,9 +63,13 @@ def build_labels(records_path: str, out_path: str, workers: int = 0, partitions:
                 cursor = txn.cursor()
                 cursor.putmulti(rows, append=True)
             total += len(rows)
-            if done % 256 == 0 or done == len(ranges):
-                rate = total / max(time.time() - started, 1e-9)
-                print(f"labels: {done}/{len(ranges)} partitions, {total:,} records ({rate:,.0f}/s)", flush=True)
+            now = time.time()
+            if done % step == 0 or done == len(ranges) or now - reported >= report_every:
+                reported = now
+                rate = total / max(now - started, 1e-9)
+                left = (expected - total) / rate if rate else 0
+                print(f"labels: {total:,}/{expected:,} records, {done:,}/{len(ranges):,} partitions "
+                      f"({rate:,.0f}/s, ~{left / 60:,.1f} min left)", flush=True)
     env.sync(True)
     env.close()
     return total

@@ -68,11 +68,13 @@ class RecordStore:
     """Read-only Linked Art records keyed by UUID.
 
     ``lock=False`` is safe here: the record cache is written once and never while served.
+    ``readahead`` is off by default because ``embed`` looks records up one by one; a full ``scan``
+    should turn it on, or every page is its own read (on cluster storage, workers sit at 2% CPU).
     """
 
-    def __init__(self, path: str, db: bytes = b"data"):
+    def __init__(self, path: str, db: bytes = b"data", readahead: bool = False):
         self.path = path
-        self.env = lmdb.open(path, readonly=True, lock=False, readahead=False, max_dbs=8, subdir=True)
+        self.env = lmdb.open(path, readonly=True, lock=False, readahead=readahead, max_dbs=8, subdir=True)
         self.db = self.env.open_db(db, create=False)
         with self.env.begin(db=self.db) as txn:
             first = next(iter(txn.cursor().iternext(values=False)), b"")
@@ -112,8 +114,9 @@ class RecordStore:
 
     def partitions(self, count: int) -> list[tuple[bytes | None, bytes | None]]:
         """Splits the key space into about ``count`` ranges of similar size, for parallel scans."""
-        if self.binary_keys:
-            edges = [bytes([round(i * 256 / count)]) for i in range(1, count) if round(i * 256 / count) < 256]
+        if self.binary_keys:  # split on the first two bytes, so up to 65,536 ranges
+            edges = [round(i * 65536 / count).to_bytes(2, "big") for i in range(1, count)
+                     if round(i * 65536 / count) < 65536]
         else:  # lower-case hex strings: split on the first three hex digits
             edges = [f"{round(i * 4096 / count):03x}".encode() for i in range(1, count) if round(i * 4096 / count) < 4096]
         edges = sorted(set(edges))
