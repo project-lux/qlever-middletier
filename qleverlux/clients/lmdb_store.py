@@ -34,6 +34,8 @@ def normalise_identifier(key_format, identifier):
     """The identifier in canonical form, or ValueError if it cannot be one."""
     if key_format == "uuid":
         return str(UUID(identifier))
+    if key_format == "uuidb":
+        return UUID(identifier).bytes
     if key_format == "qid" and not QID.match(identifier):
         raise ValueError(f"Not a Wikidata Q-id: {identifier}")
     return identifier
