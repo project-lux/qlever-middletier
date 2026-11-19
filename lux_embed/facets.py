@@ -59,6 +59,10 @@ SCOPE_DATES = {
 TOP = {"work": 5, "agent": 8, "set": 10}
 TFIDF_SCOPES = {"agent", "set"}
 UBIQUITOUS = 0.5  # a value on more than half of all objects ("works") says nothing about anyone
+# Targets per batched query. QLever's cost is mostly per query (it scans each facet predicate and
+# joins), not per target, so big batches pay: 400 -> 4000 took work extraction from 1.8k to 12k/s.
+# Heavier scopes may hit the server timeout at larger sizes; a failed batch is retried in halves.
+FACET_BATCH = 2000
 
 
 class QLever:

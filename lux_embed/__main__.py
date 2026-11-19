@@ -23,9 +23,10 @@ import queue
 import threading
 import time
 
+from .facets import FACET_BATCH
+
 DEFAULT_DIMS = {"item": 512, "work": 512, "set": 768, "agent": 768, "place": 768, "concept": 768, "event": 768}
 FACET_SCOPES = {"work", "agent", "set"}
-FACET_BATCH = 400  # targets per QLever query
 
 
 def _read(records, uuids) -> list[dict]:
@@ -236,7 +237,7 @@ def main(argv=None):
     p.add_argument("--qlever", required=True, help="QLever endpoint serving the dataset, e.g. http://localhost:7011")
     p.add_argument("--out", required=True, help="facet LMDB directory to write (copy it to the embedding machine)")
     p.add_argument("--scope", default=None, choices=sorted(FACET_SCOPES), help="one scope (default: all three)")
-    p.add_argument("--batch", type=int, default=FACET_BATCH, help="targets per QLever query")
+    p.add_argument("--batch", type=int, default=FACET_BATCH, help="targets per QLever query (default %(default)s)")
     p.add_argument("--workers", type=int, default=4, help="concurrent QLever queries")
     p.add_argument("--timeout", type=float, default=120, help="seconds per QLever query before the batch is split")
     p.add_argument("--restart", action="store_true", help="re-extract a scope already done")

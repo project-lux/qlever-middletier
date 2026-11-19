@@ -34,7 +34,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import lmdb
 
-from .facets import PREFIX, SCOPE_FACETS, Facets, QLever
+from .facets import FACET_BATCH, PREFIX, SCOPE_FACETS, Facets, QLever
 from .records import uuid_bytes, uuid_of
 
 FACET_SCOPES = tuple(SCOPE_FACETS)  # work, agent, set
@@ -109,7 +109,7 @@ def _batches(path: str, skip: int, size: int):
             yield batch
 
 
-def dump_scope(qlever: QLever, scope: str, out: str, batch: int = 400, workers: int = 4,
+def dump_scope(qlever: QLever, scope: str, out: str, batch: int = FACET_BATCH, workers: int = 4,
                restart: bool = False) -> None:
     """Extracts ``scope``'s facets into ``out``, resuming after the last committed batch."""
     os.makedirs(out, exist_ok=True)
