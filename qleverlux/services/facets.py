@@ -14,7 +14,7 @@ import urllib.parse
 import ujson as json
 from fastapi.responses import JSONResponse
 
-from qleverlux.errors import run_query
+from qleverlux.errors import BadQuery, run_query
 from qleverlux.presentation import envelopes
 from qleverlux.services.search import OFFSET_GRANULARITY
 
@@ -109,7 +109,10 @@ class FacetService:
 
         q = self.uris.inbound(q)
         jq = json.loads(q)
-        parsed = self.catalogue.json_reader.read(jq, scope)
+        try:
+            parsed = self.catalogue.json_reader.read(jq, scope)
+        except ValueError as e:
+            raise BadQuery(str(e)) from e
 
         uq = urllib.parse.quote(q)
         mt = self.settings.mt_uri
@@ -120,9 +123,14 @@ class FacetService:
         )
 
         pred, term = self.resolve_predicate(name, scope)
-        spq = self.catalogue.translator.translate_facet(
-            parsed, pred, scope=scope, offset=soffset, sort=sort, order=ascdesc
-        )
+        # As in search: an all-stopword text clause, or `similar` with no
+        # vector service configured, is the caller's mistake - a 400, not a 500.
+        try:
+            spq = self.catalogue.translator.translate_facet(
+                parsed, pred, scope=scope, offset=soffset, sort=sort, order=ascdesc
+            )
+        except ValueError as e:
+            raise BadQuery(str(e)) from e
         qt = spq.get_text()
         # print(qt)
 

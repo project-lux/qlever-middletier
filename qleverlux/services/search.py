@@ -20,6 +20,7 @@ from qleverlux.enums import MULTI_SCOPE
 from qleverlux.errors import BadQuery, run_query
 from qleverlux.presentation import envelopes
 from qleverlux.query.catalogue import MultiScopeError, read_multi_branches
+from qleverlux.query.translator import RANKED_SORTS
 
 #: SPARQL offsets are rounded down to a multiple of this, to share cache entries.
 OFFSET_GRANULARITY = 60
@@ -59,6 +60,8 @@ class SearchService:
         have - falls back to relevance rather than erroring, so a multi search
         can simply be unsorted.
         """
+        if sort in RANKED_SORTS:
+            return sort
         if scope != MULTI_SCOPE:
             return self.catalogue.sorts.get(scope, {}).get(sort, "relevance")
 

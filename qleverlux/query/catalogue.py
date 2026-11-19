@@ -132,6 +132,15 @@ class QueryCatalogue:
         )
         if settings.portal:
             self.translator.portal = settings.portal
+        self.translator.configure_scoring(
+            text_scale=settings.text_score_scale,
+            vector_scale=settings.vector_score_scale,
+        )
+        self.translator.configure_vectors(
+            service=settings.vector_service,
+            top_k=settings.vector_top_k,
+            constrain_in_and=settings.vector_constrain_in_and,
+        )
 
         self.sparql_hal_queries = {}
         self.related_list_sparql = {}

@@ -33,6 +33,8 @@ __all__ = [
     "Variable",
     "in_brackets",
     "indent",
+    "iri",
+    "string_literal",
 ]
 
 #: One level of indentation in the generated SPARQL.
@@ -98,6 +100,33 @@ def in_brackets(uri: str) -> str:
     if uri.startswith("http"):
         return f"<{uri}>"
     return uri
+
+
+# Characters SPARQL forbids inside an IRIREF, plus whitespace. Letting any of
+# them through would let a value close the IRI and inject query text.
+_IRI_FORBIDDEN = frozenset('<>"{}|^`\\')
+
+
+def iri(value: str) -> str:
+    """
+    Render ``value`` as a bracketed IRI, rejecting anything that cannot be one.
+
+    Raises ``ValueError`` for characters forbidden in an IRIREF, so user input
+    can be passed straight in.
+    """
+    if not value or any(c in _IRI_FORBIDDEN or c.isspace() or ord(c) < 0x20 for c in value):
+        raise ValueError(f"Not a valid IRI: {value!r}")
+    return f"<{value}>"
+
+
+_LITERAL_ESCAPES = str.maketrans(
+    {"\\": "\\\\", '"': '\\"', "\n": "\\n", "\r": "\\r", "\t": "\\t"}
+)
+
+
+def string_literal(value: str) -> str:
+    """Render ``value`` as a double-quoted SPARQL string literal, escaped."""
+    return f'"{value.translate(_LITERAL_ESCAPES)}"'
 
 
 @dataclass(slots=True, eq=False)
