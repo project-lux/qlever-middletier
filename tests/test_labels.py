@@ -1,5 +1,5 @@
 """Pass 1 (labels) must cover every record exactly once in both record-LMDB layouts, and say so as it goes;
-`kinds` must sample evenly without walking the whole store.
+`kinds` must sample evenly without walking the whole store; and `embed`'s card pool must match one thread.
 
 Run with the vectors venv: ../vectors/.venv/bin/python -m pytest tests/test_labels.py -q
 """
@@ -30,7 +30,8 @@ def make_store(path, binary, count=500):
     db = env.open_db(b"data")
     with env.begin(write=True, db=db) as txn:
         for n, uid in enumerate(ids):
-            doc = record(n) if binary else {"json": record(n)}
+            body = {"id": f"https://lux.collections.yale.edu/data/person/{uid}", **record(n)}
+            doc = body if binary else {"json": body}
             txn.put(uid.bytes if binary else str(uid).encode(), zlib.compress(json.dumps(doc).encode()))
     env.close()
     return ids
@@ -68,3 +69,66 @@ def test_sample_seeks_spread_records_without_repeats(tmp_path, binary):
     numbers = sorted(int(n.split()[1]) for n in names)
     assert numbers[0] < 200 and numbers[-1] > 1800  # spread over the store, not its first stretch
     assert len(list(store.sample(5000))) == 2000  # more than the store holds: every record once
+
+
+@pytest.mark.parametrize("binary", [True, False])
+def test_card_pool_builds_the_threads_cards_in_order(tmp_path, binary):
+    from types import SimpleNamespace
+
+    from lux_embed.produce import card_batches, open_inputs
+
+    make_store(str(tmp_path / "r.lmdb"), binary, count=3000)
+    build_labels(str(tmp_path / "r.lmdb"), str(tmp_path / "labels.lmdb"), workers=2)
+    args = SimpleNamespace(records=str(tmp_path / "r.lmdb"), labels=str(tmp_path / "labels.lmdb"), facets=None,
+                           qlever=None, scope="agent", note_words=300, batch=700)
+
+    def build(workers):
+        inputs = open_inputs(args, need_facets=True)
+        members = (uuid for uuid, _ in inputs[1].scope_members("agent"))
+        return list(card_batches(args, inputs, members, workers))
+
+    threaded, pooled = build(0), build(3)
+    flat = [card for batch in pooled for card in batch]
+    assert flat == [card for batch in threaded for card in batch]  # same cards, same order
+    assert len(flat) == 3000 and [iri for iri, _, _ in flat] == sorted(iri for iri, _, _ in flat)
+    assert all(len(batch) >= args.batch for batch in pooled[:-1])  # whole batches for the encoder
+
+
+def test_card_store_export_matches_the_thread_and_resumes(tmp_path):
+    import gc
+    from types import SimpleNamespace
+
+    from lux_embed.__main__ import main
+    from lux_embed.card_store import CardStore, CardWriter, pack
+    from lux_embed.produce import card_batches, open_inputs
+
+    make_store(str(tmp_path / "r.lmdb"), True, count=3000)
+    build_labels(str(tmp_path / "r.lmdb"), str(tmp_path / "labels.lmdb"), workers=2)
+    args = SimpleNamespace(records=str(tmp_path / "r.lmdb"), labels=str(tmp_path / "labels.lmdb"), facets=None,
+                           qlever=None, scope="agent", note_words=300, batch=700)
+    def threaded():  # its store handles close on return: py-lmdb opens a path once per process
+        inputs = open_inputs(args, need_facets=True)
+        return [c for b in card_batches(args, inputs, (u for u, _ in inputs[1].scope_members("agent")), 0) for c in b]
+
+    expected = threaded()
+    gc.collect()
+    common = ["--records", args.records, "--labels", args.labels, "--scope", "agent", "--batch", "700"]
+    main(["cards", *common, "--out", str(tmp_path / "cards.lmdb"), "--card-workers", "2"])
+    store = CardStore(str(tmp_path / "cards.lmdb"), "agent")
+    assert store.meta["complete"] and store.meta["count"] == 3000
+    assert [c for b in store.batches(None, 1000) for c in b] == expected
+    after = expected[999][0].rsplit("/", 1)[-1]  # what embed resumes from: the last IRI's UUID
+    assert [c for b in store.batches(after, 1000) for c in b] == expected[1000:]
+    from lux_embed.vector_shards import shard_bounds  # four key-range shards cover the scope exactly once
+    sharded = [c for i in range(4) for b in store.batches(None, 1000, *shard_bounds((i, 4))) for c in b]
+    assert sharded == expected
+    assert [c for b in store.batches(after, 1000, *shard_bounds((0, 4))) for c in b] == \
+        [c for c in expected[1000:] if c[0].rsplit("/", 1)[-1] < "40000000"]  # a shard resumed mid-range
+
+    # as if a build died after 1,000 cards: the rerun picks up there and ends identical
+    writer = CardWriter(str(tmp_path / "partial.lmdb"), "agent")
+    writer.append([pack(*card) for card in expected[:1000]])
+    writer.close()
+    main(["cards", *common, "--out", str(tmp_path / "partial.lmdb"), "--card-workers", "0"])
+    partial = CardStore(str(tmp_path / "partial.lmdb"), "agent")
+    assert partial.meta["count"] == 3000 and [c for b in partial.batches(None, 512) for c in b] == expected

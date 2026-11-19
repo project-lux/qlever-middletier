@@ -7,8 +7,8 @@ This package builds per-class vector indexes (item, work, set, agent, place, con
 | Pass 1 | `labels` | One parallel scan writes UUID → (class, primary name). References in LUX records carry no usable labels, and `_label` is informative only. Names come from `identified_by`: English primary, then untagged primary, then any primary, then other names. The class column also serves as the index for enumerating one class. |
 | Stage 1 | (inside `embed` / `cards`, with `--qlever`) | Incoming facets from QLever, in batched `VALUES` queries:<br>• **works:** the creators, materials, types, places and dates of the objects carrying them<br>• **agents:** places, types, mediums, subjects and active span of what they made, ranked by tf-idf<br>• **sets:** top member creators, types and subjects<br>Values on more than half of all objects are dropped. Global frequencies are cached in `facet_df.json` next to the label store. Facet patterns whose predicates the endpoint lacks are skipped. |
 | Stage 1 offline | `facets` | The same facets, extracted once beside QLever into a portable LMDB (`--out facets.lmdb`). `cards` / `embed` then take `--facets facets.lmdb` instead of `--qlever`, so the embedding machine needs no endpoint. See below. |
-| Stage 2 | `cards` (preview) | One card per record, using the per-class field table in `cards.py`. Hierarchies (concept `broader`, place `part_of`) are walked in the records themselves. Statements are English or untagged, HTML-stripped, boilerplate kinds removed, and capped at 300 words. |
-| Stage 3 | `embed` | EmbeddingGemma 2 (text-only, 271M parameters). Runs in bf16 on CUDA/MPS, else f32, never f16. Documents use `title: … \| text: …`. Vectors use Matryoshka `truncate_dim` and are re-normalized in f32. The run resumes after the last committed 4096-row chunk. |
+| Stage 2 | `cards` (preview, or `--out` to build them all) | One card per record, using the per-class field table in `cards.py`. Hierarchies (concept `broader`, place `part_of`) are walked in the records themselves. Statements are English or untagged, HTML-stripped, boilerplate kinds removed, and capped at 300 words. Cards are built by a pool of worker processes (`--card-workers`, default: the CPUs the job may use, less two). With `--out cards.lmdb` every card of the scope goes into a card store, so it's a CPU-only job. |
+| Stage 3 | `embed` (`--cards cards.lmdb` to read a card store) | EmbeddingGemma 2 (text-only, 271M parameters). Runs in bf16 on CUDA/MPS, else f32, never f16. Documents use `title: … \| text: …`. Vectors use Matryoshka `truncate_dim` and are re-normalized in f32. The run resumes after the last committed 4096-row chunk. |
 | Graph | `index` (run by `embed` unless `--no-index`) | A bf16 HNSW graph over the stored vectors, published as the scope's next generation. Readers pick it up with `refresh()`. |
 
 ## Setup
@@ -73,12 +73,51 @@ That's about 12 hours for all 14.3M MDS records. The full ~75M LUX instance is a
    - Build the label store on that machine (`labels`), or copy it over.
    - Facets: either give `--qlever` an endpoint serving the same dataset, or extract them beside QLever
      and copy the result over (next section).
-5. **Batch sizes:** a 48–96 GB card takes much larger batches than MPS. Start with `--encode-batch 256 --batch 8192`, and run one `embed` process per class.
+5. **Batch sizes:** a 48–96 GB card takes much larger batches than MPS. Start with `--encode-batch 256 --batch 8192`, and run one `embed` process per class, each with its own `--store` (LMDB allows one writer at a time).
    - bf16 is picked automatically.
    - Keep `--max-seq-length 512` unless cards are being truncated.
 6. **Commands:** they're unchanged. Run `embed` per class in this order:
    1. `concept`, `place`, `event`, `set` first — small, and they validate the setup;
    2. then `agent`, `work`, `item`.
+
+## Cards on CPUs, embeddings on GPUs
+
+Building a card is pure Python, about 250 cards/s per core on full LUX. An H200 encodes about
+900/s with Harrier and 1,500/s with Gemma. So on a cluster, build the cards first, as a CPU job:
+
+```bash
+python -m lux_embed cards --records $R --labels $L --facets facets.lmdb --scope work --out cards-work.lmdb
+python -m lux_embed embed --cards cards-work.lmdb --store vectors-work.lmdb --scope work \
+    --model microsoft/harrier-oss-v1-0.6b --encode-batch 256 --batch 8192 --vector-dtype float16 --no-index
+```
+
+- **What the GPU job needs:** only the card store, not the record LMDB, label store or facets. It never
+  waits for cards, so a few CPUs are enough.
+- **Reuse:** cards don't depend on the model (each encoder's document format is applied when it
+  encodes). One build serves Harrier, Gemma, or a different `--max-seq-length`.
+- **Resuming:** both steps resume after their last commit. `embed --cards` refuses a card store that is
+  still being built, unless it's a `--limit` trial.
+- **One writer per file:** give each scope that runs at the same time its own card store and vector store.
+
+### Vectors as files, loaded afterwards
+
+GPU jobs can write plain files instead of an LMDB store, and a big class can be split by key range
+over several GPUs:
+
+```bash
+python -m lux_embed embed --cards cards-item.lmdb --scope item --out vec/item-3 --shard 3/8 \
+    --model microsoft/harrier-oss-v1-0.6b --encode-batch 256 --batch 8192 --vector-dtype float16
+python -m lux_embed load --store vectors.lmdb --scope item vec/item-*       # one CPU job, then the graph
+```
+
+- **What a shard holds:** a directory with `vectors.bin` (the rows), `iris.txt` and `meta.json`. It
+  resumes after the last flushed batch, like `--store`.
+- **What `load` does:** checks that the shards are finished, use the same model, width and dtype, and
+  cover `0..N-1` once each. Then it writes them into the store in key order, byte for byte what
+  `embed --store` would have written, and builds the graph (`--no-index` to skip).
+- **Why bother:** no GPU job ever opens an LMDB store, so there's no writer contention, and every
+  class can be loaded into the one `vectors.lmdb` that the sidecar reads. A store that already holds
+  the scope needs `--restart`.
 
 ## Extracting facets where QLever runs
 
