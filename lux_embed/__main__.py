@@ -7,6 +7,8 @@
     python -m lux_embed cards   --records R.lmdb --labels L.lmdb --scope agent --facets F.lmdb --out C.lmdb  # CPU stage
     python -m lux_embed embed   --records R.lmdb --labels L.lmdb --store V.lmdb --scope agent [--qlever URL | --facets F.lmdb]
     python -m lux_embed embed   --cards C.lmdb --store V.lmdb --scope agent                              # GPU stage
+    python -m lux_embed embed   --cards C.lmdb --out DIR --scope item --shard 3/8                        # or as files
+    python -m lux_embed load    --store V.lmdb --scope item DIR...                                       # files -> store
     python -m lux_embed index   --store V.lmdb --scope agent
     python -m lux_embed query   --store V.lmdb --labels L.lmdb --scope agent "dutch landscape painters"
 
@@ -124,6 +126,13 @@ def cmd_embed(args):
 
     from .encoder import Encoder
 
+    from .vector_shards import parse_shard, shard_bounds
+
+    if bool(args.store) == bool(args.out):
+        raise SystemExit("give embed one of --store (an LMDB vector store) or --out (a shard directory for `load`)")
+    shard = parse_shard(args.shard)
+    if shard != (0, 1) and not (args.out and args.cards):
+        raise SystemExit("--shard needs --cards and --out: shards are key ranges of a card store, merged by `load`")
     if args.cards:
         from .card_store import CardStore
 
@@ -142,8 +151,14 @@ def cmd_embed(args):
     encoder = Encoder(device=args.device, max_seq_length=args.max_seq_length, model=args.model)
     dims = args.dims or (DEFAULT_DIMS[args.scope] if encoder.profile["matryoshka"] else encoder.native_dims)
     encoder.check_dims(dims)
-    writer = VectorWriter(args.store, args.scope, dims, chunk_rows=args.chunk_rows, vector_dtype=args.vector_dtype,
-                          model=encoder.name, restart=args.restart)
+    if args.out:
+        from .vector_shards import ShardWriter
+
+        writer = ShardWriter(args.out, args.scope, dims, vector_dtype=args.vector_dtype, model=encoder.name,
+                             shard=shard, restart=args.restart)
+    else:
+        writer = VectorWriter(args.store, args.scope, dims, chunk_rows=args.chunk_rows,
+                              vector_dtype=args.vector_dtype, model=encoder.name, restart=args.restart)
     if writer.meta.get("model") not in (None, encoder.name):
         raise SystemExit(f"{args.store} {args.scope} was started with {writer.meta['model']}; "
                          f"use another --store, or --restart to rebuild it with {encoder.name}")
@@ -156,11 +171,12 @@ def cmd_embed(args):
           f"{'resuming after ' + resume if resume else 'from the start'} ({writer.count:,} done)", flush=True)
 
     if args.cards:
-        batches = source.batches(resume, args.batch)
+        batches = source.batches(resume, args.batch, *shard_bounds(shard))
         if args.limit:
             batches = _limited(batches, args.limit)
         batches = prefetch(batches)
-        print(f"{args.scope}: reading cards from {args.cards}", flush=True)
+        part = f" (shard {shard[0]} of {shard[1]})" if shard[1] > 1 else ""
+        print(f"{args.scope}: reading cards from {args.cards}{part}", flush=True)
     else:
         members = (uuid for uuid, _ in labels.scope_members(args.scope, resume))
         if args.limit:
@@ -184,6 +200,18 @@ def cmd_embed(args):
     print(f"{args.scope}: complete, {writer.count:,} vectors in {time.time() - started:,.0f}s"
           + (f" (--limit {args.limit:,} trial; --restart for the full scope)" if args.limit else ""))
     writer.close()
+    if args.out:
+        print(f"{args.scope}: vectors in {args.out}; `load` them into a store, then index")
+    elif not args.no_index:
+        cmd_index(args)
+
+
+def cmd_load(args):
+    from .vector_shards import load_shards
+
+    started = time.time()
+    loaded = load_shards(args.store, args.scope, args.shards, restart=args.restart)
+    print(f"{args.scope}: loaded {loaded:,} vectors into {args.store} in {time.time() - started:,.0f}s", flush=True)
     if not args.no_index:
         cmd_index(args)
 
@@ -266,7 +294,10 @@ def main(argv=None):
     p.add_argument("--card-workers", type=int, default=-1,
                    help="processes building cards (default: the CPUs this job may use, less two; 0 = one thread)")
     p.add_argument("--restart", action="store_true", help="with --out: rebuild a scope already built")
-    p = add("embed", cmd_embed, "store", "scope", "cards", "device")
+    p = add("embed", cmd_embed, "scope", "cards", "device")
+    p.add_argument("--store", default=None, help="LMDB vector store to write (or --out)")
+    p.add_argument("--out", default=None, help="shard directory to write instead of a store; `load` merges them")
+    p.add_argument("--shard", default=None, help="I/N: embed only the I-th of N key ranges of --cards (with --out)")
     p.add_argument("--cards", default=None, help="card store built by `cards --out`: no records, labels or facets needed")
     p.add_argument("--records", default=None, help="record LMDB, to build cards as it goes (instead of --cards)")
     p.add_argument("--labels", default=None, help="label store, to build cards as it goes (instead of --cards)")
@@ -284,6 +315,12 @@ def main(argv=None):
     p.add_argument("--vector-dtype", default="float32", choices=["float32", "float16"])
     p.add_argument("--restart", action="store_true")
     p.add_argument("--no-index", action="store_true", help="skip building the graph at the end")
+    p.add_argument("--quantization", default="bf16")
+    p.add_argument("--connectivity", type=int, default=16)
+    p = add("load", cmd_load, "store", "scope")
+    p.add_argument("shards", nargs="+", help="shard directories written by `embed --out` (other scopes are ignored)")
+    p.add_argument("--restart", action="store_true", help="replace the scope if the store already has it")
+    p.add_argument("--no-index", action="store_true", help="skip building the graph after loading")
     p.add_argument("--quantization", default="bf16")
     p.add_argument("--connectivity", type=int, default=16)
     p = add("index", cmd_index, "store", "scope")

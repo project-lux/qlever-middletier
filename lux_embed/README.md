@@ -99,6 +99,26 @@ python -m lux_embed embed --cards cards-work.lmdb --store vectors-work.lmdb --sc
   still being built, unless it's a `--limit` trial.
 - **One writer per file:** give each scope that runs at the same time its own card store and vector store.
 
+### Vectors as files, loaded afterwards
+
+GPU jobs can write plain files instead of an LMDB store, and a big class can be split by key range
+over several GPUs:
+
+```bash
+python -m lux_embed embed --cards cards-item.lmdb --scope item --out vec/item-3 --shard 3/8 \
+    --model microsoft/harrier-oss-v1-0.6b --encode-batch 256 --batch 8192 --vector-dtype float16
+python -m lux_embed load --store vectors.lmdb --scope item vec/item-*       # one CPU job, then the graph
+```
+
+- **What a shard holds:** a directory with `vectors.bin` (the rows), `iris.txt` and `meta.json`. It
+  resumes after the last flushed batch, like `--store`.
+- **What `load` does:** checks that the shards are finished, use the same model, width and dtype, and
+  cover `0..N-1` once each. Then it writes them into the store in key order, byte for byte what
+  `embed --store` would have written, and builds the graph (`--no-index` to skip).
+- **Why bother:** no GPU job ever opens an LMDB store, so there's no writer contention, and every
+  class can be loaded into the one `vectors.lmdb` that the sidecar reads. A store that already holds
+  the scope needs `--restart`.
+
 ## Extracting facets where QLever runs
 
 When the embedding machine can't reach QLever, extract Stage 1 on the QLever host. It needs only

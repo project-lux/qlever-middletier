@@ -120,3 +120,57 @@ def test_writer_commits_whole_chunks_and_resumes(tmp_path):
     assert np.allclose(store.get_vector(iris[17]), vectors[17])
     assert store.search_global(vectors[3], 1)[0][0] == iris[3]
     store.close()
+
+
+def test_shards_load_into_the_store_embed_would_have_written(tmp_path):
+    import lmdb
+
+    from lux_embed.vector_shards import ShardWriter, load_shards
+    from qleverlux.vectors.lmdb_vector_store import MAX_DBS, _open_dbs
+
+    rng = np.random.default_rng(1)
+    vectors = rng.standard_normal((25, 8)).astype(np.float32)
+    vectors /= np.linalg.norm(vectors, axis=1, keepdims=True)
+    iris = [f"https://lux.collections.yale.edu/data/concept/{i:08x}-0000-4000-8000-000000000000" for i in range(25)]
+    common = dict(vector_dtype="float16", model="m")
+
+    direct = VectorWriter(str(tmp_path / "direct.lmdb"), "concept", 8, chunk_rows=10, **common)
+    direct.append(iris, vectors)
+    direct.finish()
+    direct.close()
+
+    first = ShardWriter(str(tmp_path / "s0"), "concept", 8, shard=(0, 2), **common)
+    first.append(iris[:6], vectors[:6])
+    first.close()
+    with open(tmp_path / "s0" / "vectors.bin", "ab") as f:  # a crash mid-batch: bytes past the last commit
+        f.write(b"\1" * 40)
+    first = ShardWriter(str(tmp_path / "s0"), "concept", 8, shard=(0, 2), **common)
+    assert first.count == 6 and first.cursor == iris[5]
+    first.append(iris[6:12], vectors[6:12])
+    first.finish()
+    first.close()
+    second = ShardWriter(str(tmp_path / "s1"), "concept", 8, shard=(1, 2), **common)
+    second.append(iris[12:], vectors[12:])
+    second.close()
+
+    with pytest.raises(SystemExit):  # shard 1 isn't finished
+        load_shards(str(tmp_path / "loaded.lmdb"), "concept", [str(tmp_path / "s1"), str(tmp_path / "s0")])
+    second = ShardWriter(str(tmp_path / "s1"), "concept", 8, shard=(1, 2), **common)
+    second.finish()
+    second.close()
+    loaded = load_shards(str(tmp_path / "loaded.lmdb"), "concept", [str(tmp_path / "s1"), str(tmp_path / "s0")],
+                         restart=True, chunk_rows=10)
+    assert loaded == 25
+
+    def dump(path):
+        env = lmdb.open(path, readonly=True, lock=False, max_dbs=MAX_DBS, subdir=True)
+        dbs = _open_dbs(env, "concept", create=False)
+        with env.begin() as txn:
+            out = {name: list(txn.cursor(db=db)) for name, db in dbs.items()}
+        env.close()
+        return out
+
+    loaded_dump, direct_dump = dump(str(tmp_path / "loaded.lmdb")), dump(str(tmp_path / "direct.lmdb"))
+    assert loaded_dump.keys() == direct_dump.keys()
+    for name in loaded_dump:  # chunks, IRIs and meta: byte for byte what embed --store writes
+        assert loaded_dump[name] == direct_dump[name], name

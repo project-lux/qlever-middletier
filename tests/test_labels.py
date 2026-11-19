@@ -119,6 +119,11 @@ def test_card_store_export_matches_the_thread_and_resumes(tmp_path):
     assert [c for b in store.batches(None, 1000) for c in b] == expected
     after = expected[999][0].rsplit("/", 1)[-1]  # what embed resumes from: the last IRI's UUID
     assert [c for b in store.batches(after, 1000) for c in b] == expected[1000:]
+    from lux_embed.vector_shards import shard_bounds  # four key-range shards cover the scope exactly once
+    sharded = [c for i in range(4) for b in store.batches(None, 1000, *shard_bounds((i, 4))) for c in b]
+    assert sharded == expected
+    assert [c for b in store.batches(after, 1000, *shard_bounds((0, 4))) for c in b] == \
+        [c for c in expected[1000:] if c[0].rsplit("/", 1)[-1] < "40000000"]  # a shard resumed mid-range
 
     # as if a build died after 1,000 cards: the rerun picks up there and ends identical
     writer = CardWriter(str(tmp_path / "partial.lmdb"), "agent")

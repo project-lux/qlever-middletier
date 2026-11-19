@@ -101,16 +101,21 @@ class CardStore:
             raw, self.db = None, None
         self.meta = json.loads(raw) if raw else None
 
-    def batches(self, after: str | None, size: int) -> Iterator[list[tuple[str, str, str]]]:
-        """``(iri, title, text)`` lists of ``size`` cards, starting after the UUID ``after``."""
+    def batches(self, after: str | None, size: int, lower: bytes | None = None,
+                bound: bytes | None = None) -> Iterator[list[tuple[str, str, str]]]:
+        """``(iri, title, text)`` lists of ``size`` cards after the UUID ``after``, within ``[lower, bound)``."""
         with self.env.begin(db=self.db, buffers=True) as txn:
             cursor = txn.cursor()
-            start = uuid_bytes(after) if after else None
+            skip = uuid_bytes(after) if after else None
+            start = max(filter(None, (skip, lower)), default=None)
             if not (cursor.set_range(start) if start else cursor.first()):
                 return
             batch = []
             for key, value in cursor:
-                if start is not None and bytes(key) == start:
+                key = bytes(key)
+                if bound is not None and key >= bound:
+                    break
+                if key == skip:
                     continue
                 batch.append(unpack(value))
                 if len(batch) == size:
