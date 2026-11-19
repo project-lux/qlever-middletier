@@ -61,11 +61,14 @@ That's about 12 hours for all 14.3M MDS records. The full ~75M LUX instance is a
    3. Install it with `pip install ./USearch`.
 
    Building graphs only needs stock v3. The patch matters only where graphs are served in place.
-3. **Python environment:** a fresh venv with
+3. **Python environment:** a fresh venv on **Python 3.12 or later**. numpy ≥ 2.5 and USearch 3 both require it; `uv python install 3.12` provides one without root. The venv needs
    - a CUDA build of torch;
    - `'sentence-transformers[image]>=6.1'`, `lmdb`, `orjson` and `numpy`.
 
-   Then make the model available locally, either with `huggingface-cli download google/embeddinggemma-2` or by copying the HF cache.
+   Then make the model available locally. The venv has the `hf` command (from `huggingface_hub`, installed with sentence-transformers; older releases called it `huggingface-cli`):
+   - `hf download google/embeddinggemma-2` (gated: accept its terms on the Hub and run `hf auth login` first);
+   - or `hf download microsoft/harrier-oss-v1-0.6b`;
+   - or copy the model's folder from another machine's HF cache (`~/.cache/huggingface/hub/models--<org>--<name>`).
 4. **Inputs:**
    - Build the label store on that machine (`labels`), or copy it over.
    - Facets: either give `--qlever` an endpoint serving the same dataset, or extract them beside QLever
