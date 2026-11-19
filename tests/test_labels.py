@@ -1,4 +1,5 @@
-"""Pass 1 (labels) must cover every record exactly once in both record-LMDB layouts, and say so as it goes.
+"""Pass 1 (labels) must cover every record exactly once in both record-LMDB layouts, and say so as it goes;
+`kinds` must sample evenly without walking the whole store.
 
 Run with the vectors venv: ../vectors/.venv/bin/python -m pytest tests/test_labels.py -q
 """
@@ -56,3 +57,14 @@ def test_labels_reports_progress_and_labels_everything(tmp_path, binary, capsys)
     assert lines[-1].startswith("labels: 500/500 records, 4,096/4,096 partitions")
     labels = LabelStore(str(tmp_path / "labels.lmdb"))
     assert labels.get(str(ids[7])) == ("Person", "Person 7")
+
+
+@pytest.mark.parametrize("binary", [True, False])
+def test_sample_seeks_spread_records_without_repeats(tmp_path, binary):
+    make_store(str(tmp_path / "r.lmdb"), binary, count=2000)
+    store = RecordStore(str(tmp_path / "r.lmdb"))
+    names = [r["identified_by"][0]["content"] for r in store.sample(200)]
+    assert 150 < len(names) <= 200 and len(set(names)) == len(names)  # seeks that collide are dropped
+    numbers = sorted(int(n.split()[1]) for n in names)
+    assert numbers[0] < 200 and numbers[-1] > 1800  # spread over the store, not its first stretch
+    assert len(list(store.sample(5000))) == 2000  # more than the store holds: every record once
