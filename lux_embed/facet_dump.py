@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import time
 import urllib.parse
 import urllib.request
@@ -74,8 +73,15 @@ def _download_targets(qlever: QLever, facets: Facets, path: str) -> int:
     body = urllib.parse.urlencode({"query": PREFIX + query}).encode()
     request = urllib.request.Request(qlever.endpoint, data=body, headers={"Accept": "text/tab-separated-values"})
     tmp = path + ".tmp"
+    print("listing targets (one query; QLever computes it before sending anything)...", flush=True)
     with urllib.request.urlopen(request, timeout=max(qlever.timeout, 600)) as response, open(tmp, "wb") as raw:
-        shutil.copyfileobj(response, raw, 1 << 20)
+        received, reported = 0, time.time()
+        while chunk := response.read(1 << 20):
+            raw.write(chunk)
+            received += len(chunk)
+            if time.time() - reported > 10:
+                reported = time.time()
+                print(f"listing targets: {received / (1 << 20):,.0f} MB received", flush=True)
     count = 0
     with open(tmp) as tsv, open(path + ".iris", "w") as out:
         next(tsv, None)  # header
