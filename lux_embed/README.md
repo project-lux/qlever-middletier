@@ -148,6 +148,15 @@ The cards come out identical to `--qlever`. `--facets` on a scope that hasn't be
 A partly extracted scope warns and builds the remaining cards without facets. Scopes other than
 work/agent/set ignore it.
 
+## Known data notes (full LUX)
+
+- **Library holdings:** an object that carries a text and has nothing of its own (no maker, place,
+  technique, date, material or statement) gets no card. That's most library books: Books + Collection
+  Item + a library unit. Its work card says "Realized as: Books" instead. Work facets keep the carrier
+  type even though Books is on 77% of objects (`KEEP_UBIQUITOUS`). The blanket "Collection Item"
+  (99.8%) is dropped from every Type and "Realized as". Objects that *show* a work (prints, specimens,
+  coins) always keep their card. `cards --out` reports how many records got no card.
+
 ## Known data notes (MDS)
 
 - **Works:** these are all `VisualItem`. Their maker, place and date live on the carrying object, so work cards depend on Stage 1.

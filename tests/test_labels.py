@@ -132,3 +132,54 @@ def test_card_store_export_matches_the_thread_and_resumes(tmp_path):
     main(["cards", *common, "--out", str(tmp_path / "partial.lmdb"), "--card-workers", "0"])
     partial = CardStore(str(tmp_path / "partial.lmdb"), "agent")
     assert partial.meta["count"] == 3000 and [c for b in partial.batches(None, 512) for c in b] == expected
+
+
+def test_bare_holdings_get_no_card_and_works_name_their_carrier(tmp_path):
+    from lux_embed.cards import CardBuilder
+    from lux_embed.labels import LabelStore
+    from lux_embed.records import RecordStore
+
+    D = "https://lux.collections.yale.edu/data/"
+    ids = {name: str(uuid.UUID(int=i + 1)) for i, name in enumerate(
+        ["books", "item_class", "work", "library", "museum", "unit", "artist"])}
+
+    def ref(kind, key):
+        return {"id": f"{D}{kind}/{ids[key]}", "type": "Type"}
+
+    def named(doc, label):
+        doc["identified_by"] = [{"type": "Name", "content": label,
+                                 "classified_as": [{"id": "x", "equivalent": [{"id": PRIMARY}]}]}]
+        return doc
+
+    def concept(key, label, aat):
+        return named({"id": f"{D}concept/{ids[key]}", "type": "Type",
+                      "equivalent": [{"id": f"http://vocab.getty.edu/aat/{aat}"}]}, label)
+
+    docs = [
+        concept("books", "Books", "300028051"),
+        concept("item_class", "Collection Item", "300404024"),
+        named({"id": f"{D}text/{ids['work']}", "type": "LinguisticObject"}, "The physics of quantum information"),
+        named({"id": f"{D}set/{ids['unit']}", "type": "Set"}, "Marx Library"),
+        named({"id": f"{D}person/{ids['artist']}", "type": "Person"}, "A. Printmaker"),
+        named({"id": f"{D}object/{ids['library']}", "type": "HumanMadeObject", "carries": [ref("text", "work")],
+               "classified_as": [ref("concept", "books"), ref("concept", "item_class")],
+               "member_of": [ref("set", "unit")]}, "The physics of quantum information"),
+        named({"id": f"{D}object/{ids['museum']}", "type": "HumanMadeObject", "carries": [ref("text", "work")],
+               "classified_as": [ref("concept", "books")],
+               "produced_by": {"type": "Production", "carried_out_by": [ref("person", "artist")]}}, "An artist's book"),
+    ]
+    env = lmdb.open(str(tmp_path / "r.lmdb"), map_size=1 << 26, max_dbs=2, subdir=True)
+    with env.begin(write=True, db=env.open_db(b"data")) as txn:
+        for doc in docs:
+            txn.put(uuid.UUID(doc["id"].rsplit("/", 1)[-1]).bytes, zlib.compress(json.dumps(doc).encode()))
+    env.close()
+    build_labels(str(tmp_path / "r.lmdb"), str(tmp_path / "labels.lmdb"), workers=1)
+    records = RecordStore(str(tmp_path / "r.lmdb"))
+    builder = CardBuilder(records, LabelStore(str(tmp_path / "labels.lmdb")))
+
+    assert builder.card(records.get(ids["library"])) is None  # Books, Collection Item and a library: nothing of its own
+    museum = builder.card(records.get(ids["museum"]))
+    assert museum and "Made by: A. Printmaker" in museum[1] and "Type: Books." in museum[1]
+    # the work names its carrier, without the blanket class, even though Books is on 77% of LUX objects
+    facets = {"object type": [ids["item_class"], ids["books"]]}
+    assert "Realized as: Books." in builder.card(records.get(ids["work"]), facets)[1]
