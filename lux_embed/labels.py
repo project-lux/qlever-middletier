@@ -18,7 +18,7 @@ from functools import lru_cache
 import lmdb
 
 from .linkedart import primary_name
-from .records import SCOPE_OF_CLASS, RecordStore, uuid_bytes, uuid_str
+from .records import SCOPE_OF_CLASS, RecordStore, available_cpus, uuid_bytes, uuid_str
 
 MAX_LABEL_CHARS = 200
 
@@ -49,7 +49,7 @@ def build_labels(records_path: str, out_path: str, workers: int = 0, partitions:
     """
     store = RecordStore(records_path)
     ranges, expected = store.partitions(partitions), len(store)
-    workers = workers or max(1, mp.cpu_count() - 2)
+    workers = workers or max(1, available_cpus() - 2)
     print(f"labels: scanning {expected:,} records in {len(ranges):,} partitions with {workers} workers",
           flush=True)
     env = lmdb.open(out_path, map_size=1 << 40, max_dbs=2, subdir=True, sync=False, writemap=False)

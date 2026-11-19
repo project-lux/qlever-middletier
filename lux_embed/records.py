@@ -12,6 +12,7 @@ Either way :meth:`RecordStore.get` answers the Linked Art record itself.
 
 from __future__ import annotations
 
+import os
 import random
 import uuid as uuidlib
 import zlib
@@ -63,6 +64,14 @@ def uuid_bytes(iri_or_uuid: str) -> bytes:
 
 def uuid_str(raw: bytes) -> str:
     return str(uuidlib.UUID(bytes=raw))
+
+
+def available_cpus() -> int:
+    """CPUs this process may run on: a Slurm job's allocation, not every core on the node."""
+    try:
+        return len(os.sched_getaffinity(0))
+    except AttributeError:  # macOS
+        return os.cpu_count() or 1
 
 
 class RecordStore:

@@ -9,8 +9,8 @@
     python -m lux_embed query   --store V.lmdb --labels L.lmdb --scope agent "dutch landscape painters"
 
 ``embed`` resumes where it stopped (each committed chunk records its last IRI); pass ``--restart``
-to rebuild a scope. Cards and Stage 1 facets are prepared in a background thread while the encoder
-works on the previous batch.
+to rebuild a scope. Cards and Stage 1 facets are built by a pool of worker processes
+(``--card-workers``, default: the CPUs this job may use, less two) while the encoder works.
 """
 
 from __future__ import annotations
@@ -19,65 +19,14 @@ import argparse
 import collections
 import itertools
 import os
-import queue
-import threading
 import time
 
 from .facets import FACET_BATCH
+from .produce import FACET_SCOPES, card_batches, cards_for, facets_for, read_records
+from .produce import open_inputs as _open
+from .records import available_cpus
 
 DEFAULT_DIMS = {"item": 512, "work": 512, "set": 768, "agent": 768, "place": 768, "concept": 768, "event": 768}
-FACET_SCOPES = {"work", "agent", "set"}
-
-
-def _read(records, uuids) -> list[dict]:
-    """The records of ``uuids`` (missing ones dropped), decompressed once per batch."""
-    with records.env.begin(db=records.db) as txn:
-        return [r for r in (records.get(uuid, txn) for uuid in uuids) if r]
-
-
-def _facets_for(facets, batch: list[dict]) -> dict:
-    if facets is None:
-        return {}
-    iris = [record["id"] for record in batch]
-    found = {}
-    for start in range(0, len(iris), FACET_BATCH):
-        found.update(facets.fetch(iris[start : start + FACET_BATCH]))
-    return found
-
-
-def _cards_for(builder, batch: list[dict], facets: dict) -> list[tuple[str, str, str]]:
-    """``(iri, title, text)`` for every record of the batch that yields a card."""
-    out = []
-    for record in batch:
-        card = builder.card(record, facets.get(record["id"], {}))
-        if card:
-            out.append((record["id"], *card))
-    return out
-
-
-def _open(args, need_facets: bool):
-    from .cards import CardBuilder
-    from .facets import Facets, QLever
-    from .labels import LabelStore
-    from .records import RecordStore
-
-    records, labels = RecordStore(args.records), LabelStore(args.labels)
-    facets = None
-    if need_facets and args.qlever and args.facets:
-        raise SystemExit("--qlever and --facets are alternatives; give one")
-    if need_facets and args.facets and args.scope in FACET_SCOPES:
-        from .facet_dump import FacetDump
-
-        facets = FacetDump(args.facets, args.scope)
-        if not facets.enabled:
-            raise SystemExit(f"{args.facets} has no {args.scope} facets; run `facets --scope {args.scope}` "
-                             f"beside QLever, or drop --facets to build cards without them")
-    elif need_facets and args.qlever and args.scope in FACET_SCOPES:
-        facets = Facets(QLever(args.qlever), args.scope, cache_dir=os.path.dirname(os.path.abspath(args.labels)))
-        if not facets.enabled:
-            print(f"facets: the endpoint has none of the {args.scope} facet predicates; cards go without", flush=True)
-            facets = None
-    return records, labels, CardBuilder(records, labels, max_note_words=args.note_words), facets
 
 
 def cmd_labels(args):
@@ -122,8 +71,8 @@ def cmd_kinds(args):
 def cmd_cards(args):
     records, labels, builder, facets = _open(args, need_facets=True)
     uuids = [uuid for uuid, _ in itertools.islice(labels.scope_members(args.scope, args.after), args.limit)]
-    batch = _read(records, uuids)
-    for iri, title, text in _cards_for(builder, batch, _facets_for(facets, batch)):
+    batch = read_records(records, uuids)
+    for iri, title, text in cards_for(builder, batch, facets_for(facets, batch)):
         print(f"{iri}\n  title: {title} | text: {text}\n")
 
 
@@ -155,22 +104,11 @@ def cmd_embed(args):
     if args.limit:
         members = itertools.islice(members, args.limit)
 
-    batches: queue.Queue = queue.Queue(maxsize=2)
-
-    def produce():  # cards + facets for the next batch while the encoder works on this one
-        try:
-            while uuids := list(itertools.islice(members, args.batch)):
-                batch = _read(records, uuids)
-                batches.put(_cards_for(builder, batch, _facets_for(facets, batch)))
-        except BaseException as error:  # surface producer failures in the main thread
-            batches.put(error)
-        batches.put(None)
-
-    threading.Thread(target=produce, daemon=True).start()
+    workers = available_cpus() - 2 if args.card_workers < 0 else args.card_workers
+    workers = max(0, min(workers, 64))
+    print(f"{args.scope}: building cards in {f'{workers} worker processes' if workers else 'one thread'}", flush=True)
     done, started = 0, time.time()
-    while (cards := batches.get()) is not None:
-        if isinstance(cards, BaseException):
-            raise cards
+    for cards in card_batches(args, (records, labels, builder, facets), members, workers):
         if not cards:
             continue
         vectors = encoder.encode_documents([(title, text) for _, title, text in cards], dims, args.encode_batch)
@@ -238,7 +176,7 @@ def main(argv=None):
         return p
 
     p = add("labels", cmd_labels, "records", "labels")
-    p.add_argument("--workers", type=int, default=0)
+    p.add_argument("--workers", type=int, default=0, help="default: the CPUs this job may use, less two")
     p = add("facets", cmd_facets)
     p.add_argument("--qlever", required=True, help="QLever endpoint serving the dataset, e.g. http://localhost:7011")
     p.add_argument("--out", required=True, help="facet LMDB directory to write (copy it to the embedding machine)")
@@ -260,6 +198,8 @@ def main(argv=None):
     p.add_argument("--limit", type=int, default=0, help="embed at most this many records (for trials)")
     p.add_argument("--batch", type=int, default=2048, help="records per card/facet batch")
     p.add_argument("--encode-batch", type=int, default=64)
+    p.add_argument("--card-workers", type=int, default=-1,
+                   help="processes building cards (default: the CPUs this job may use, less two; 0 = one thread)")
     p.add_argument("--max-seq-length", type=int, default=512)
     p.add_argument("--chunk-rows", type=int, default=4096)
     p.add_argument("--vector-dtype", default="float32", choices=["float32", "float16"])
