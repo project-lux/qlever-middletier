@@ -207,12 +207,19 @@ ranking. Stopwords (`config/stopwords.json`) are stripped; an all-stopword query
 surfaced as a 400.
 
 Text and vector relevance are each brought to 0..1 per result before they are added, so neither swamps the
-other. `?sscore = text_scale × SUM(?tscore) / MAX over the query + vector_scale × MAX(cosine)`. The scales are
-`QLMT_TEXT_SCORE_SCALE` and `QLMT_VECTOR_SCORE_SCALE`, both 1 by default. The text part has to be relative to
-the query's own best hit because raw view scores have no fixed range: measured top scores run from 4
+other. `?sscore = text_scale × SUM(?tscore) / MAX over the query + vector_scale × (cos − min) / (max − min)`,
+where `cos` is the result's `MAX(cosine)` and min/max are taken over the query's vector matches. The scales
+are `QLMT_TEXT_SCORE_SCALE` and `QLMT_VECTOR_SCORE_SCALE`, both 1 by default. The text part has to be relative
+to the query's own best hit because raw view scores have no fixed range: measured top scores run from 4
 (`name: landscape`) to 548 (`text: rembrandt`), so no constant squash fits both. Dividing by one number per
-query cannot reorder anything, so text-only rankings are exactly what they were. The max needs the whole
-grouped result, so the relevance query is `SELECT … { {grouped} {SELECT (MAX(?ts) AS ?tmax) {grouped}} }`.
+query cannot reorder anything, so text-only rankings are exactly what they were. The vector part is min-max
+scaled because raw cosines sit in a narrow band whose position depends on the model (top hits about 0.7–0.9
+for EmbeddingGemma 2, 0.5–0.75 for Harrier). Added raw, the model would decide how much a vector match weighs
+against text, in opposite directions for `AND` (where the spread matters) and `OR` (where the floor does).
+Text-only matches have no cosine and are kept out of the min; a lone vector match counts as 1. The maxima
+need the whole grouped result, so the relevance query is
+`SELECT … { {grouped} {SELECT (MAX(?ts) AS ?tmax) (MAX(?vs) AS ?vmax) (MIN(…) AS ?vmin) {grouped}} }`. A
+query with no text clause skips that subquery and ranks on the raw cosine, which orders identically.
 QLever shares the duplicated work for the text views (no measurable cost), but **not** for `SERVICE`: a mixed
 query calls the vector sidecar twice, about 40 ms extra. The 14/5/1 weights themselves are fixed when the
 index is built, not here.
