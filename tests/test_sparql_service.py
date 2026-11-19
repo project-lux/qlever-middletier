@@ -219,3 +219,30 @@ def test_combine_each_interleaves_every_seeds_neighbours(client):
                 expected.append(i)
     assert [r["c"]["value"] for r in rows] == [concept(i) for i in expected[:6]]
     assert [r["rank"]["value"] for r in rows] == [str(n) for n in range(1, 7)]
+
+
+def test_text_queries_use_the_model_the_store_was_built_with(tmp_path):
+    from qleverlux.vectors.lmdb_vector_store import VectorWriter
+    from sparql_service.app import LEGACY_MODEL, VectorService
+
+    def scope(path, name, model):
+        writer = VectorWriter(path, name, 4, model=model)
+        writer.append([concept(1)], np.ones((1, 4), dtype=np.float32) / 2)
+        writer.finish()
+        writer.close()
+
+    harrier = "microsoft/harrier-oss-v1-0.6b"
+    path = str(tmp_path / "one.lmdb")
+    scope(path, "concept", harrier)
+    scope(path, "place", harrier)
+    assert VectorService(path).model() == harrier
+
+    old = str(tmp_path / "old.lmdb")  # built before the meta recorded a model: EmbeddingGemma 2
+    build_store(old, [concept(i) for i in range(3)], np.eye(3, 4, dtype=np.float32), scope="concept")
+    assert VectorService(old).model() == LEGACY_MODEL
+
+    mixed = str(tmp_path / "mixed.lmdb")
+    scope(mixed, "concept", harrier)
+    scope(mixed, "place", LEGACY_MODEL)
+    with pytest.raises(SparqlError, match="mixes encoders"):
+        VectorService(mixed).model()

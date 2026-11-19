@@ -10,8 +10,10 @@ Execution follows the plan :mod:`sparql_service.sparql` parses:
   large constraint silently returns almost nothing.
 
 The query vector is an IRI's stored vector (from its own scope, sliced Matryoshka-style when the
-target index is narrower) or free text encoded with EmbeddingGemma 2's ``SearchQuery`` prompt. The
-encoder loads on first use, so IRI-only deployments never pay for it.
+target index is narrower) or free text encoded with the model the store was built with (its meta
+records it; stores from before that are EmbeddingGemma 2), using that model's query prompt. Every
+scope must share one model, because one text query vector serves them all. The encoder loads on
+first use, so IRI-only deployments never pay for it.
 
 QLever has no SERVICE timeout, so the service enforces its own deadline. Searches run on worker
 threads with no USearch executor pool (an idle pool busy-spins its workers).
@@ -31,7 +33,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 from starlette.concurrency import run_in_threadpool
 
-from qleverlux.vectors.lmdb_vector_store import MAX_DBS, LmdbVectorStore, scopes_in
+from qleverlux.vectors.lmdb_vector_store import MAX_DBS, LmdbVectorStore, _open_dbs, scopes_in
 
 from .sparql import XSD, Plan, SparqlError, parse
 
@@ -43,6 +45,7 @@ SCOPE_OF_SEGMENT = {
     "activity": "event", "event": "event", "period": "event",
 }
 RESULTS_JSON = "application/sparql-results+json"
+LEGACY_MODEL = "google/embeddinggemma-2"  # what stores built before the meta recorded a model used
 
 
 def scope_of(iri: str) -> str | None:
@@ -99,12 +102,32 @@ class VectorService:
 
     # -- query vectors --------------------------------------------------------------------------
 
+    def models(self) -> dict[str, str]:
+        """The encoder each scope's vectors were built with, from its meta (graph or not)."""
+        out = {}
+        for scope in self.scopes():
+            dbs = _open_dbs(self.env, scope, create=False)
+            with self.env.begin() as txn:
+                raw = txn.get(b"meta", db=dbs["meta"])
+            out[scope] = (json.loads(bytes(raw)).get("model") if raw else None) or LEGACY_MODEL
+        return out
+
+    def model(self) -> str:
+        """The one encoder text queries need: every scope's, which must be the same."""
+        models = self.models()
+        distinct = sorted(set(models.values()))
+        if len(distinct) > 1:
+            raise SparqlError("this store mixes encoders ("
+                              + ", ".join(f"{scope}: {model}" for scope, model in sorted(models.items()))
+                              + "); a text query is encoded once for every scope, so rebuild them with one model")
+        return distinct[0] if distinct else LEGACY_MODEL
+
     def encoder(self):
         with self._encoder_lock:
             if self._encoder is None:
                 from lux_embed.encoder import Encoder
 
-                self._encoder = Encoder(device=self.device)
+                self._encoder = Encoder(device=self.device, model=self.model())
             return self._encoder
 
     def query_vectors(self, plan: Plan, widest: int) -> np.ndarray:
