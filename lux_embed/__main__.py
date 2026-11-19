@@ -4,13 +4,17 @@
     python -m lux_embed kinds   --records R.lmdb                            # statement kinds, for the skip list
     python -m lux_embed facets  --qlever URL --out F.lmdb [--scope agent]   # Stage 1 offline, beside QLever
     python -m lux_embed cards   --records R.lmdb --labels L.lmdb --scope agent --limit 5 [--qlever URL | --facets F.lmdb]
+    python -m lux_embed cards   --records R.lmdb --labels L.lmdb --scope agent --facets F.lmdb --out C.lmdb  # CPU stage
     python -m lux_embed embed   --records R.lmdb --labels L.lmdb --store V.lmdb --scope agent [--qlever URL | --facets F.lmdb]
+    python -m lux_embed embed   --cards C.lmdb --store V.lmdb --scope agent                              # GPU stage
     python -m lux_embed index   --store V.lmdb --scope agent
     python -m lux_embed query   --store V.lmdb --labels L.lmdb --scope agent "dutch landscape painters"
 
 ``embed`` resumes where it stopped (each committed chunk records its last IRI); pass ``--restart``
 to rebuild a scope. Cards and Stage 1 facets are built by a pool of worker processes
-(``--card-workers``, default: the CPUs this job may use, less two) while the encoder works.
+(``--card-workers``, default: the CPUs this job may use, less two) while the encoder works. On a
+cluster, build them first on CPUs with ``cards --out`` and give ``embed --cards`` the result:
+the GPU job then needs only the card store, and never waits for cards.
 """
 
 from __future__ import annotations
@@ -22,9 +26,8 @@ import os
 import time
 
 from .facets import FACET_BATCH
-from .produce import FACET_SCOPES, card_batches, cards_for, facets_for, read_records
+from .produce import FACET_SCOPES, card_batches, card_workers, cards_for, facets_for, prefetch, read_records
 from .produce import open_inputs as _open
-from .records import available_cpus
 
 DEFAULT_DIMS = {"item": 512, "work": 512, "set": 768, "agent": 768, "place": 768, "concept": 768, "event": 768}
 
@@ -69,11 +72,49 @@ def cmd_kinds(args):
 
 
 def cmd_cards(args):
+    if args.out:
+        return _export_cards(args)
     records, labels, builder, facets = _open(args, need_facets=True)
-    uuids = [uuid for uuid, _ in itertools.islice(labels.scope_members(args.scope, args.after), args.limit)]
+    uuids = [uuid for uuid, _ in itertools.islice(labels.scope_members(args.scope, args.after), args.limit or 5)]
     batch = read_records(records, uuids)
     for iri, title, text in cards_for(builder, batch, facets_for(facets, batch)):
         print(f"{iri}\n  title: {title} | text: {text}\n")
+
+
+def _export_cards(args):
+    """``cards --out``: every card of the scope into a card store, on CPUs, resumably."""
+    from .card_store import CardWriter
+
+    records, labels, builder, facets = _open(args, need_facets=True)
+    writer = CardWriter(args.out, args.scope, restart=args.restart)
+    if writer.complete:
+        print(f"{args.scope}: already complete ({writer.meta['count']:,} cards); --restart to rebuild")
+        return
+    resume = writer.cursor
+    members = (uuid for uuid, _ in labels.scope_members(args.scope, resume))
+    if args.limit:
+        members = itertools.islice(members, args.limit)
+    workers = card_workers(args.card_workers)
+    print(f"{args.scope}: building cards in {f'{workers} worker processes' if workers else 'one thread'}, "
+          f"{'resuming after ' + resume if resume else 'from the start'} ({writer.meta['count']:,} done)", flush=True)
+    done, started, reported = 0, time.time(), time.time()
+    for rows in card_batches(args, (records, labels, builder, facets), members, workers, packed=True):
+        writer.append(rows)
+        done += len(rows)
+        now = time.time()
+        if rows and now - reported >= 30:
+            reported = now
+            # UUID keys are uniform, so the last key's position in the key space is the share done
+            share = int.from_bytes(rows[-1][0], "big") / (1 << 128)
+            rate = done / (now - started)
+            start_share = int.from_bytes(bytes.fromhex(resume.replace("-", "")), "big") / (1 << 128) if resume else 0
+            left = (now - started) * (1 - share) / max(share - start_share, 1e-9)
+            print(f"{args.scope}: {writer.meta['count']:,} cards, {share:.1%} of the key space "
+                  f"({rate:,.0f}/s, ~{left / 60:,.0f} min left)", flush=True)
+    writer.finish(limit=args.limit)
+    print(f"{args.scope}: complete, {writer.meta['count']:,} cards in {time.time() - started:,.0f}s -> {args.out}"
+          + (f" (--limit {args.limit:,} trial; --restart for the full scope)" if args.limit else ""))
+    writer.close()
 
 
 def cmd_embed(args):
@@ -83,7 +124,21 @@ def cmd_embed(args):
 
     from .encoder import Encoder
 
-    records, labels, builder, facets = _open(args, need_facets=True)
+    if args.cards:
+        from .card_store import CardStore
+
+        source = CardStore(args.cards, args.scope)
+        if source.meta is None:
+            raise SystemExit(f"{args.cards} has no {args.scope} cards; build them with `cards --out`")
+        if not source.meta["complete"] and not args.limit:
+            raise SystemExit(f"{args.cards} has only {source.meta['count']:,} {args.scope} cards so far; "
+                             f"finish `cards --out` first (or pass --limit for a trial)")
+        if source.meta.get("limit"):
+            print(f"{args.cards}: a --limit {source.meta['limit']:,} card trial, not the whole scope", flush=True)
+    elif not (args.records and args.labels):
+        raise SystemExit("embed needs --cards, or --records and --labels to build cards as it goes")
+    else:
+        records, labels, builder, facets = _open(args, need_facets=True)
     encoder = Encoder(device=args.device, max_seq_length=args.max_seq_length, model=args.model)
     dims = args.dims or (DEFAULT_DIMS[args.scope] if encoder.profile["matryoshka"] else encoder.native_dims)
     encoder.check_dims(dims)
@@ -100,15 +155,22 @@ def cmd_embed(args):
     print(f"{args.scope}: {dims}d on {encoder.device}/{encoder.dtype}, "
           f"{'resuming after ' + resume if resume else 'from the start'} ({writer.count:,} done)", flush=True)
 
-    members = (uuid for uuid, _ in labels.scope_members(args.scope, resume))
-    if args.limit:
-        members = itertools.islice(members, args.limit)
-
-    workers = available_cpus() - 2 if args.card_workers < 0 else args.card_workers
-    workers = max(0, min(workers, 64))
-    print(f"{args.scope}: building cards in {f'{workers} worker processes' if workers else 'one thread'}", flush=True)
+    if args.cards:
+        batches = source.batches(resume, args.batch)
+        if args.limit:
+            batches = _limited(batches, args.limit)
+        batches = prefetch(batches)
+        print(f"{args.scope}: reading cards from {args.cards}", flush=True)
+    else:
+        members = (uuid for uuid, _ in labels.scope_members(args.scope, resume))
+        if args.limit:
+            members = itertools.islice(members, args.limit)
+        workers = card_workers(args.card_workers)
+        print(f"{args.scope}: building cards in {f'{workers} worker processes' if workers else 'one thread'}",
+              flush=True)
+        batches = card_batches(args, (records, labels, builder, facets), members, workers)
     done, started = 0, time.time()
-    for cards in card_batches(args, (records, labels, builder, facets), members, workers):
+    for cards in batches:
         if not cards:
             continue
         vectors = encoder.encode_documents([(title, text) for _, title, text in cards], dims, args.encode_batch)
@@ -124,6 +186,15 @@ def cmd_embed(args):
     writer.close()
     if not args.no_index:
         cmd_index(args)
+
+
+def _limited(batches, limit: int):
+    """The first ``limit`` cards of ``batches``."""
+    for batch in batches:
+        if limit <= 0:
+            return
+        yield batch[:limit]
+        limit -= len(batch)
 
 
 def cmd_index(args):
@@ -188,9 +259,17 @@ def main(argv=None):
     p = add("kinds", cmd_kinds, "records")
     p.add_argument("--sample", type=int, default=200_000)
     p = add("cards", cmd_cards, "records", "labels", "scope", "cards")
-    p.add_argument("--limit", type=int, default=5)
-    p.add_argument("--after", default=None, help="start after this UUID")
-    p = add("embed", cmd_embed, "records", "labels", "store", "scope", "cards", "device")
+    p.add_argument("--limit", type=int, default=0, help="cards to show (default 5), or with --out to build (trials)")
+    p.add_argument("--after", default=None, help="start after this UUID (preview only)")
+    p.add_argument("--out", default=None, help="build every card of the scope into this card store (CPU stage)")
+    p.add_argument("--batch", type=int, default=8192, help="cards per write")
+    p.add_argument("--card-workers", type=int, default=-1,
+                   help="processes building cards (default: the CPUs this job may use, less two; 0 = one thread)")
+    p.add_argument("--restart", action="store_true", help="with --out: rebuild a scope already built")
+    p = add("embed", cmd_embed, "store", "scope", "cards", "device")
+    p.add_argument("--cards", default=None, help="card store built by `cards --out`: no records, labels or facets needed")
+    p.add_argument("--records", default=None, help="record LMDB, to build cards as it goes (instead of --cards)")
+    p.add_argument("--labels", default=None, help="label store, to build cards as it goes (instead of --cards)")
     p.add_argument("--model", default="google/embeddinggemma-2",
                    help="sentence encoder; one with a profile in encoder.py (e.g. microsoft/harrier-oss-v1-0.6b)")
     p.add_argument("--dims", type=int, default=0, help="Matryoshka dimension (default per scope; full width "

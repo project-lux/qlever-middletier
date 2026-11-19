@@ -92,3 +92,38 @@ def test_card_pool_builds_the_threads_cards_in_order(tmp_path, binary):
     assert flat == [card for batch in threaded for card in batch]  # same cards, same order
     assert len(flat) == 3000 and [iri for iri, _, _ in flat] == sorted(iri for iri, _, _ in flat)
     assert all(len(batch) >= args.batch for batch in pooled[:-1])  # whole batches for the encoder
+
+
+def test_card_store_export_matches_the_thread_and_resumes(tmp_path):
+    import gc
+    from types import SimpleNamespace
+
+    from lux_embed.__main__ import main
+    from lux_embed.card_store import CardStore, CardWriter, pack
+    from lux_embed.produce import card_batches, open_inputs
+
+    make_store(str(tmp_path / "r.lmdb"), True, count=3000)
+    build_labels(str(tmp_path / "r.lmdb"), str(tmp_path / "labels.lmdb"), workers=2)
+    args = SimpleNamespace(records=str(tmp_path / "r.lmdb"), labels=str(tmp_path / "labels.lmdb"), facets=None,
+                           qlever=None, scope="agent", note_words=300, batch=700)
+    def threaded():  # its store handles close on return: py-lmdb opens a path once per process
+        inputs = open_inputs(args, need_facets=True)
+        return [c for b in card_batches(args, inputs, (u for u, _ in inputs[1].scope_members("agent")), 0) for c in b]
+
+    expected = threaded()
+    gc.collect()
+    common = ["--records", args.records, "--labels", args.labels, "--scope", "agent", "--batch", "700"]
+    main(["cards", *common, "--out", str(tmp_path / "cards.lmdb"), "--card-workers", "2"])
+    store = CardStore(str(tmp_path / "cards.lmdb"), "agent")
+    assert store.meta["complete"] and store.meta["count"] == 3000
+    assert [c for b in store.batches(None, 1000) for c in b] == expected
+    after = expected[999][0].rsplit("/", 1)[-1]  # what embed resumes from: the last IRI's UUID
+    assert [c for b in store.batches(after, 1000) for c in b] == expected[1000:]
+
+    # as if a build died after 1,000 cards: the rerun picks up there and ends identical
+    writer = CardWriter(str(tmp_path / "partial.lmdb"), "agent")
+    writer.append([pack(*card) for card in expected[:1000]])
+    writer.close()
+    main(["cards", *common, "--out", str(tmp_path / "partial.lmdb"), "--card-workers", "0"])
+    partial = CardStore(str(tmp_path / "partial.lmdb"), "agent")
+    assert partial.meta["count"] == 3000 and [c for b in partial.batches(None, 512) for c in b] == expected

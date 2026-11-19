@@ -23,6 +23,7 @@ from collections.abc import Iterator
 from concurrent.futures import ProcessPoolExecutor
 from types import SimpleNamespace
 
+from .card_store import pack
 from .facets import FACET_BATCH
 
 FACET_SCOPES = {"work", "agent", "set"}
@@ -92,14 +93,22 @@ def _init_worker(settings: dict) -> None:
     _inputs = open_inputs(SimpleNamespace(**settings), need_facets=True)
 
 
-def _piece(uuids: list[str]) -> list[tuple[str, str, str]]:
-    records, _, builder, facets = _inputs
+def _build(inputs, uuids: list[str], packed: bool) -> list:
+    records, _, builder, facets = inputs
     batch = read_records(records, uuids)
-    return cards_for(builder, batch, facets_for(facets, batch))
+    cards = cards_for(builder, batch, facets_for(facets, batch))
+    return [pack(*card) for card in cards] if packed else cards
 
 
-def card_batches(args, inputs, members: Iterator[str], workers: int) -> Iterator[list[tuple[str, str, str]]]:
+def _piece(uuids: list[str], packed: bool) -> list:
+    return _build(_inputs, uuids, packed)
+
+
+def card_batches(args, inputs, members: Iterator[str], workers: int, packed: bool = False) -> Iterator[list]:
     """Yields lists of about ``args.batch`` cards for ``members``, in member order.
+
+    Cards are ``(iri, title, text)``, or with ``packed`` the card store's ``(key, value)`` rows,
+    compressed in the workers so the writing parent only has to put them.
 
     ``workers`` 0 builds them in one background thread with ``inputs`` (the parent's own handles);
     more starts that many processes. The parent must have opened ``inputs`` first either way: with
@@ -107,7 +116,8 @@ def card_batches(args, inputs, members: Iterator[str], workers: int) -> Iterator
     worker.
     """
     if workers <= 0:
-        yield from _threaded(args, inputs, members)
+        yield from prefetch(_build(inputs, uuids, packed)
+                            for uuids in iter(lambda: list(itertools.islice(members, args.batch)), []))
         return
     settings = {key: getattr(args, key, None) for key in ("records", "labels", "facets", "qlever", "scope", "note_words")}
     pieces = iter(lambda: list(itertools.islice(members, PIECE)), [])
@@ -117,7 +127,7 @@ def card_batches(args, inputs, members: Iterator[str], workers: int) -> Iterator
 
     def fill() -> None:  # keep every worker busy while the parent encodes, without listing the whole scope
         while len(pending) < 4 * workers and (piece := next(pieces, None)) is not None:
-            pending.append(pool.submit(_piece, piece))
+            pending.append(pool.submit(_piece, piece, packed))
 
     try:
         fill()
@@ -134,22 +144,27 @@ def card_batches(args, inputs, members: Iterator[str], workers: int) -> Iterator
         pool.shutdown(wait=True, cancel_futures=True)
 
 
-def _threaded(args, inputs, members: Iterator[str]) -> Iterator[list[tuple[str, str, str]]]:
-    """One producer thread builds the next batch while the caller encodes this one."""
-    records, _, builder, facets = inputs
-    batches: queue.Queue = queue.Queue(maxsize=2)
+def prefetch(batches: Iterator[list], depth: int = 2) -> Iterator[list]:
+    """Runs ``batches`` one or two ahead in a background thread while the caller works on this one."""
+    ready: queue.Queue = queue.Queue(maxsize=depth)
 
     def produce():
         try:
-            while uuids := list(itertools.islice(members, args.batch)):
-                batch = read_records(records, uuids)
-                batches.put(cards_for(builder, batch, facets_for(facets, batch)))
+            for batch in batches:
+                ready.put(batch)
         except BaseException as error:  # surface producer failures in the caller
-            batches.put(error)
-        batches.put(None)
+            ready.put(error)
+        ready.put(None)
 
     threading.Thread(target=produce, daemon=True).start()
-    while (cards := batches.get()) is not None:
-        if isinstance(cards, BaseException):
-            raise cards
-        yield cards
+    while (batch := ready.get()) is not None:
+        if isinstance(batch, BaseException):
+            raise batch
+        yield batch
+
+
+def card_workers(requested: int) -> int:
+    """``--card-workers``: negative means the CPUs this job may use, less two; 0 means one thread."""
+    from .records import available_cpus
+
+    return max(0, min(available_cpus() - 2 if requested < 0 else requested, 64))
