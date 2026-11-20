@@ -127,8 +127,6 @@ def _export_cards(args):
 def cmd_embed(args):
     import numpy as np
 
-    from qleverlux.vectors.lmdb_vector_store import VectorWriter
-
     from .encoder import Encoder
 
     from .vector_shards import parse_shard, shard_bounds
@@ -162,6 +160,8 @@ def cmd_embed(args):
         writer = ShardWriter(args.out, args.scope, dims, vector_dtype=args.vector_dtype, model=encoder.name,
                              shard=shard, restart=args.restart)
     else:
+        from qleverlux.vectors.lmdb_vector_store import VectorWriter  # needs usearch; --out does not
+
         writer = VectorWriter(args.store, args.scope, dims, chunk_rows=args.chunk_rows,
                               vector_dtype=args.vector_dtype, model=encoder.name, restart=args.restart)
     if writer.meta.get("model") not in (None, encoder.name):
