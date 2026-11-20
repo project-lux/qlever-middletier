@@ -24,8 +24,12 @@ from qleverlux.sparql import (
     GraphPattern as Pattern,
 )
 
-#: The search term answered by vector similarity rather than text search.
+#: The search terms answered by vector similarity rather than text search:
+#: `similar` takes free text, `similarRecords` the records to start from.
 SIMILAR_FIELD = "similar"
+SIMILAR_RECORDS_FIELD = "similarRecords"
+#: Seed records the vector sidecar accepts in one call.
+MAX_SEED_RECORDS = 100
 
 #: Sort keys computed from the query itself rather than looked up in
 #: sorts.json: "relevance" (text and vector combined) and "similarity"
@@ -580,6 +584,9 @@ class SparqlTranslator:
         return predicates.get_predicate(rel, scope)
 
     def translate_relationship(self, query, parent):
+        if query.field == SIMILAR_RECORDS_FIELD:
+            self.translate_similar_records(query, parent, query.parent.provides_scope)
+            return
         query.children[0].var = f"?var{self.counter}"
         self.counter += 1
         pred = self.get_predicate(query.field, query.parent.provides_scope)
@@ -602,25 +609,64 @@ class SparqlTranslator:
                 parent.add_triples([t])
 
     def translate_similar(self, query, parent, scope):
-        """A ``similar`` leaf: one SERVICE call to the vector sidecar.
+        """A ``similar`` leaf: free text, encoded by the vector sidecar.
 
-        The value is a record URI (whose stored vector is the seed) or free
-        text (encoded by the sidecar). The cosine becomes this clause's
-        ``?score_N``, which _relevance_query adds to the ranking.
+        Always text, even when it looks like a URI: records to start from are
+        ``similarRecords``. The cosine becomes this clause's ``?score_N``, which
+        _relevance_query adds to the ranking.
+        """
+        value = str(query.value).strip()
+        if not value:
+            raise ValueError("Empty similarity query")
+        self._similarity_service(query, parent, scope, [string_literal(value)])
+
+    def translate_similar_records(self, query, parent, scope):
+        """A ``similarRecords`` relationship: the stored vectors of the records
+        it names are the seeds, and a result is scored by its nearest seed.
+
+        Takes ``{"id": <uri>}`` or an ``OR`` of them. A general subquery would
+        need its records looked up in QLever before the SERVICE call can be
+        written, so it is refused rather than half-supported. The seeds
+        themselves are left out of the results (the sidecar's default).
+        """
+        seeds = self._seed_records(query.children[0] if query.children else None)
+        self._similarity_service(query, parent, scope, [iri(seed) for seed in seeds])
+        self.counter += 1  # translate_leaf advances it for leaves; this is not one
+
+    @staticmethod
+    def _seed_records(node):
+        if isinstance(node, LuxLeaf) and node.field == "id":
+            leaves = [node]
+        elif (
+            isinstance(node, LuxBoolean)
+            and node.field == "OR"
+            and node.children
+            and all(isinstance(c, LuxLeaf) and c.field == "id" for c in node.children)
+        ):
+            leaves = node.children
+        else:
+            raise ValueError(
+                'similarRecords takes {"id": <record uri>} or an OR of them'
+            )
+        seeds = list(dict.fromkeys(str(leaf.value).strip() for leaf in leaves))
+        if not all(seed.startswith(("http://", "https://")) for seed in seeds):
+            raise ValueError("similarRecords ids must be record URIs")
+        if len(seeds) > MAX_SEED_RECORDS:
+            raise ValueError(
+                f"similarRecords takes at most {MAX_SEED_RECORDS} records, not {len(seeds)}"
+            )
+        return seeds
+
+    def _similarity_service(self, query, parent, scope, seeds):
+        """One SERVICE call to the vector sidecar for this clause.
+
+        ``seeds`` are already-rendered terms: one text literal, or record IRIs.
         """
         if not self.vector_service:
             raise ValueError("Similarity search is not configured")
-        value = query.value.strip()
-        if not value:
-            raise ValueError("Empty similarity query")
-        if value.startswith(("http://", "https://")):
-            seed = iri(value)
-        else:
-            seed = string_literal(value)
-
         n = self.counter
-        triples = [
-            Triple(query.var, "vec:similarTo", seed),
+        triples = [Triple(query.var, "vec:similarTo", seed) for seed in seeds]
+        triples += [
             Triple(query.var, "vec:score", f"?score_{n}"),
             Triple(query.var, "vec:topK", str(self.vector_top_k)),
             Triple(query.var, "vec:index", string_literal(scope)),
