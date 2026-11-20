@@ -239,12 +239,16 @@ Two terms, both in every scope:
 - `similar` ("are similar to") ships with luxql, `relation: "text"`, and is always free text, encoded by the
   sidecar, even when the value looks like a URI. Before it was wired up it fell through to keyword search.
 - `similarRecords` ("are similar to the records") is the middle tier's own, added in `_EXTRA_TERMS`
-  (`query/catalogue.py`) as a relationship to its own scope, so luxql reads
-  `{"similarRecords": {"id": <uri>}}` or `{"similarRecords": {"OR": [{"id": a}, {"id": b}]}}` as records of
-  that scope. Their stored vectors are the seeds (at most 100, the sidecar's limit), a result scores by its
-  nearest seed, and the seeds are left out of the results. Any other subquery is a 400: seeding from, say, a
-  set's members would need that subquery run in QLever before the `SERVICE` call can be written, which the
-  translator cannot do.
+  (`query/catalogue.py`) as a relationship to its own scope, so its value is any query in that scope:
+  `{"id": <uri>}`, an `OR` of ids, or e.g. `{"name": "quantum physics"}`. The records it finds are the seeds:
+  a result scores by its nearest seed, and the seeds are left out of the results. Ids are read straight off
+  the query. Any other subquery has to be run before the `SERVICE` call can be written, which the translator
+  (no QLever client) cannot do, so the services do it first: `services/seeds.py` runs each one as a search
+  in that scope, takes the top 100 by relevance (the sidecar's seed limit; a subquery with no text clause
+  has no ranking, so it is an arbitrary 100), and leaves the URIs on the node as `seed_records`. Search,
+  estimate and facets all call it between parsing and translating; a new route that translates user queries
+  must too, or the translator refuses the subquery. No seeds means no results (`FILTER (false)`), and seeds
+  the vector store has no vector for are skipped by the sidecar, which only errors when none are left.
 
 `SparqlTranslator.translate_similar` / `translate_similar_records` send them to the `sparql_service` sidecar
 (see its README for the contract) as one `SERVICE` call:

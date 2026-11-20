@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse
 from qleverlux.errors import BadQuery, run_query
 from qleverlux.presentation import envelopes
 from qleverlux.services.search import OFFSET_GRANULARITY
+from qleverlux.services.seeds import resolve_similar_records
 
 #: Facets that do not come from config/facets.json.
 FIXED_FACET_PREDICATES = {
@@ -111,6 +112,7 @@ class FacetService:
         jq = json.loads(q)
         try:
             parsed = self.catalogue.json_reader.read(jq, scope)
+            await resolve_similar_records(parsed, self.catalogue, self.qlever)
         except ValueError as e:
             raise BadQuery(str(e)) from e
 
