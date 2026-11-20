@@ -140,6 +140,7 @@ class VectorService:
             encoder = self.encoder()
             with self._encoder_lock:  # one forward pass at a time on the device
                 encoded = {text: encoder.encode_query(text, widest) for text in texts}
+        missing = []
         for seed in plan.seeds:
             if seed.kind == "literal":
                 rows.append(encoded[seed.value])
@@ -149,12 +150,19 @@ class VectorService:
                 raise SparqlError(f"vec:similarTo <{seed.value}> is not a LUX record IRI")
             vector = self.store(scope).get_vector(seed.value)
             if vector is None:
-                raise SparqlError(f"<{seed.value}> has no vector in the {scope!r} index")
+                # Seeds the store has no vector for (records newer than the vectors, or
+                # none of their own) are skipped, so one gap does not sink a query
+                # seeded by many records. It is only an error when none are left.
+                missing.append(f"<{seed.value}> ({scope})")
+                continue
             if len(vector) < widest:
                 raise SparqlError(f"<{seed.value}> has a {len(vector)}d vector, narrower than the {widest}d "
                                   f"index it would query; use a text query or an equally wide scope")
             vector = vector[:widest]
             rows.append(vector / np.linalg.norm(vector))
+        if not rows:
+            raise SparqlError(f"no vector in the index for {', '.join(missing[:3])}"
+                              + (f" or {len(missing) - 3} more seeds" if len(missing) > 3 else ""))
         matrix = np.vstack(rows).astype(np.float32)
         if plan.combine == "mean" and len(matrix) > 1:
             centroid = matrix.mean(axis=0)

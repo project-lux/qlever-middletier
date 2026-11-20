@@ -21,6 +21,7 @@ from qleverlux.errors import BadQuery, run_query
 from qleverlux.presentation import envelopes
 from qleverlux.query.catalogue import MultiScopeError, read_multi_branches
 from qleverlux.query.translator import RANKED_SORTS
+from qleverlux.services.seeds import resolve_similar_records
 
 #: SPARQL offsets are rounded down to a multiple of this, to share cache entries.
 OFFSET_GRANULARITY = 60
@@ -92,7 +93,7 @@ class SearchService:
         """A search is multi if the path says so or the query declares it."""
         return scope == MULTI_SCOPE or jq.get("_scope") == MULTI_SCOPE
 
-    def make_sparql_query(
+    async def make_sparql_query(
         self, scope, q, page=1, pageLength=0, sort="relevance", order="DESC"
     ):
         if pageLength < 1:
@@ -111,6 +112,12 @@ class SearchService:
             else:
                 parsed = self.catalogue.json_reader.read(jq, scope)
         except (MultiScopeError, ValueError) as e:
+            raise BadQuery(str(e)) from e
+        # similarRecords given a query: run it now for its seed records
+        try:
+            for tree in [b for _, b in branches] if self.is_multi(scope, jq) else [parsed]:
+                await resolve_similar_records(tree, self.catalogue, self.qlever)
+        except ValueError as e:
             raise BadQuery(str(e)) from e
         try:
             if self.is_multi(scope, jq):
@@ -169,7 +176,7 @@ class SearchService:
         pred = self.resolve_sort(scope, sort, q)
         uq = urllib.parse.quote(q)
 
-        qt = self.make_sparql_query(scope, q, page, pageLength, pred, ascdesc)
+        qt = await self.make_sparql_query(scope, q, page, pageLength, pred, ascdesc)
 
         # print("---query---")
         # print(qt)
@@ -211,7 +218,7 @@ class SearchService:
                 summary="Description of Search Results",
             )
         )
-        qt = self.make_sparql_query(scope, q)
+        qt = await self.make_sparql_query(scope, q)
         print(qt)
 
         res = await run_query(self.qlever, qt)

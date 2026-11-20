@@ -31,6 +31,20 @@ SIMILAR_RECORDS_FIELD = "similarRecords"
 #: Seed records the vector sidecar accepts in one call.
 MAX_SEED_RECORDS = 100
 
+
+def seed_ids(node):
+    """The URIs of ``{"id": ...}`` or an ``OR`` of only those, else None (a query to run)."""
+    if isinstance(node, LuxLeaf) and node.field == "id":
+        return [node.value]
+    if (
+        isinstance(node, LuxBoolean)
+        and node.field == "OR"
+        and node.children
+        and all(isinstance(c, LuxLeaf) and c.field == "id" for c in node.children)
+    ):
+        return [c.value for c in node.children]
+    return None
+
 #: Sort keys computed from the query itself rather than looked up in
 #: sorts.json: "relevance" (text and vector combined) and "similarity"
 #: (cosine alone, text only breaking ties).
@@ -624,31 +638,31 @@ class SparqlTranslator:
         """A ``similarRecords`` relationship: the stored vectors of the records
         it names are the seeds, and a result is scored by its nearest seed.
 
-        Takes ``{"id": <uri>}`` or an ``OR`` of them. A general subquery would
-        need its records looked up in QLever before the SERVICE call can be
-        written, so it is refused rather than half-supported. The seeds
-        themselves are left out of the results (the sidecar's default).
+        The records are ``{"id": <uri>}``, an ``OR`` of them, or any query in
+        the scope. A query has to be run first to know its records, which the
+        translator cannot do: the service runs it and leaves the URIs on the
+        node as ``seed_records`` (services/seeds.py). No records means no
+        results. The seeds themselves are left out (the sidecar's default).
         """
-        seeds = self._seed_records(query.children[0] if query.children else None)
-        self._similarity_service(query, parent, scope, [iri(seed) for seed in seeds])
+        seeds = self._seed_records(query)
+        if seeds:
+            self._similarity_service(query, parent, scope, [iri(seed) for seed in seeds])
+        else:
+            nothing = Pattern()
+            nothing.add_filter(Filter("false"))
+            parent.add_nested_graph_pattern(nothing)
         self.counter += 1  # translate_leaf advances it for leaves; this is not one
 
     @staticmethod
-    def _seed_records(node):
-        if isinstance(node, LuxLeaf) and node.field == "id":
-            leaves = [node]
-        elif (
-            isinstance(node, LuxBoolean)
-            and node.field == "OR"
-            and node.children
-            and all(isinstance(c, LuxLeaf) and c.field == "id" for c in node.children)
-        ):
-            leaves = node.children
-        else:
+    def _seed_records(query):
+        seeds = getattr(query, "seed_records", None)
+        if seeds is None:
+            seeds = seed_ids(query.children[0] if query.children else None)
+        if seeds is None:
             raise ValueError(
-                'similarRecords takes {"id": <record uri>} or an OR of them'
+                "similarRecords with a query rather than ids has to be resolved against QLever first"
             )
-        seeds = list(dict.fromkeys(str(leaf.value).strip() for leaf in leaves))
+        seeds = list(dict.fromkeys(str(seed).strip() for seed in seeds))
         if not all(seed.startswith(("http://", "https://")) for seed in seeds):
             raise ValueError("similarRecords ids must be record URIs")
         if len(seeds) > MAX_SEED_RECORDS:

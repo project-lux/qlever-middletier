@@ -176,6 +176,17 @@ def test_form_and_get_requests_and_errors(client):
     assert set(health) == {"concept", "item"} and health["concept"]["entries"] == 200
 
 
+def test_seeds_without_a_vector_are_skipped_unless_none_are_left(client):
+    # similarRecords seeds come from a QLever query, which can name records newer than the vectors.
+    missing = f"{D}concept/ffffffff-0000-4000-8000-000000000000"
+    query = qlever_request(f"?c vec:similarTo <{missing}>, <{concept(4)}> ; vec:score ?score ; vec:topK 1 ; vec:includeSeeds true")
+    response = post(client, query)
+    assert response.status_code == 200
+    assert response.json()["results"]["bindings"][0]["c"]["value"] == concept(4)
+    alone = post(client, qlever_request(f"?c vec:similarTo <{missing}> ; vec:score ?score"))
+    assert alone.status_code == 400 and "no vector" in alone.json()["error"]
+
+
 def ranked(client, query):
     return [(r["c"]["value"], float(r["score"]["value"])) for r in post(client, query).json()["results"]["bindings"]]
 
