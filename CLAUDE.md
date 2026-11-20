@@ -91,7 +91,10 @@ To add an endpoint: a route in `api/`, included from `api/__init__.py`, delegati
 
 Every SPARQL round-trip goes through `QLeverClient.query` (`clients/qlever.py`), which dispatches to an httpx
 (HTTP/2, default) or aiohttp implementation. Both are wrapped in `@alru_cache(maxsize=500)` keyed on query text,
-and both bail out with a 504-ish stub when `open_requests > max_qlever_requests` unless called with
+which caches successes only: a failure (timeout, QLever error, failed SERVICE) is raised out of the cached call
+and turned back into an error dict outside it. Caching failures once made a single slow first attempt fail
+that query instantly until evicted. Requests are shed with a 504-ish stub when
+`open_requests > max_qlever_requests`, decided per call and outside the cache, unless called with
 `sheddable=False` (HAL generation does, so it can't be shed halfway through a links block). Results come back in
 QLever's own `application/qlever-results+json` and are unwrapped by `process_qlever_results` into
 `{results, total, time, variables}` with `<uri>` brackets stripped and typed literals coerced.
