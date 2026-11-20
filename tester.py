@@ -13,12 +13,14 @@ import sys
 from luxql import JsonReader
 from luxql.string_parser import QueryParser
 
-from qleverlux.query.catalogue import build_lux_config
+from qleverlux.query.catalogue import build_lux_config, resolve_search_config
+from qleverlux.settings import load_settings
 from qleverlux.query.translator import SparqlTranslator
 
 
 def main(scope="item"):
-    cfg = build_lux_config()
+    settings = load_settings([])
+    cfg = build_lux_config(resolve_search_config(settings.search_config, settings.config_path))
     rdr = JsonReader(cfg)
     st = SparqlTranslator(cfg)
     query_parser = QueryParser()

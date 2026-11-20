@@ -122,13 +122,18 @@ production event is `…OfItemBeginning`, not `…OfItemProduction`. Record type
 When adding a mapping, count the triples first — `SELECT (COUNT(*) AS ?n) WHERE { ?s lux:<name> ?o }` — because
 a wrong name fails silently as an empty result rather than an error.
 
-`LuxConfig` is not a fixed input. luxql fetches the advanced search config from the **live LUX endpoint** and
-caches it to `advanced-search-config.json` inside its own package (`cache_remote_config=True`), so the search
-vocabulary can change under a deployment with no change to this repo at all. When related-list relations start
-being skipped, or facets start being dropped, check that file's date before looking for a regression here: a
-term disappearing upstream (`place.setCreatedHere` did, mid-session) silently removes every relation whose path
-runs through it. It also means a before/after comparison of compiled output is only meaningful if that file did
-not move in between.
+The search vocabulary (`LuxConfig`) is read from the first of: `QLMT_SEARCH_CONFIG` (a path; it must exist,
+or startup fails), `<config_path>/advanced-search-config.json`, and only then luxql's own copy
+(`resolve_search_config` in `query/catalogue.py`; startup prints which). This repo ships
+`config/advanced-search-config.json`, so every instance gets the same vocabulary with the code. Without it,
+luxql uses the `advanced-search-config.json` saved in its package directory, and a luxql installed with pip has
+none (`setup.py` does not ship it), so it fetches the **live LUX endpoint** and saves that. Live LUX has no
+`similar`, which is how an instance ends up answering `similar` with "No possible scope for Leaf component".
+On that fallback the vocabulary can change under a deployment with no change to this repo at all: when
+related-list relations start being skipped, or facets start being dropped, check which file was used and its
+date before looking for a regression here. A term disappearing upstream (`place.setCreatedHere` did,
+mid-session) silently removes every relation whose path runs through it. A before/after comparison of compiled
+output is only meaningful if that file did not move in between.
 
 `build_lux_config` has to publish its patched `LuxConfig` into *every* luxql module that captured it, not just
 `luxql.config`. `luxql.query` does `from .config import _cached_lux_config` at import time and every query node
@@ -403,8 +408,8 @@ pattern, turning the instance into a single-unit portal. The catalogue wires it 
 
 `files/derive_from_upstream.py` re-derives `queries/*.json` and most of `config/` from two upstream checkouts —
 `../lux-middletier` (queries, `hal_links.json`) and `../lux-marklogic` (`facets.json`, `related_lists.json`,
-`terms_inverse.json`, `related_list_scopes.json`); `stopwords.json` comes from the advanced search config that
-`luxql` ships. It needs `node` on PATH but no npm install. It defaults to a dry run that reports the drift;
+`terms_inverse.json`, `related_list_scopes.json`); `stopwords.json` comes from the instance's advanced search config
+(resolved as the middle tier does, falling back to luxql's). It needs `node` on PATH but no npm install. It defaults to a dry run that reports the drift;
 `--write` applies, `--check` exits 1 when out of date, `--prune` deletes queries dropped upstream.
 
 `-b`/`--base-dir` (or `QLMT_BASE_DIR`) picks which middle tier gets updated — any directory holding `config/` and

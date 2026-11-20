@@ -591,13 +591,32 @@ def predicates_candidates():
     return [p for i, p in enumerate(paths) if p not in paths[:i]]
 
 
-def load_json_reader():
+def instance_search_config(config_path):
+    """The advanced search config the instance at `config_path` would read.
+
+    The same order as the middle tier's `resolve_search_config`:
+    QLMT_SEARCH_CONFIG, then <config_path>/advanced-search-config.json, then
+    None (luxql's own).
+    """
+    explicit = os.environ.get("QLMT_SEARCH_CONFIG", "").strip()
+    if explicit and explicit.lower() not in ("null", "none"):
+        path = os.path.abspath(os.path.expanduser(explicit))
+        if not os.path.isfile(path):
+            sys.exit(f"error: QLMT_SEARCH_CONFIG is {explicit!r}, but there is no such file")
+        return path
+    candidate = os.path.join(config_path, "advanced-search-config.json")
+    return candidate if os.path.isfile(candidate) else None
+
+
+def load_json_reader(config_path):
     """A `JsonReader` over the same `LuxConfig` the middle tier builds.
 
     Returns (reader, reason_it_is_unavailable).  The middle tier patches a
     couple of extra search terms into `LuxConfig`, so validating against a bare
-    one would reject queries that work in practice; prefer `qleverlux`'s.
+    one would reject queries that work in practice; prefer `qleverlux`'s. Both
+    read the instance's own advanced search config, when it has one.
     """
+    path = instance_search_config(config_path)
     try:
         from luxql import JsonReader
     except ImportError:
@@ -605,18 +624,18 @@ def load_json_reader():
     try:
         from qleverlux.query.catalogue import build_lux_config
 
-        return JsonReader(build_lux_config()), None
+        return JsonReader(build_lux_config(path)), None
     except ImportError:
         pass
     try:
         from luxql import LuxConfig
 
-        return JsonReader(LuxConfig()), None
+        return JsonReader(LuxConfig(lux_config=path) if path else LuxConfig()), None
     except Exception as e:  # pragma: no cover - luxql imported but unusable
         return None, f"could not build a LuxConfig: {e}"
 
 
-def validate_queries(queries):
+def validate_queries(queries, config_path):
     """Queries `LuxConfig` rejects, as [(name, scope, error)].
 
     The middle tier reads every one of these at startup to precompile its HAL
@@ -627,7 +646,7 @@ def validate_queries(queries):
 
     Returns (invalid, reason_validation_was_skipped).
     """
-    reader, reason = load_json_reader()
+    reader, reason = load_json_reader(config_path)
     if reader is None:
         return [], reason
 
@@ -756,8 +775,11 @@ def derive_stopwords(path_or_url):
     return sorted(set(config["stopWords"]))
 
 
-def default_stopwords_source():
-    """luxql ships the deployed config; fall back to the live endpoint."""
+def default_stopwords_source(config_path):
+    """The instance's advanced search config, else luxql's, else the live endpoint."""
+    instance = instance_search_config(config_path)
+    if instance:
+        return instance
     try:
         import luxql
 
@@ -1158,7 +1180,7 @@ def main():
                     fresh_hal = derive_hal_links(dump)
                 except Exception:
                     fresh_hal = None
-                invalid, why = validate_queries(queries)
+                invalid, why = validate_queries(queries, config_path)
                 if why:
                     print(f"    ! cannot validate queries against LuxConfig: {why}")
                 elif invalid:
@@ -1233,7 +1255,7 @@ def main():
                             print(f"    {line}")
             generated["related_list_scopes.json"] = related
         if "stopwords" in targets:
-            source = args.stopwords_source or default_stopwords_source()
+            source = args.stopwords_source or default_stopwords_source(config_path)
             print(f"stopwords source: {source}")
             generated["stopwords.json"] = derive_stopwords(source)
 
