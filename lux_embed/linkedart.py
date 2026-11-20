@@ -198,8 +198,14 @@ def date_phrase(timespan: dict | None) -> str | None:
     return f"{begin}–{end}"
 
 
-def event_parts(event: dict | None) -> Iterable[dict]:
-    """The event and its ``part`` sub-events, where Linked Art splits a production among roles."""
-    if not event:
-        return []
-    return [event, *[p for p in as_list(event.get("part")) if isinstance(p, dict)]]
+def event_parts(event) -> Iterable[dict]:
+    """The event and its ``part`` sub-events, where Linked Art splits a production among roles.
+
+    Full LUX has agents whose ``born`` / ``formed_by`` (etc.) is a bare string rather than an
+    object, and Linked Art allows a list where one is expected; anything that is not a dict is
+    skipped rather than failing the whole card batch."""
+    parts = []
+    for node in as_list(event):
+        if isinstance(node, dict) and node:
+            parts += [node, *[p for p in as_list(node.get("part")) if isinstance(p, dict)]]
+    return parts
