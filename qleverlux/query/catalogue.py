@@ -47,6 +47,29 @@ _EXTRA_TERMS = {
     },
 }
 
+#: What each scope's records are called, for the similarRecords help text.
+_SCOPE_NOUNS = {
+    "item": "Objects",
+    "work": "Works",
+    "set": "Collections",
+    "agent": "People & Groups",
+    "place": "Places",
+    "concept": "Concepts & Types",
+    "event": "Events",
+}
+
+# similarRecords: records whose vectors are nearest to those of the given
+# records, in every scope. A relationship to its own scope, so luxql reads
+# {"similarRecords": {"id": <uri>}} (or an OR of ids) as records of that scope;
+# the translator turns them into seeds for the vector SERVICE rather than a
+# predicate. `similar` is the free-text counterpart.
+for _scope, _noun in _SCOPE_NOUNS.items():
+    _EXTRA_TERMS.setdefault(_scope, {})["similarRecords"] = {
+        "label": "are similar to the records",
+        "helpText": f"Search for {_noun} that are similar to the specified {_noun}.",
+        "relation": _scope,
+    }
+
 
 #: The advanced search config file looked for in the config directory.
 SEARCH_CONFIG_NAME = "advanced-search-config.json"
@@ -91,7 +114,9 @@ def build_lux_config(path: str | None = None):
     for scope, terms in _EXTRA_TERMS.items():
         for name, defn in terms.items():
             lux_config.lux_config["terms"][scope][name] = defn
-            lux_config.inverted[name] = [scope]
+            scopes = lux_config.inverted.setdefault(name, [])  # a term may be in several
+            if scope not in scopes:
+                scopes.append(scope)
 
     lconfig._cached_lux_config = lux_config
     for module in _modules_holding_lux_config():

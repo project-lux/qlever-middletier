@@ -229,15 +229,26 @@ QLever shares the duplicated work for the text views (no measurable cost), but *
 query calls the vector sidecar twice, about 40 ms extra. The 14/5/1 weights themselves are fixed when the
 index is built, not here.
 
-### Vector similarity (`similar`)
+### Vector similarity (`similar`, `similarRecords`)
 
-luxql already ships a `similar` term ("are similar to") in every scope, with `relation: "text"`. Before it was
-wired up it fell through to keyword search on the words of the URI. `SparqlTranslator.translate_similar` now
-sends it to the `../vectors/sparql_service` sidecar (see its README for the contract) as one `SERVICE` call:
+Two terms, both in every scope:
+
+- `similar` ("are similar to") ships with luxql, `relation: "text"`, and is always free text, encoded by the
+  sidecar, even when the value looks like a URI. Before it was wired up it fell through to keyword search.
+- `similarRecords` ("are similar to the records") is the middle tier's own, added in `_EXTRA_TERMS`
+  (`query/catalogue.py`) as a relationship to its own scope, so luxql reads
+  `{"similarRecords": {"id": <uri>}}` or `{"similarRecords": {"OR": [{"id": a}, {"id": b}]}}` as records of
+  that scope. Their stored vectors are the seeds (at most 100, the sidecar's limit), a result scores by its
+  nearest seed, and the seeds are left out of the results. Any other subquery is a 400: seeding from, say, a
+  set's members would need that subquery run in QLever before the `SERVICE` call can be written, which the
+  translator cannot do.
+
+`SparqlTranslator.translate_similar` / `translate_similar_records` send them to the `sparql_service` sidecar
+(see its README for the contract) as one `SERVICE` call:
 
 ```sparql
 SERVICE <http://127.0.0.1:8081/sparql> {
-   ?uri vec:similarTo <seed-uri> .      # or an escaped literal for free text
+   ?uri vec:similarTo <seed-uri> .      # similarRecords: one triple per seed; similar: an escaped literal
    ?uri vec:score ?score_N .            # cosine, 0..1; ranked as described above
    ?uri vec:topK 100 .
    ?uri vec:index "item" .              # the leaf's scope, so vector-first search stays in scope
@@ -246,7 +257,7 @@ SERVICE <http://127.0.0.1:8081/sparql> {
 
 - `QLMT_VECTOR_SERVICE` is the URL *as QLever sees it* (loopback means QLever's host). It is stored bare and
   bracketed by `iri()`; the builder only adds a `:` to a service name with none, so `<…>` passes through. Empty
-  (the default) disables the term: `similar` is then a 400, not a silent keyword search.
+  (the default) disables both terms: they are then a 400, not a silent keyword search.
 - `sort=similarity:desc` (or `:asc`) ranks on the cosine alone. Text clauses still filter, and their raw score
   breaks ties, which orders the text-only matches of a `similar OR text` after the similar ones. Like
   `relevance` it is computed by the translator (`RANKED_SORTS`), not looked up in `sorts.json`, so it works for
@@ -268,9 +279,8 @@ SERVICE <http://127.0.0.1:8081/sparql> {
   Two things to keep: slice HNSW results to `counts[row]` *before* `keys_to_integers` (the rest of the buffer
   is garbage, and the walk returns at most `expansion_factor` hits), and never hold a `usearch.Executor`
   past the call that needs it — an undrained one spins about two cores even when idle.
-- A value starting `http://`/`https://` is a seed record. Anything else is text. User values go through
-  `iri()` / `string_literal()` (`sparql/terms.py`), which reject or escape anything that could break out
-  of the term.
+- User values go through `iri()` / `string_literal()` (`sparql/terms.py`), which reject or escape anything
+  that could break out of the term; a `similarRecords` id must also start `http://`/`https://`.
 
 Pagination is deliberately coarse: SPARQL is issued at offsets rounded down to multiples of 60 (so the alru cache
 hits across nearby pages) and the exact page is sliced out of the result list in Python.
