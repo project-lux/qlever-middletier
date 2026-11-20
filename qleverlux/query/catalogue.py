@@ -48,8 +48,36 @@ _EXTRA_TERMS = {
 }
 
 
-def build_lux_config():
+#: The advanced search config file looked for in the config directory.
+SEARCH_CONFIG_NAME = "advanced-search-config.json"
+
+
+def resolve_search_config(search_config: str | None, config_path: str = "config") -> str | None:
+    """Which advanced search config file to read, or None for luxql's own.
+
+    1. ``QLMT_SEARCH_CONFIG``, when it is set. It must exist: luxql quietly
+       falls back to the live LUX config for a path that does not, which is
+       exactly the silent vocabulary change this setting is here to prevent.
+    2. ``<config_path>/advanced-search-config.json``, when that exists.
+    3. None: luxql's saved copy in its package directory, or, without one, a
+       fresh copy fetched from the live LUX endpoint.
+    """
+    if search_config and search_config.strip().lower() not in ("null", "none"):
+        path = os.path.abspath(os.path.expanduser(search_config.strip()))
+        if not os.path.isfile(path):
+            raise FileNotFoundError(
+                f"QLMT_SEARCH_CONFIG is {search_config!r}, but there is no such file ({path})"
+            )
+        return path
+    candidate = os.path.join(config_path, SEARCH_CONFIG_NAME)
+    return os.path.abspath(candidate) if os.path.isfile(candidate) else None
+
+
+def build_lux_config(path: str | None = None):
     """A ``LuxConfig`` with the middle tier's extra search terms patched in.
+
+    ``path`` is an advanced search config file (see `resolve_search_config`);
+    None leaves the choice to luxql.
 
     The instance is also published back into luxql, because every query node
     takes its config from a module global rather than from the reader it was
@@ -59,7 +87,7 @@ def build_lux_config():
     extra terms resolve everywhere except where they are actually used. Rebind
     wherever the name was captured.
     """
-    lux_config = LuxConfig()
+    lux_config = LuxConfig(lux_config=path) if path else LuxConfig()
     for scope, terms in _EXTRA_TERMS.items():
         for name, defn in terms.items():
             lux_config.lux_config["terms"][scope][name] = defn
@@ -120,7 +148,11 @@ class QueryCatalogue:
 
     def __init__(self, settings, lux_config=None):
         self.settings = settings
-        self.lux_config = lux_config if lux_config is not None else build_lux_config()
+        if lux_config is None:
+            path = resolve_search_config(settings.search_config, settings.config_path)
+            print(f"Search config:  {path or 'luxql default (its saved copy, else the live LUX config)'}")
+            lux_config = build_lux_config(path)
+        self.lux_config = lux_config
 
         self._load_files()
         self._trim_facets()

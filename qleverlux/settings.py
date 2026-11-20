@@ -74,6 +74,9 @@ class Settings(BaseSettings):
     queries_path: str = "queries"
     hal_cache_path: str = "hal_cache"
     cms_path: str = "cms"
+    #: The advanced search config (luxql's vocabulary) to read. Empty: use
+    #: <config_path>/advanced-search-config.json if there is one, else luxql's
+    #: own saved copy, else the live LUX config. See resolve_search_config.
     search_config: str = ""
 
     # -- PostgreSQL record / HAL cache
