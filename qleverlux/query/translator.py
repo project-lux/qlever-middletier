@@ -400,6 +400,57 @@ class SparqlTranslator:
         sparql.set_where_pattern(where)
         return sparql
 
+    def _count_of(self, inner):
+        """``SELECT (COUNT(*) AS ?count) { inner }``, with the prefixes."""
+        top = SelectQuery()
+        for pfx, uri in self.prefixes.items():
+            top.add_prefix(Prefix(pfx, uri))
+        top.add_variables(["(COUNT(*) AS ?count)"])
+        topwhere = Pattern()
+        topwhere.add_nested_select_query(inner)
+        top.set_where_pattern(topwhere)
+        return top
+
+    def translate_search_total(self, query, scope=None):
+        """How many rows ``translate_search`` lists: the same pattern and the same
+        (``?uri``, ``?type``) grouping, counted, with no sort or scoring to compute.
+
+        A search page asks for one window of rows with ``LIMIT``, which leaves
+        QLever counting only that window, so its total comes from here. Unlike
+        ``translate_search_count`` (HAL), it keeps the class filter and the
+        per-class grouping, so it agrees with the list even for a record with
+        two Linked Art classes in scope, or none.
+        """
+        self.counter = 0
+        self.scored = []
+        self.vector_scored = []
+        self.calculate_scores = True
+
+        inner = SelectQuery()
+        inner.add_variables(["?uri", "?type"])
+        where = Pattern()
+        if self.portal is not None:
+            where.add_triples([Triple("?uri", "lux:source", f"lux:{self.portal}")])
+        self.add_scope_type(where, scope)
+        query.var = "?uri"
+        self.translate_query(query, where)
+        inner.add_group_by(GroupBy(["?uri", "?type"]))
+        inner.set_where_pattern(where)
+        return self._count_of(inner)
+
+    def translate_multi_search_total(self, branches):
+        """``translate_search_total`` for a multi-scope search."""
+        self.counter = 0
+        self.scored = []
+        self.vector_scored = []
+        self.calculate_scores = True
+
+        inner = SelectQuery()
+        inner.add_variables(["?uri", "?type"])
+        inner.set_where_pattern(self._multi_where(branches))
+        inner.add_group_by(GroupBy(["?uri", "?type"]))
+        return self._count_of(inner)
+
     def translate_multi_search_count(self, branches):
         """``COUNT(*)`` over a multi-scope search, for HAL estimates."""
         self.counter = 0
