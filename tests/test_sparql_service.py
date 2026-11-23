@@ -116,6 +116,11 @@ def client(tmp_path_factory):
         yield test_client
 
 
+def test_startup_opens_every_scope_before_serving(client):
+    # The fixture's TestClient ran the lifespan: graphs are open and the encoder was used.
+    assert set(client.app.state.service._stores) == {"concept", "item"}
+
+
 def post(client, query):
     return client.post("/sparql", content=query, headers={"Content-Type": "application/sparql-query"})
 

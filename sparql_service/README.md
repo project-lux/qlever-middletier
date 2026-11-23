@@ -26,7 +26,7 @@ SELECT ?set ?name ?score WHERE {
 
 | Predicate | Object | Meaning |
 | --- | --- | --- |
-| `vec:similarTo` | IRI(s) and/or literal(s) | **Required.** An IRI uses that record's stored vector; IRIs with no stored vector are skipped, and it is an error only when no seed is left. A literal is encoded with the model the store was built with (recorded in its meta; older stores are EmbeddingGemma 2), using that model's query prompt (`SearchQuery`, or Harrier's `web_search_query`). Every scope must share one model. The encoder loads on first use. For several seeds, give a list (`vec:similarTo <a>, <b>, <c>`) or repeat the triple; at most 100. |
+| `vec:similarTo` | IRI(s) and/or literal(s) | **Required.** An IRI uses that record's stored vector; IRIs with no stored vector are skipped, and it is an error only when no seed is left. A literal is encoded with the model the store was built with (recorded in its meta; older stores are EmbeddingGemma 2), using that model's query prompt (`SearchQuery`, or Harrier's `web_search_query`). Every scope must share one model. For several seeds, give a list (`vec:similarTo <a>, <b>, <c>`) or repeat the triple; at most 100. |
 | `vec:combine` | `"max"`, `"each"`, `"mean"` | How several seeds combine (see below). Default `"max"`. |
 | `vec:includeSeeds` | `true` / `false` | Default `false`: seed IRIs are left out of the results, and their slots are refilled so `topK` rows still come back. |
 | `vec:score` | variable | Cosine similarity. |
@@ -70,6 +70,7 @@ The SERVICE body may contain only these `vec:` triples about one subject variabl
 - **`head.vars`** always equals the SERVICE's `SELECT` variables, which QLever requires.
 - **Cross-scope queries.** A wider query vector (e.g. a 768d concept) is sliced Matryoshka-style to a narrower index (512d item) and re-normalized. A narrower one can't query a wider index; use a text query.
 - **Deadline.** The default is 30 s (`--timeout`); past it the service returns 503. QLever has no SERVICE timeout of its own.
+- **Startup.** The port opens only once the service is ready: the store file is read into the page cache (up to half of RAM), every scope's graph is opened, the encoder is loaded and one query is encoded and searched per scope. Each step is logged with its time. If the encoder cannot load, startup fails rather than serving a sidecar that errors on every text query. `--no-warm` skips all of it, and the first queries then pay for it: loading the model alone can outlast the deadline.
 - **New graphs.** New graph generations written by `lux_embed index` are picked up within 10 s. A scope whose graph isn't built yet shows as unavailable in `/health`.
 - **Concurrency.** One process. Searches run on FastAPI's worker threads without a USearch executor pool, because an idle pool busy-spins its workers. Index pages are served in place from the LMDB mmap (`view_ram_buffer`).
 - **Names in joins.** LUX has one primary name per language, so join a single English/sort name, or aggregate with `SAMPLE`, to avoid one row per language.
