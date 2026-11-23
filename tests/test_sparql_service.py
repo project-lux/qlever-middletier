@@ -363,9 +363,36 @@ def test_ef_widens_the_walk_for_one_query(client):
     assert wide == default  # 200 concepts: both walks are exhaustive
 
 
+def test_exact_and_rewalk_reach_the_store(client):
+    service = client.app.state.service
+    store = service.store("concept")
+    calls, real_global, real_exact = [], store.search_global, store.search_exact
+    def recording_global(queries, top_k, **options):
+        calls.append(("walk", options["rewalk"]))
+        return real_global(queries, top_k, **options)
+    def recording_exact(queries, top_k, **options):
+        calls.append(("exact", None))
+        return real_exact(queries, top_k, **options)
+    store.search_global, store.search_exact = recording_global, recording_exact
+    try:
+        base = f"?c vec:similarTo <{concept(11)}> ; vec:score ?score ; vec:topK 4"
+        walked = ranked(client, qlever_request(f"{base} ; vec:rewalk 3"))
+        exact = ranked(client, qlever_request(f"{base} ; vec:exact true"))
+        service.exact_below = 10_000  # a 200-record scope is then scored exactly by default
+        by_size = ranked(client, qlever_request(f"{base} ; vec:ef 777"))
+        forced = ranked(client, qlever_request(f"{base} ; vec:ef 778 ; vec:exact false"))
+    finally:
+        service.exact_below = 0
+        del store.search_global, store.search_exact
+    assert calls == [("walk", 3), ("exact", None), ("exact", None), ("walk", 0)]
+    assert walked == exact == by_size == forced  # 200 records: every way finds the true top 4
+
+
 @pytest.mark.parametrize("option, message", [
     ("vec:minScore 2", "between -1 and 1"),
     ("vec:ef 0", "between 1 and"),
+    ("vec:rewalk 51", "between 0 and"),
+    ('vec:exact "yes"', "true or false"),
     ("vec:ef 1e9", "between 1 and"),
     ('vec:ef "wide"', "vec:ef is a number"),
     ('vec:minScore "high"', "is a number"),

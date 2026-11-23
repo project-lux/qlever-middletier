@@ -458,34 +458,83 @@ class LmdbVectorStore:
             _, ids = self._ids_for(txn, [iri])
             return self._vectors(txn, ids)[0] if len(ids) else None
 
-    def search_global(
-        self, query: np.ndarray, top_k: int = 20, *, rerank_factor: int = 3, expansion_factor: int = 128
-    ) -> list[tuple[str, float]]:
-        """Vector-first: quantized HNSW walk, then exact cosine rerank from LMDB.
-
-        ``query`` may be a matrix of several query vectors: each walks the graph, the hits are
-        pooled, and every hit is scored by its best-matching query ("similar to any of these")."""
-        q = self._queries(query)
-        wanted = top_k * max(rerank_factor, 1)
-        graph = self._graph  # held for the whole call: keeps this generation's pages pinned
+    def _walk(self, graph: _GraphSnapshot, queries: np.ndarray, wanted: int, expansion_factor: int) -> dict[int, float]:
+        """One HNSW walk per query row; each id found with its best quantized cosine."""
         # The walk returns at most expansion_factor hits, so widen it to cover what is wanted;
         # otherwise a top_k above expansion_factor / rerank_factor silently comes back short.
-        matches = graph.index.search(q, wanted, self._arena, expansion_factor=max(expansion_factor, wanted))
+        matches = graph.index.search(queries, wanted, self._arena, expansion_factor=max(expansion_factor, wanted))
         distances = np.array(matches.distances)
         best: dict[int, float] = {}
         for row, ids in enumerate(_matched_ids(matches)):
             for key, distance in zip(ids.tolist(), distances[row][: len(ids)].tolist()):
                 best[key] = max(best.get(key, -2.0), 1.0 - distance)
+        return best
+
+    def search_global(
+        self, query: np.ndarray, top_k: int = 20, *, rerank_factor: int = 3, expansion_factor: int = 128,
+        rewalk: int = 0,
+    ) -> list[tuple[str, float]]:
+        """Vector-first: quantized HNSW walk, then exact cosine rerank from LMDB.
+
+        ``query`` may be a matrix of several query vectors: each walks the graph, the hits are
+        pooled, and every hit is scored by its best-matching query ("similar to any of these").
+
+        ``rewalk`` then walks again from the stored vectors of the best ``rewalk`` hits and
+        reranks the pool. A text query sits away from every record (its best cosine is about
+        0.6), and a walk from there misses records the graph does link: each one missed on dev
+        was found first when its own vector was the query. A walk from a record starts where the
+        graph is reliable, so the second walks find what the first one passed by."""
+        q = self._queries(query)
+        wanted = top_k * max(rerank_factor, 1)
+        graph = self._graph  # held for the whole call: keeps this generation's pages pinned
+        best = self._walk(graph, q, wanted, expansion_factor)
         ids = np.fromiter(best, dtype=np.uint64, count=len(best))
         if not len(ids):
             return []
         with self.env.begin(buffers=True) as txn:
-            if rerank_factor > 1:
+            if rerank_factor > 1 or rewalk:
                 scores = self._cosine(self._vectors(txn, ids), q)
             else:
                 scores = np.fromiter(best.values(), dtype=np.float64, count=len(best))
+            if rewalk:
+                seeds = self._vectors(txn, ids[self._top(scores, rewalk)])
+        if rewalk:
+            more = self._walk(graph, seeds, wanted, expansion_factor)
+            ids = np.union1d(ids, np.fromiter(more, dtype=np.uint64, count=len(more)))
+        with self.env.begin(buffers=True) as txn:
+            if rewalk:
+                scores = self._cosine(self._vectors(txn, ids), q)
             order = self._top(scores, top_k)
             return list(zip(self._iris_for(txn, ids[order]), scores[order].tolist()))
+
+    def search_exact(self, query: np.ndarray, top_k: int = 20, *, block_rows: int = 16_384) -> list[tuple[str, float]]:
+        """Every vector of the scope scored exactly, no graph: perfect recall, at a cost linear in
+        the scope's size. Chunks are read zero-copy and converted a block at a time, so memory
+        stays at one block whatever the scope."""
+        q = self._queries(query)
+        dim, rows_per_chunk, count = self.meta["dimensions"], self.meta["chunk_rows"], self.meta["count"]
+        dtype = np.dtype(self.meta.get("vector_dtype", "float32"))
+        top_ids = np.empty(0, dtype=np.uint64)
+        top_scores = np.empty(0, dtype=np.float64)
+        with self.env.begin(buffers=True) as txn:
+            with txn.cursor(db=self.dbs["vectors"]) as cursor:
+                for key, buf in cursor:
+                    first = struct.unpack(">I", bytes(key))[0] * rows_per_chunk
+                    matrix = np.frombuffer(buf, dtype=dtype, offset=PAD).reshape(-1, dim)
+                    valid = max(0, min(len(matrix), count - first))
+                    for start in range(0, valid, block_rows):
+                        block = matrix[start : min(start + block_rows, valid)].astype(np.float32)
+                        scores = self._cosine(block, q).astype(np.float64)
+                        keep = self._top(scores, top_k)
+                        top_ids = np.concatenate([top_ids, (first + start + keep).astype(np.uint64)])
+                        top_scores = np.concatenate([top_scores, scores[keep]])
+                        if len(top_ids) > 4 * top_k:
+                            survivors = self._top(top_scores, top_k)
+                            top_ids, top_scores = top_ids[survivors], top_scores[survivors]
+            if not len(top_ids):
+                return []
+            order = self._top(top_scores, top_k)
+            return list(zip(self._iris_for(txn, top_ids[order]), top_scores[order].tolist()))
 
     def search_candidates(
         self,
