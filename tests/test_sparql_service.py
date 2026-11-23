@@ -320,6 +320,41 @@ def test_combine_each_interleaves_every_seeds_neighbours(client):
     assert [r["rank"]["value"] for r in rows] == [str(n) for n in range(1, 7)]
 
 
+def test_min_score_and_max_gap_cut_the_top_k(client):
+    everything = [concept(i) for i in range(200)]
+    base = f"?c vec:similarTo <{concept(5)}> ; vec:score ?score ; vec:topK 20"
+    full = ranked(client, qlever_request(base, everything))
+    assert len(full) == 20
+    floor = full[9][1]
+    above = ranked(client, qlever_request(f"{base} ; vec:minScore {floor!r}", everything))
+    assert above == [hit for hit in full if hit[1] >= floor] and len(above) >= 10
+    gap = full[0][1] - full[4][1]
+    close = ranked(client, qlever_request(f"{base} ; vec:maxGap {gap!r}", everything))
+    assert close == [hit for hit in full if hit[1] >= full[0][1] - gap] and len(close) >= 5
+    both = ranked(client, qlever_request(f"{base} ; vec:minScore {full[2][1]!r} ; vec:maxGap {gap!r}", everything))
+    assert both == full[: len(both)] and len(both) == len([h for h in full if h[1] >= full[2][1]])
+    nothing = ranked(client, qlever_request(f"{base} ; vec:minScore 1", everything))
+    assert nothing == []
+
+
+def test_cutoffs_apply_to_each_seeds_ranking_under_combine_each(client):
+    everything = [concept(i) for i in range(200)]
+    body = (f'?c vec:similarTo <{concept(10)}>, <{concept(20)}> ; vec:score ?score ; vec:topK 50 ; '
+            f'vec:combine "each" ; vec:maxGap 0')
+    hits = ranked(client, qlever_request(body, everything))
+    assert len(hits) == 2  # each seed's best only
+
+
+@pytest.mark.parametrize("option, message", [
+    ("vec:minScore 2", "between -1 and 1"),
+    ('vec:minScore "high"', "is a number"),
+    ("vec:maxGap -0.1", "not negative"),
+])
+def test_refuses_bad_cutoffs(option, message):
+    with pytest.raises(SparqlError, match=message):
+        parse(qlever_request(f"?c vec:similarTo <{concept(1)}> ; {option}"))
+
+
 def test_text_queries_use_the_model_the_store_was_built_with(tmp_path):
     from qleverlux.vectors.lmdb_vector_store import VectorWriter
     from sparql_service.app import LEGACY_MODEL, VectorService

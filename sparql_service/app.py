@@ -86,7 +86,7 @@ def plan_key(plan: Plan) -> tuple:
     candidates = None if plan.candidates is None else (len(plan.candidates), digest("\n".join(sorted(plan.candidates))))
     return ("hits", tuple((seed.kind, seed.value) for seed in plan.seeds), plan.top_k,
             tuple(plan.scopes) if plan.scopes is not None else None, plan.mode, plan.combine,
-            plan.include_seeds, candidates)
+            plan.include_seeds, plan.min_score, plan.max_gap, candidates)
 
 
 def scope_of(iri: str) -> str | None:
@@ -312,12 +312,19 @@ class VectorService:
             hits.sort(key=lambda hit: -hit[1])
             return [hit for hit in hits if hit[0] not in excluded]
 
+        def cut(hits: list[tuple[str, float]]) -> list[tuple[str, float]]:
+            """vec:minScore and vec:maxGap, on a ranking already cut to top-K."""
+            floor = -2.0 if plan.min_score is None else plan.min_score
+            if plan.max_gap is not None and hits:
+                floor = max(floor, hits[0][1] - plan.max_gap)
+            return [hit for hit in hits if hit[1] >= floor]
+
         if plan.combine != "each" or len(query) == 1:
-            return search(query)[: plan.top_k]
+            return cut(search(query)[: plan.top_k])
         # "each": every seed's ranking, interleaved round-robin, so no seed is crowded out.
-        rankings = [search(query[row : row + 1]) for row in range(len(query))]
+        rankings = [cut(search(query[row : row + 1])) for row in range(len(query))]
         merged, seen = [], set()
-        for position in range(max(map(len, rankings))):
+        for position in range(max(map(len, rankings), default=0)):
             for ranking in rankings:
                 if position < len(ranking) and ranking[position][0] not in seen:
                     seen.add(ranking[position][0])

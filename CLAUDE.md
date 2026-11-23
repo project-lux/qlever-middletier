@@ -283,6 +283,12 @@ SERVICE <http://127.0.0.1:8081/sparql> {
   `QLMT_VECTOR_NESTED_TOP_K` (default 5): there each similar record pulls in its related records unranked,
   so the weak matches near 100 would swamp the close ones. Choosing K per query needs luxql to carry an
   option on the leaf; it only passes `_options`, `_weight` and `_complete` through today.
+- Cosine cutoffs apply after top-K, with the same top/nested split: `QLMT_VECTOR_MIN_SCORE` /
+  `QLMT_VECTOR_MAX_GAP` and `QLMT_VECTOR_NESTED_MIN_SCORE` / `QLMT_VECTOR_NESTED_MAX_GAP`, sent as the
+  sidecar's `vec:minScore` (absolute floor) and `vec:maxGap` (distance below the best hit). 0, the default,
+  leaves one off. To compare a cutoff with the small nested K, raise `QLMT_VECTOR_NESTED_TOP_K` so the
+  cutoff is what bites. `files/similarity_cutoffs.py` prints the score curve, what each value keeps and
+  the names at each rank.
 - `vec:mode "constrained"` is added when the leaf is one of several children of an `AND`
   (`QLMT_VECTOR_CONSTRAIN_IN_AND`), so a constraint too big for QLever to push down (`service-max-value-rows`)
   is an error instead of a near-empty result. A lone `similar` uses the default `auto`, because its only

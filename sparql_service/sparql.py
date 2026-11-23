@@ -13,6 +13,8 @@ silently ignoring patterns it cannot honour.
                vec:score ?score ;          # cosine similarity, xsd:double
                vec:rank ?rank ;            # optional, 1-based
                vec:topK 20 ;               # optional, default 20
+               vec:minScore 0.6 ;          # optional: drop hits with a lower cosine
+               vec:maxGap 0.1 ;            # optional: drop hits more than this below the best
                vec:index "concept" ;       # optional; inferred from IRIs otherwise
                vec:mode "constrained" .    # optional: refuse to run without pushed-down VALUES
     }
@@ -26,6 +28,11 @@ Several seeds - ``vec:similarTo <a>, <b>, "text"`` (or repeated triples) - combi
 * ``"mean"``: one search with the seeds' normalized centroid, "similar to them as a group".
 
 Seed IRIs are left out of the results unless ``vec:includeSeeds true``.
+
+``vec:minScore`` and ``vec:maxGap`` cut the top-K list further: the first is an absolute cosine
+floor, the second keeps only hits within that distance of the best one (of each seed's ranking,
+for ``"each"``). Raw cosines sit in a band whose position depends on the query and the model, so a
+floor that suits one query can empty another; the gap follows the query's own best match.
 
 The ``VALUES`` block is split off and parsed with one regex pass before the (small) remainder is
 tokenized, so a 100k-row pushdown costs tens of milliseconds, not a general SPARQL parse.
@@ -72,6 +79,8 @@ class Plan:
     mode: str = "auto"
     combine: str = "max"
     include_seeds: bool = False
+    min_score: float | None = None  # absolute cosine floor
+    max_gap: float | None = None  # keep hits within this of the best
     candidates: list[str] | None = None  # pushed-down IRIs for `subject`, if any
     limit: int | None = None
     notes: list[str] = field(default_factory=list)
@@ -341,6 +350,16 @@ def _plan(triples, select: list[str], star: bool) -> Plan:
             if obj.value not in COMBINES:
                 raise SparqlError(f"vec:combine is one of {', '.join(COMBINES)}")
             plan.combine = obj.value
+        elif name in ("minScore", "maxGap"):
+            try:
+                number = float(obj.value)
+            except ValueError:
+                raise SparqlError(f"vec:{name} is a number") from None
+            if name == "minScore" and not -1.0 <= number <= 1.0:
+                raise SparqlError("vec:minScore is a cosine, between -1 and 1")
+            if name == "maxGap" and number < 0:
+                raise SparqlError("vec:maxGap is not negative")
+            setattr(plan, "min_score" if name == "minScore" else "max_gap", number)
         elif name == "includeSeeds":
             if obj.value.lower() not in ("true", "false"):
                 raise SparqlError("vec:includeSeeds is true or false")
