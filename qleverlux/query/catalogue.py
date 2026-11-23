@@ -193,9 +193,11 @@ class QueryCatalogue:
             text_scale=settings.text_score_scale,
             vector_scale=settings.vector_score_scale,
         )
+        self.translator.configure_paths(max_hops=settings.max_hops)
         self.translator.configure_vectors(
             service=settings.vector_service,
             top_k=settings.vector_top_k,
+            nested_top_k=settings.vector_nested_top_k,
             constrain_in_and=settings.vector_constrain_in_and,
         )
 

@@ -95,7 +95,7 @@ SCOPE_FIELDS: dict[str, dict[str, str]] = {
     },
     "concept": {
         "broader": "broader",
-        "broaderPlus": "broader+",
+        "broader+": "broader+",
         "classificationOfSet": "^setClassification",
         "classificationOfConcept": "^conceptClassification",
         "classificationOfEvent": "^eventClassification",
@@ -112,6 +112,7 @@ SCOPE_FIELDS: dict[str, dict[str, str]] = {
         "influencedByEvent": "eventInfluenceOfConceptBeginning",
         "influencedByPlace": "placeInfluenceOfConceptBeginning",
         "narrower": "^broader",
+        "narrower+": "^broader+",
         "nationalityOf": "^nationality",
         "occupationOf": "^occupation",
         "professionalActivityOf": "^typeOfAgentActivity",
@@ -132,7 +133,9 @@ SCOPE_FIELDS: dict[str, dict[str, str]] = {
     },
     "place": {
         "partOf": "placePartOf",
-        "partOfPlus": "placePartOf+",
+        "partOf+": "placePartOf+",
+        "contains": "^placePartOf",
+        "contains+": "^placePartOf+",
         "activePlaceOfAgent": "^placeOfAgentActivity",
         "startPlaceOfAgent": "^placeOfAgentBeginning",
         "producedHere": "^placeOfItemBeginning",
@@ -162,9 +165,11 @@ SCOPE_FIELDS: dict[str, dict[str, str]] = {
         "publishedAt": "placeOfSetPublication",
         "publishedBy": "agentOfSetPublication",
         "containingSet": "^setMemberOfSet",
+        "containingSet+": "^setMemberOfSet+",
         "containingItem": "^itemMemberOfSet",
         "usedForEvent": "^eventUsedSet",
         "memberOf": "setMemberOfSet",
+        "memberOf+": "setMemberOfSet+",
         "classification": "setClassification",
     },
     "work": {
@@ -219,6 +224,18 @@ def get_predicate(rel: str, scope: str) -> str:
             return f"^lux:{p[1:]}"
         else:
             return f"lux:{p}"
+
+
+def bound_path(pred: str, max_hops: int) -> str:
+    """``lux:p+`` -> ``lux:p{1,max_hops}`` (``^lux:p+`` likewise); anything else unchanged.
+
+    The LUX hierarchies are deep and have cycles (2,741 concepts reach themselves through
+    ``broader``), so a full closure is huge: across all concepts ``broader+`` is 136M pairs and
+    ``broader{1,8}`` 16M. QLever supports ``{m,n}`` with the usual distinct-pairs meaning.
+    ``max_hops`` of 0 leaves ``+`` unbounded."""
+    if max_hops and pred.endswith("+"):
+        return f"{pred[:-1]}{{1,{max_hops}}}"
+    return pred
 
 
 def get_leaf_predicate(field: str, scope: str) -> str | list[str]:

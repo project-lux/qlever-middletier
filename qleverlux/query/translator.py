@@ -87,21 +87,34 @@ class SparqlTranslator:
         self.vector_scale = 1.0
         self.vector_service = ""
         self.vector_top_k = 100
+        self.vector_nested_top_k = 5
         self.vector_constrain_in_and = True
+        self.max_hops = 8
 
     def configure_scoring(self, text_scale=1.0, vector_scale=1.0):
         """Weights of the two relevance sources, each already 0..1. See _relevance_query."""
         self.text_scale = text_scale
         self.vector_scale = vector_scale
 
-    def configure_vectors(self, service="", top_k=100, constrain_in_and=True):
+    def configure_paths(self, max_hops=8):
+        """Longest chain a transitive term (``broader+`` and friends) follows; 0 is unbounded."""
+        self.max_hops = max_hops
+
+    def configure_vectors(self, service="", top_k=100, constrain_in_and=True, nested_top_k=5):
         """Where the vector SERVICE is; an empty ``service`` disables ``similar``.
+
+        ``top_k`` is for a similarity clause at the top of the query, where the
+        results are the similar records and rank by cosine. ``nested_top_k`` is
+        for one under a relationship, where each similar record pulls in its
+        related records unranked, so the weak matches near the bottom of a long
+        list would swamp the strong ones.
 
         ``service`` is a bare URL. It is bracketed here, and the builder passes
         a bracketed name through untouched because it contains a ``:``.
         """
         self.vector_service = iri(service) if service else ""
         self.vector_top_k = int(top_k)
+        self.vector_nested_top_k = int(nested_top_k)
         self.vector_constrain_in_and = constrain_in_and
 
     @property
@@ -594,8 +607,9 @@ class SparqlTranslator:
         parent.add_nested_graph_pattern(clause)
 
     def get_predicate(self, rel, scope):
-        """Relationship term -> prefixed predicate. See query/predicates.py."""
-        return predicates.get_predicate(rel, scope)
+        """Relationship term -> prefixed predicate, transitive ones bounded to
+        ``max_hops``. See query/predicates.py."""
+        return predicates.bound_path(predicates.get_predicate(rel, scope), self.max_hops)
 
     def translate_relationship(self, query, parent):
         if query.field == SIMILAR_RECORDS_FIELD:
@@ -679,10 +693,11 @@ class SparqlTranslator:
         if not self.vector_service:
             raise ValueError("Similarity search is not configured")
         n = self.counter
+        top_k = self.vector_nested_top_k if self._under_relationship(query) else self.vector_top_k
         triples = [Triple(query.var, "vec:similarTo", seed) for seed in seeds]
         triples += [
             Triple(query.var, "vec:score", f"?score_{n}"),
-            Triple(query.var, "vec:topK", str(self.vector_top_k)),
+            Triple(query.var, "vec:topK", str(top_k)),
             Triple(query.var, "vec:index", string_literal(scope)),
         ]
         if self.vector_constrain_in_and and self._has_and_siblings(query):
@@ -692,6 +707,19 @@ class SparqlTranslator:
         svc.add_triples(triples)
         parent.add_nested_graph_pattern(svc)
         self.vector_scored.append(n)
+
+    @staticmethod
+    def _under_relationship(query):
+        """True when a relationship stands between ``query`` and the root, as in
+        works ``aboutConcept`` {similar}. Booleans do not count: an AND or OR of
+        clauses at the top still returns the similar records themselves. For
+        ``similarRecords`` ``query`` is the relationship, so the walk starts above it."""
+        node = getattr(query, "parent", None)
+        while isinstance(node, (LuxBoolean, LuxRelationship, LuxLeaf)):
+            if isinstance(node, LuxRelationship):
+                return True
+            node = getattr(node, "parent", None)
+        return False
 
     @staticmethod
     def _has_and_siblings(query):

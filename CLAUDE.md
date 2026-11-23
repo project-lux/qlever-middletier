@@ -152,6 +152,13 @@ the sentinel for an unmapped term. Three things read this module — the transla
 `files/derive_from_upstream.py` — which is why it is not a translator attribute. The translator still exposes
 `scope_fields` / `scope_leaf_fields` as attributes pointing at the same dicts.
 
+Transitive terms (`broader+`, `narrower+`, `partOf+`, `contains+`, `memberOf+`, `containingSet+`) map to
+`+` paths there, and `SparqlTranslator.get_predicate` bounds them to `{1,QLMT_MAX_HOPS}` (default 8; 0 is
+unbounded) through `bound_path`, which QLever supports with the usual distinct-pairs meaning. The hierarchies
+have cycles (2,741 concepts reach themselves through `broader`), so the full closure is huge: `broader+` over
+all concepts is 136M pairs against 16M for `{1,8}`. Related lists read `SCOPE_FIELDS` directly and are not
+bounded, but none of them uses a transitive term.
+
 Scopes are `item work agent place concept set event`; record classes (URL path segments) are the finer set in
 `classEnum` (`object digital text visual person group period activity` …) and get folded back to scopes in
 `do_hal_links`.
@@ -270,9 +277,12 @@ SERVICE <http://127.0.0.1:8081/sparql> {
   `relevance` it is computed by the translator (`RANKED_SORTS`), not looked up in `sorts.json`, so it works for
   `multi` too. It needs no per-query max, so the sidecar is called once. With no `similar` clause it falls back
   to relevance.
-- `QLMT_VECTOR_TOP_K` (default 100) is global for now, so it also caps the results and the estimate (≤ K).
-  Making it per-query needs luxql to carry an option on the leaf; it only passes `_options`, `_weight` and
-  `_complete` through today.
+- `vec:topK` depends on where the clause sits. At the top of the query (booleans do not count) it is
+  `QLMT_VECTOR_TOP_K` (default 100), which also caps the results and the estimate (≤ K). Under a
+  relationship (`_under_relationship`), as in works `aboutConcept` {similar}, it is
+  `QLMT_VECTOR_NESTED_TOP_K` (default 5): there each similar record pulls in its related records unranked,
+  so the weak matches near 100 would swamp the close ones. Choosing K per query needs luxql to carry an
+  option on the leaf; it only passes `_options`, `_weight` and `_complete` through today.
 - `vec:mode "constrained"` is added when the leaf is one of several children of an `AND`
   (`QLMT_VECTOR_CONSTRAIN_IN_AND`), so a constraint too big for QLever to push down (`service-max-value-rows`)
   is an error instead of a near-empty result. A lone `similar` uses the default `auto`, because its only
