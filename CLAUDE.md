@@ -308,9 +308,13 @@ SERVICE <http://127.0.0.1:8081/sparql> {
   (`../vectors/data/`), and so does the USearch checkout. Serving in place needs USearch `840374af` with
   `files/usearch-view-ram-buffer.patch` applied; drop the patch once upstream has `view_ram_buffer`. Their
   tests skip without numpy, lmdb and usearch.
-  Two things to keep: slice HNSW results to `counts[row]` *before* `keys_to_integers` (the rest of the buffer
+  Three things to keep: slice HNSW results to `counts[row]` *before* `keys_to_integers` (the rest of the buffer
   is garbage, and the walk returns at most `expansion_factor` hits), and never hold a `usearch.Executor`
-  past the call that needs it — an undrained one spins about two cores even when idle.
+  past the call that needs it — an undrained one spins about two cores even when idle. And don't read
+  vectors with `txn.get`: py-lmdb touches every page of a value it returns, so scoring a few hundred hits
+  pulled in each whole chunk they sat in (60,070 page faults and 2 s for 300 rows, against 412 and 7 ms).
+  `_RowReader` finds a chunk from its key's leaf node and reads just the rows with `os.pread`; it checks the
+  LMDB layout against the file first and falls back to `txn.get` where it does not fit.
 - User values go through `iri()` / `string_literal()` (`sparql/terms.py`), which reject or escape anything
   that could break out of the term; a `similarRecords` id must also start `http://`/`https://`.
 

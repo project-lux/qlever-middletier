@@ -34,10 +34,14 @@ Writing happens in two steps, so building can stream and resume:
 
 from __future__ import annotations
 
+import ctypes
 import json
+import os
 import struct
+import sys
 import threading
 from collections.abc import Iterable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 
 import lmdb
 import numpy as np
@@ -47,6 +51,12 @@ from usearch.keys import keys_to_integers
 
 PAD = 48  # 16-byte LMDB page header + 48 = 64-byte alignment for overflow values
 LMDB_PAGE_HEADER = 16  # an overflow value starts this far past its first page's boundary
+LMDB_NODE_HEADER = 8  # mn_lo, mn_hi, mn_flags, mn_ksize (u16 each); the key follows
+LMDB_F_BIGDATA = 0x01  # a leaf node whose data is the page number of an overflow value
+LMDB_P_OVERFLOW = 0x04
+WHOLE_CHUNK_SHARE = 8  # read a whole chunk once more than 1/8 of its rows are wanted
+PARALLEL_READS = 32  # more separate reads than this go to the read pool
+_READ_POOL = ThreadPoolExecutor(max_workers=16, thread_name_prefix="vector-rows")  # idle threads cost nothing
 CAN_VIEW = hasattr(DenseIndex, "view_ram_buffer")
 CHUNK_ROWS = 65_536
 MAX_DBS = 64
@@ -320,6 +330,74 @@ class _GraphSnapshot:
             self.close()
 
 
+class _RowReader:
+    """Reads vector rows straight from the data file, so scoring N hits reads about N rows.
+
+    py-lmdb touches every page of a value it returns (``txn.get`` of a 13 MB chunk faulted in all
+    769 of its pages, where positioning a cursor on its key faulted 1), so reading rows through it
+    pulls in each whole chunk a hit sits in: harmless while the store is in memory, seconds of
+    disk reads when it is not. Instead a chunk is located by its key - LMDB keeps the page number
+    of a large value in the leaf node beside the key - and its rows are read with ``os.pread``,
+    which maps nothing. Chunks are written once and never rewritten, and the reads happen inside
+    the caller's read transaction, which keeps those pages from being reused.
+
+    The node layout is LMDB 0.9's on a little-endian 64-bit machine. ``verify`` checks it against
+    the page header in the file before it is trusted; a store it does not fit is read as before.
+    """
+
+    def __init__(self, env: lmdb.Environment):
+        path = env.path()
+        self.path = os.path.join(path, "data.mdb") if os.path.isdir(path) else path
+        self.psize = env.stat()["psize"]
+        self.fd = os.open(self.path, os.O_RDONLY)
+        if hasattr(os, "posix_fadvise"):  # Linux: no readahead for scattered row reads
+            os.posix_fadvise(self.fd, 0, 0, os.POSIX_FADV_RANDOM)
+
+    def close(self) -> None:
+        if self.fd is not None:
+            os.close(self.fd)
+            self.fd = None
+
+    def locate(self, cursor: lmdb.Cursor, key: bytes) -> tuple[int, int] | None:
+        """(file offset, size) of the value stored under ``key``, read from its leaf node without
+        touching the value; None when the value is stored inline (small) or the key is absent."""
+        if not cursor.set_key(key):
+            return None
+        found = cursor.key()
+        if not isinstance(found, memoryview):  # a copy (buffers=False): nothing beside it to read
+            return None
+        address = np.frombuffer(found, dtype=np.uint8).ctypes.data
+        lo, hi, flags, ksize = struct.unpack("<HHHH", ctypes.string_at(address - LMDB_NODE_HEADER, LMDB_NODE_HEADER))
+        if not flags & LMDB_F_BIGDATA or ksize != len(found):
+            return None
+        (pgno,) = struct.unpack("<Q", ctypes.string_at(address + ksize, 8))
+        return pgno * self.psize + LMDB_PAGE_HEADER, lo | (hi << 16)
+
+    def verify(self, cursor: lmdb.Cursor, key: bytes) -> bool:
+        """Whether ``locate`` finds the value under ``key`` where the file says it is: the page
+        header there names the same page, marks it as an overflow page long enough for the value,
+        and the value starts with PAD zero bytes, as every chunk does."""
+        if sys.byteorder != "little" or struct.calcsize("P") != 8:
+            return False
+        located = self.locate(cursor, key)
+        if located is None:
+            return False
+        offset, size = located
+        head = os.pread(self.fd, LMDB_PAGE_HEADER + PAD, offset - LMDB_PAGE_HEADER)
+        if len(head) < LMDB_PAGE_HEADER + PAD:
+            return False
+        pgno, _pad, flags, pages = struct.unpack("<QHHI", head[:LMDB_PAGE_HEADER])
+        return (pgno * self.psize == offset - LMDB_PAGE_HEADER and flags & LMDB_P_OVERFLOW
+                and pages * self.psize >= size + LMDB_PAGE_HEADER and head[LMDB_PAGE_HEADER:] == bytes(PAD))
+
+    def read(self, spans: list[tuple[int, int]]) -> list[bytes]:
+        """``os.pread`` each (offset, length); many at once on the read pool, which keeps several
+        reads in flight when the pages are on disk."""
+        if len(spans) > PARALLEL_READS:
+            return list(_READ_POOL.map(lambda span: os.pread(self.fd, span[1], span[0]), spans))
+        return [os.pread(self.fd, length, offset) for offset, length in spans]
+
+
 class LmdbVectorStore:
     """Read side of one scope: HNSW served in place from LMDB's mmap (or copied, on stock USearch),
     exact vectors read zero-copy from the chunks.
@@ -344,6 +422,22 @@ class LmdbVectorStore:
         self._local = threading.local()
         self._graph: _GraphSnapshot | None = None
         self.refresh()
+        self._rows = self._row_reader()
+
+    def _row_reader(self) -> _RowReader | None:
+        """A reader for rows straight from the file, if this store's layout passes its check."""
+        try:
+            reader = _RowReader(self.env)
+        except OSError:
+            return None
+        with self.env.begin(buffers=True) as txn, txn.cursor(db=self.dbs["vectors"]) as cursor:
+            first = cursor.first() and bytes(cursor.key())
+            if first and reader.verify(cursor, first):
+                return reader
+        # A store whose first chunk is small enough to sit inline has nothing to check against;
+        # its chunks are small, so reading them whole costs little anyway.
+        reader.close()
+        return None
 
     # -- lifecycle -----------------------------------------------------------------------------
 
@@ -370,6 +464,9 @@ class LmdbVectorStore:
         return True
 
     def close(self) -> None:
+        if getattr(self, "_rows", None) is not None:
+            self._rows.close()
+            self._rows = None
         if self._graph is not None:
             self._graph.close()
             self._graph = None
@@ -399,17 +496,54 @@ class LmdbVectorStore:
     # -- zero-copy reads -------------------------------------------------------------------------
 
     def _vectors(self, txn: lmdb.Transaction, ids: np.ndarray) -> np.ndarray:
-        """Gathers rows for `ids` from the chunk matrices as f32; only the selected rows are copied."""
+        """Rows for `ids` as f32. Read straight from the file where the store allows it (see
+        :class:`_RowReader`): consecutive rows in one read, a chunk with many wanted rows whole,
+        the rest one row at a time. Otherwise through py-lmdb, which reads each whole chunk."""
         dim, rows_per_chunk = self.meta["dimensions"], self.meta["chunk_rows"]
         dtype = np.dtype(self.meta.get("vector_dtype", "float32"))
         ids = np.asarray(ids, dtype=np.uint64)
         out = np.empty((len(ids), dim), dtype=np.float32)
         chunks, rows = np.divmod(ids, rows_per_chunk)
-        for chunk in np.unique(chunks):
-            buf = txn.get(PACK_U32(int(chunk)), db=self.dbs["vectors"])
-            matrix = np.frombuffer(buf, dtype=dtype, offset=PAD).reshape(-1, dim)
-            mask = chunks == chunk
-            out[mask] = matrix[rows[mask]]
+        row_bytes = dim * dtype.itemsize
+        spans: list[tuple[int, int]] = []  # (offset, length) to read
+        fills: list[tuple[np.ndarray, int, np.ndarray]] = []  # (out positions, span index, rows within span)
+        with txn.cursor(db=self.dbs["vectors"]) as cursor:
+            for chunk in np.unique(chunks):
+                mask = np.nonzero(chunks == chunk)[0]
+                key = PACK_U32(int(chunk))
+                located = self._rows.locate(cursor, key) if self._rows is not None else None
+                if located is None:
+                    matrix = np.frombuffer(txn.get(key, db=self.dbs["vectors"]), dtype=dtype, offset=PAD).reshape(-1, dim)
+                    out[mask] = matrix[rows[mask]]
+                    continue
+                start, size = located
+                start += PAD
+                wanted = rows[mask].astype(np.int64)
+                if len(np.unique(wanted)) * WHOLE_CHUNK_SHARE > rows_per_chunk:
+                    fills.append((mask, len(spans), wanted))
+                    spans.append((start, size - PAD))
+                    continue
+                # Runs of consecutive rows, each one read.
+                order = np.argsort(wanted, kind="stable")
+                run_first = None
+                for position in order:
+                    row = int(wanted[position])
+                    if run_first is None or row > run_last + 1:
+                        if run_first is not None:
+                            spans.append((start + run_first * row_bytes, (run_last - run_first + 1) * row_bytes))
+                        run_first, run_last, run_members = row, row, []
+                        fills.append((run_members, len(spans), run_first))
+                    run_last = row
+                    run_members.append(int(mask[position]))
+                spans.append((start + run_first * row_bytes, (run_last - run_first + 1) * row_bytes))
+            data = self._rows.read(spans) if spans else []
+        for positions, span, rows_in in fills:
+            matrix = np.frombuffer(data[span], dtype=dtype).reshape(-1, dim)
+            if isinstance(rows_in, np.ndarray):  # a whole chunk: rows_in are the wanted rows
+                out[positions] = matrix[rows_in]
+            else:  # a run of rows starting at row rows_in
+                positions = np.asarray(positions)
+                out[positions] = matrix[rows[positions].astype(np.int64) - rows_in]
         return out
 
     def _ids_for(self, txn: lmdb.Transaction, iris: Iterable[str]) -> tuple[list[str], np.ndarray]:
