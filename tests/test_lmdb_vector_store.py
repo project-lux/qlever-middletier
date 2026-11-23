@@ -122,3 +122,73 @@ def test_rewalk_never_loses_what_one_walk_found(store):
         assert all(b >= a - 1e-6 for (_, a), (_, b) in zip(once, narrow))
         exact_hits += len(truth & {iri for iri, _ in twice}) - len(truth & {iri for iri, _ in once})
     assert exact_hits >= 0
+
+
+def _through_lmdb(s, ids):
+    """The rows as py-lmdb returns them, whole chunks at a time: what _vectors must equal."""
+    reader, s._rows = s._rows, None
+    try:
+        with s.env.begin(buffers=True) as txn:
+            return s._vectors(txn, ids)
+    finally:
+        s._rows = reader
+
+
+def test_rows_are_read_straight_from_the_file(store):
+    s, data, _ = store
+    assert s._rows is not None  # 1024-row chunks are overflow values: the layout check passed
+    rng = np.random.default_rng(5)
+    for ids in (
+        [0], [N - 1], [5, 6, 7, 8, 1030, 1031, 2999],     # runs within and across chunks
+        rng.choice(N, 40, replace=False),                  # scattered: one read per row
+        rng.choice(N, 900, replace=False),                 # most of each chunk: whole chunks
+        [17, 17, 3, 17],                                   # repeats, out of order
+    ):
+        ids = np.asarray(ids, dtype=np.uint64)
+        with s.env.begin(buffers=True) as txn:
+            got = s._vectors(txn, ids)
+        np.testing.assert_array_equal(got, _through_lmdb(s, ids))
+        np.testing.assert_array_equal(got, data[ids.astype(np.int64)])
+
+
+def test_finding_a_chunk_does_not_read_it(store, monkeypatch):
+    """Only the rows asked for are read, by pread: py-lmdb's get (which reads a whole chunk) is
+    not called for the vectors."""
+    s, data, iris = store
+    spans = []
+    real = s._rows.read
+    monkeypatch.setattr(s._rows, "read", lambda sp: spans.extend(sp) or real(sp))
+    vector = s.get_vector(iris[1500])
+    np.testing.assert_array_equal(vector, data[1500])
+    assert spans == [(spans[0][0], DIM * 4)]  # one row of float32
+
+
+def test_a_layout_that_fails_the_check_is_read_as_before(tmp_path, monkeypatch):
+    rng = np.random.default_rng(9)
+    data = rng.standard_normal((300, DIM)).astype(np.float32)
+    iris = [f"https://example.org/data/concept/{i}" for i in range(300)]
+    path = str(tmp_path / "store.lmdb")
+    lvs.build_store(path, iris, data, scope="concept", chunk_rows=128)
+    monkeypatch.setattr(lvs._RowReader, "verify", lambda self, cursor, key: False)
+    s = lvs.LmdbVectorStore(path, "concept")
+    try:
+        assert s._rows is None
+        np.testing.assert_array_equal(s.get_vector(iris[200]), data[200])
+        assert s.search_global(data[3], 5)[0][0] == iris[3]
+    finally:
+        s.close()
+
+
+def test_small_inline_chunks_are_read_through_lmdb(tmp_path):
+    rng = np.random.default_rng(10)
+    data = rng.standard_normal((50, 4)).astype(np.float32)  # 3-row chunks of 4 floats: stored inline
+    iris = [f"https://example.org/data/concept/{i}" for i in range(50)]
+    path = str(tmp_path / "small.lmdb")
+    lvs.build_store(path, iris, data, scope="concept", chunk_rows=3)
+    s = lvs.LmdbVectorStore(path, "concept")
+    try:
+        assert s._rows is None  # nothing to check the layout against
+        with s.env.begin(buffers=True) as txn:
+            np.testing.assert_array_equal(s._vectors(txn, np.array([0, 10, 49], dtype=np.uint64)), data[[0, 10, 49]])
+    finally:
+        s.close()
