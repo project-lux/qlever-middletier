@@ -98,8 +98,13 @@ def scope_of(iri: str) -> str | None:
 
 class VectorService:
     def __init__(self, store_path: str, *, device: str = "auto", refresh_seconds: float = 10.0,
-                 exact_threshold: int = 200_000, expansion_factor: int = 128, cache_bytes: int = 256 << 20,
-                 rewalk: int = 0, rewalk_ef: int = 300, exact_below: int = 0):
+                 exact_threshold: int = 200_000, expansion_factor: int = 10_000, cache_bytes: int = 256 << 20,
+                 rewalk: int = 10, rewalk_ef: int = 300, exact_below: int = 0):
+        # The search defaults were measured on dev (Harrier, 4 scopes) with files/similarity_cutoffs.py
+        # --recall: ef 10,000 fixed a walk trapped by near-duplicates ("quantum entanglement", 0 -> 10
+        # of the 10 exact top hits) at ~40 ms over ef 3,000; ten narrow second walks then add ~20-30 ms
+        # and found a top hit the first walk missed. Wide second walks (rewalk_ef 10,000) recovered two
+        # more of ten on some place queries but cost ~200 ms; exact search took 1-3 s.
         self.path = store_path
         self.cache = ByteLRU(cache_bytes)
         self.env = lmdb.open(store_path, readonly=True, max_dbs=MAX_DBS, readahead=False, subdir=True, map_size=1 << 40)

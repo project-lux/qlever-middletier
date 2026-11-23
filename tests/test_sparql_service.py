@@ -363,6 +363,16 @@ def test_ef_widens_the_walk_for_one_query(client):
     assert wide == default  # 200 concepts: both walks are exhaustive
 
 
+def test_search_defaults_are_the_ones_measured_on_dev():
+    import inspect
+
+    from sparql_service.app import VectorService
+
+    defaults = {name: p.default for name, p in inspect.signature(VectorService).parameters.items()}
+    assert (defaults["expansion_factor"], defaults["rewalk"], defaults["rewalk_ef"], defaults["exact_below"]) == \
+        (10_000, 10, 300, 0)
+
+
 def test_exact_and_rewalk_reach_the_store(client):
     service = client.app.state.service
     store = service.store("concept")
@@ -386,7 +396,7 @@ def test_exact_and_rewalk_reach_the_store(client):
         service.exact_below = 0
         del store.search_global, store.search_exact
     assert calls == [("walk", 3, service.rewalk_ef), ("walk", 3, 50), ("exact", None, None),
-                     ("exact", None, None), ("walk", 0, service.rewalk_ef)]
+                     ("exact", None, None), ("walk", service.rewalk, service.rewalk_ef)]
     assert walked == narrow == exact == by_size == forced  # 200 records: every way finds the true top 4
 
 

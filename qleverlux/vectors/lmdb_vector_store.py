@@ -483,9 +483,10 @@ class LmdbVectorStore:
         reranks the pool. A text query sits away from every record (its best cosine is about
         0.6), and a walk from there misses records the graph does link: each one missed on dev
         was found first when its own vector was the query. A walk from a record starts where the
-        graph is reliable, so the second walks find what the first one passed by - and need far
-        less width to do it: ``rewalk_expansion_factor`` (``expansion_factor`` when None). On dev
-        five second walks at ef 10,000 cost 300-500 ms."""
+        graph is reliable, so the second walks find some of what the first one passed by.
+        ``rewalk_expansion_factor`` is their width (``expansion_factor`` when None). On dev narrow
+        ones (300) were cheap and recovered a missed top hit; wide ones (10,000) recovered more on
+        place queries but cost as much as the first walk again."""
         q = self._queries(query)
         wanted = top_k * max(rerank_factor, 1)
         graph = self._graph  # held for the whole call: keeps this generation's pages pinned
