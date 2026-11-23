@@ -121,6 +121,19 @@ def test_startup_opens_every_scope_before_serving(client):
     assert set(client.app.state.service._stores) == {"concept", "item"}
 
 
+def test_warming_reads_graphs_first_and_keeps_to_its_budget(tmp_path):
+    from sparql_service.warm import warm
+
+    path = str(tmp_path / "vectors.lmdb")
+    rng = np.random.default_rng(1)
+    build_store(path, [concept(i) for i in range(5000)], rng.standard_normal((5000, 64)).astype(np.float32),
+                scope="concept")
+    everything = warm(path, 1 << 40, threads=4)
+    assert all(everything.values()), everything
+    graphs_only = warm(path, everything["graphs"], threads=4)
+    assert graphs_only == {"graphs": everything["graphs"], "IRI maps": 0, "vectors": 0}
+
+
 def post(client, query):
     return client.post("/sparql", content=query, headers={"Content-Type": "application/sparql-query"})
 

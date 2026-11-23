@@ -22,9 +22,11 @@ def main() -> None:
                         help="pushed-down candidates up to this many are scored exactly")
     parser.add_argument("--no-warm", dest="warm", action="store_false",
                         help="skip loading the encoder and the store before serving (the first queries pay for it)")
+    parser.add_argument("--warm-gb", type=float, default=None,
+                        help="most of the store to read into the page cache at startup (default: half of RAM)")
     args = parser.parse_args()
     app = create_app(args.store, device=args.device, timeout=args.timeout, exact_threshold=args.exact_threshold,
-                     warm=args.warm)
+                     warm=args.warm, warm_bytes=None if args.warm_gb is None else int(args.warm_gb * 1e9))
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
 
 
