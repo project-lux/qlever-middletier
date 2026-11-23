@@ -209,8 +209,17 @@ Free-text (`text` field) searches go through QLever **materialized views** named
 view:<scope>Words { [ view:column-word "w" ; view:column-uri ?uri ; view:column-score ?tf ] }` block per word.
 Those views are defined in `files/Qleverfile` under `MATERIALIZED_VIEWS` and weight primary name 14 / record text
 5 / any-name 1 — the weights the relevance ordering depends on. Name-field searches instead use `ql:has-word`
-inside a `GRAPH ?tf` pattern against `lux:<scope>Name`. Quoted phrases become `CONTAINS()` filters over a UNION of
-the three text sources.
+inside a `GRAPH ?tf` pattern against `lux:<scope>Name`. Words are split the way QLever's index splits text: on every character that is not a letter or a digit,
+accents kept (`query/text.py`, `tokenize`). So "children's" is `children` + `s`, as in the index; only double quotes
+make a phrase (`shlex` once took an apostrophe for a quote and failed). A quoted phrase, and in name searches a
+word written with an apostrophe ("o'brien"), is then checked with one RE2 `REGEX` (`match_pattern`): the words in
+order and whole, ignoring case, separated by anything but letters and digits, or by at most an apostrophe-like
+mark and spaces where the query has an apostrophe - so "o'brien" is not "o. brien". In a name search that runs
+on the matched name and costs milliseconds. In a text search a phrase is a UNION of three sub-selects, one per
+source (`lux:<scope>PrimaryName`, `lux:<scope>RecordText`, `lux:<scope>Any/lux:primaryName`), each starting from
+the text index: joined any other way QLever read all 34M item record texts. A phrase of rare words takes
+seconds, of common words tens of seconds, which is why an unquoted apostrophe word is not checked in text
+searches. Words and phrases go into the SPARQL through `string_literal()`.
 
 The relevance chain has four links, and all four have to line up: each word binds `?tf_<clause>_<word>`; the
 clause sums those into `?score_<clause>`; `translate_leaf` records the clause number in `translator.scored`
