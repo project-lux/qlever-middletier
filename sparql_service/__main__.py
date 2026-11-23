@@ -20,8 +20,11 @@ def main() -> None:
     parser.add_argument("--timeout", type=float, default=30.0, help="per-request deadline, seconds")
     parser.add_argument("--exact-threshold", type=int, default=200_000,
                         help="pushed-down candidates up to this many are scored exactly")
+    parser.add_argument("--no-warm", dest="warm", action="store_false",
+                        help="skip loading the encoder and the store before serving (the first queries pay for it)")
     args = parser.parse_args()
-    app = create_app(args.store, device=args.device, timeout=args.timeout, exact_threshold=args.exact_threshold)
+    app = create_app(args.store, device=args.device, timeout=args.timeout, exact_threshold=args.exact_threshold,
+                     warm=args.warm)
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
 
 

@@ -12,8 +12,12 @@ Execution follows the plan :mod:`sparql_service.sparql` parses:
 The query vector is an IRI's stored vector (from its own scope, sliced Matryoshka-style when the
 target index is narrower) or free text encoded with the model the store was built with (its meta
 records it; stores from before that are EmbeddingGemma 2), using that model's query prompt. Every
-scope must share one model, because one text query vector serves them all. The encoder loads on
-first use, so IRI-only deployments never pay for it.
+scope must share one model, because one text query vector serves them all.
+
+Nothing is loaded lazily: before the port opens, :meth:`VectorService.warm` reads the store into
+the page cache, opens every scope's graph, loads the encoder and runs one encode and one search
+per scope. Done on the first request instead, the model load alone outlasts the deadline, so the
+first few queries after a restart fail.
 
 QLever has no SERVICE timeout, so the service enforces its own deadline. Searches run on worker
 threads with no USearch executor pool (an idle pool busy-spins its workers).
@@ -23,9 +27,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import os
 import threading
 import time
 import urllib.parse
+from contextlib import asynccontextmanager
 
 import lmdb
 import numpy as np
@@ -46,6 +53,8 @@ SCOPE_OF_SEGMENT = {
 }
 RESULTS_JSON = "application/sparql-results+json"
 LEGACY_MODEL = "google/embeddinggemma-2"  # what stores built before the meta recorded a model used
+WARM_CHUNK = 64 << 20
+log = logging.getLogger("uvicorn.error")
 
 
 def scope_of(iri: str) -> str | None:
@@ -99,6 +108,57 @@ class VectorService:
             except SparqlError as error:
                 out[scope] = {"unavailable": str(error)}
         return out
+
+    def warm(self) -> None:
+        """Pays every first-query cost up front: the store's pages, each scope's graph, the
+        encoder (load plus the first forward pass, which compiles kernels on MPS/CUDA) and one
+        search per scope. Raises if the encoder cannot load - a sidecar that cannot encode
+        text answers every `similar` with an error, so it should not come up looking healthy."""
+        started = time.perf_counter()
+        read = self.warm_pages()
+        log.info("vector store: %.1f GB read into the page cache in %.1fs", read / 1e9, time.perf_counter() - started)
+
+        stores = {}
+        for scope in self.scopes():
+            try:
+                stores[scope] = self.store(scope)
+            except SparqlError as error:
+                log.warning("vector store: %s unavailable: %s", scope, error)
+        if not stores:
+            log.warning("vector store: no scope has a graph; nothing to search")
+            return
+
+        started = time.perf_counter()
+        encoder = self.encoder()
+        widest = max(store.meta["dimensions"] for store in stores.values())
+        with self._encoder_lock:
+            vector = encoder.encode_query("warm-up", widest)
+        log.info("encoder %s ready in %.1fs", self.model(), time.perf_counter() - started)
+
+        started = time.perf_counter()
+        for store in stores.values():
+            store.search_global(vector, 10, expansion_factor=self.expansion_factor)
+        log.info("vector search ready for %s in %.2fs", ", ".join(stores), time.perf_counter() - started)
+
+    def warm_pages(self) -> int:
+        """Reads the LMDB file sequentially so the mmap serves from memory. The environment is
+        opened with readahead off, which makes a cold page fault fetch one page at a time; one
+        sequential pass is far faster than the random faults an HNSW walk would otherwise take.
+        Stops at half of physical memory, so a store bigger than RAM does not evict everything."""
+        path = os.path.join(self.path, "data.mdb") if os.path.isdir(self.path) else self.path
+        try:
+            limit = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") // 2
+        except (ValueError, OSError):
+            limit = 1 << 62
+        size = os.path.getsize(path)
+        if size > limit:
+            log.warning("vector store: %.1f GB is more than half of RAM; warming only the first %.1f GB",
+                        size / 1e9, limit / 1e9)
+        buffer, read = bytearray(WARM_CHUNK), 0
+        with open(path, "rb", buffering=0) as handle:
+            while read < limit and (n := handle.readinto(buffer)):
+                read += n
+        return read
 
     # -- query vectors --------------------------------------------------------------------------
 
@@ -233,9 +293,19 @@ class VectorService:
         return {"head": {"vars": plan.select}, "results": {"bindings": bindings}}
 
 
-def create_app(store_path: str, *, device: str = "auto", timeout: float = 30.0, **options) -> FastAPI:
+def create_app(store_path: str, *, device: str = "auto", timeout: float = 30.0, warm: bool = True,
+               **options) -> FastAPI:
     service = VectorService(store_path, device=device, **options)
-    app = FastAPI(title="LUX vector SERVICE", docs_url=None, redoc_url=None)
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        # uvicorn opens the port only after this returns, so QLever is refused rather than
+        # timed out while the model loads.
+        if warm:
+            await run_in_threadpool(service.warm)
+        yield
+
+    app = FastAPI(title="LUX vector SERVICE", docs_url=None, redoc_url=None, lifespan=lifespan)
     app.state.service = service
 
     def answer(query: str) -> tuple[dict, dict]:
