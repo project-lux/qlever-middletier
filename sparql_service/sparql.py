@@ -35,21 +35,23 @@ Seed IRIs are left out of the results unless ``vec:includeSeeds true``.
 
 ``vec:minScore`` and ``vec:maxGap`` cut the top-K list further: the first is an absolute cosine
 floor, the second keeps only hits within that distance of the best one (of each seed's ranking,
-for ``"each"``).
+for ``"each"``). Raw cosines sit in a band whose position depends on the query and the model, so
+a floor that suits one query can empty another; the gap follows the query's own best match.
 
 ``vec:ef`` sets the HNSW expansion factor - how many candidates a graph walk keeps in play - for
-one query, overriding the service's ``--expansion-factor``. A walk can be trapped by a dense
-cluster of near-duplicates (hundreds of "quintets (…)" concepts) and miss the real neighbours;
-a wider walk escapes it, at a roughly linear cost. Exact scoring of pushed-down candidates uses
-no graph and ignores it.
+one query, overriding the service's ``--expansion-factor`` (10,000). A walk can be trapped by a
+dense cluster of near-duplicates (hundreds of "quintets (…)" concepts) and miss the real
+neighbours; a wider walk escapes it, at a roughly linear cost. Exact scoring of pushed-down
+candidates uses no graph and ignores it.
 
-``vec:rewalk N`` walks again from the stored vectors of the best N hits and reranks the pool. A
-text query sits away from every record, where a walk misses records the graph does link; a walk
-from a record starts where the graph is reliable, so it needs far less width than the first:
-``vec:rewalkEf`` sets it (the service's ``--rewalk-ef`` by default). ``vec:exact true`` scores every vector of the
-scope instead (perfect recall, linear cost), ``false`` forces the graph; by default a scope at or
-below the service's ``--exact-below`` size is scored exactly. Raw cosines sit in a band whose position depends on the query and the model, so a
-floor that suits one query can empty another; the gap follows the query's own best match.
+``vec:rewalk N`` walks again from the stored vectors of the best N hits (the service's
+``--rewalk``, 10) and reranks the pool; ``vec:rewalkEf`` is the width of those walks
+(``--rewalk-ef``, 300). A text query sits away from every record, where a walk misses records
+the graph does link. Narrow second walks are cheap and recover a few of them (a top hit missed
+for "japanese prints" on dev); wide ones recover more but cost as much as the first walk again.
+``vec:exact true`` scores every vector of the scope instead (perfect recall, linear cost: 1-3 s
+a query on dev), ``false`` forces the graph; by default a scope at or below the service's
+``--exact-below`` size is scored exactly.
 
 The ``VALUES`` block is split off and parsed with one regex pass before the (small) remainder is
 tokenized, so a 100k-row pushdown costs tens of milliseconds, not a general SPARQL parse.
