@@ -20,6 +20,10 @@ def main() -> None:
     parser.add_argument("--timeout", type=float, default=30.0, help="per-request deadline, seconds")
     parser.add_argument("--exact-threshold", type=int, default=200_000,
                         help="pushed-down candidates up to this many are scored exactly")
+    parser.add_argument("--expansion-factor", type=int, default=128,
+                        help="HNSW candidates kept in play during a walk (at least top-K x 3 is used); "
+                             "higher escapes dense clusters of near-duplicates at a roughly linear cost. "
+                             "vec:ef overrides it per query")
     parser.add_argument("--no-warm", dest="warm", action="store_false",
                         help="skip loading the encoder and the store before serving (the first queries pay for it)")
     parser.add_argument("--warm-gb", type=float, default=None,
@@ -28,7 +32,7 @@ def main() -> None:
                         help="memory for cached responses, hits and encoded query text")
     args = parser.parse_args()
     app = create_app(args.store, device=args.device, timeout=args.timeout, exact_threshold=args.exact_threshold,
-                     cache_bytes=int(args.cache_mb * (1 << 20)),
+                     cache_bytes=int(args.cache_mb * (1 << 20)), expansion_factor=args.expansion_factor,
                      warm=args.warm, warm_bytes=None if args.warm_gb is None else int(args.warm_gb * 1e9))
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
 

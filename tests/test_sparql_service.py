@@ -345,8 +345,29 @@ def test_cutoffs_apply_to_each_seeds_ranking_under_combine_each(client):
     assert len(hits) == 2  # each seed's best only
 
 
+def test_ef_widens_the_walk_for_one_query(client):
+    service = client.app.state.service
+    store = service.store("concept")
+    seen, real = [], store.search_global
+    def recording(queries, top_k, **options):
+        seen.append(options["expansion_factor"])
+        return real(queries, top_k, **options)
+    store.search_global = recording
+    try:
+        base = f"?c vec:similarTo <{concept(9)}> ; vec:score ?score ; vec:topK 3"
+        default = ranked(client, qlever_request(base))
+        wide = ranked(client, qlever_request(f"{base} ; vec:ef 5000"))
+    finally:
+        del store.search_global
+    assert seen == [service.expansion_factor, 5000]  # a different ef is a different cache entry
+    assert wide == default  # 200 concepts: both walks are exhaustive
+
+
 @pytest.mark.parametrize("option, message", [
     ("vec:minScore 2", "between -1 and 1"),
+    ("vec:ef 0", "between 1 and"),
+    ("vec:ef 1e9", "between 1 and"),
+    ('vec:ef "wide"', "vec:ef is a number"),
     ('vec:minScore "high"', "is a number"),
     ("vec:maxGap -0.1", "not negative"),
 ])
