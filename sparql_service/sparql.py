@@ -17,6 +17,7 @@ silently ignoring patterns it cannot honour.
                vec:maxGap 0.1 ;            # optional: drop hits more than this below the best
                vec:ef 1000 ;               # optional: HNSW expansion factor for this query
                vec:rewalk 5 ;              # optional: walk again from the best 5 hits' vectors
+               vec:rewalkEf 300 ;          # optional: expansion factor of those second walks
                vec:exact true ;            # optional: score the whole scope, no graph (or false)
                vec:index "concept" ;       # optional; inferred from IRIs otherwise
                vec:mode "constrained" .    # optional: refuse to run without pushed-down VALUES
@@ -44,7 +45,8 @@ no graph and ignores it.
 
 ``vec:rewalk N`` walks again from the stored vectors of the best N hits and reranks the pool. A
 text query sits away from every record, where a walk misses records the graph does link; a walk
-from a record starts where the graph is reliable. ``vec:exact true`` scores every vector of the
+from a record starts where the graph is reliable, so it needs far less width than the first:
+``vec:rewalkEf`` sets it (the service's ``--rewalk-ef`` by default). ``vec:exact true`` scores every vector of the
 scope instead (perfect recall, linear cost), ``false`` forces the graph; by default a scope at or
 below the service's ``--exact-below`` size is scored exactly. Raw cosines sit in a band whose position depends on the query and the model, so a
 floor that suits one query can empty another; the gap follows the query's own best match.
@@ -100,6 +102,7 @@ class Plan:
     max_gap: float | None = None  # keep hits within this of the best
     ef: int | None = None  # HNSW expansion factor; the service's default when None
     rewalk: int | None = None  # second walks from the best hits; the service's default when None
+    rewalk_ef: int | None = None  # their expansion factor; the service's default when None
     exact: bool | None = None  # score the whole scope; by the service's size threshold when None
     candidates: list[str] | None = None  # pushed-down IRIs for `subject`, if any
     limit: int | None = None
@@ -396,6 +399,14 @@ def _plan(triples, select: list[str], star: bool) -> Plan:
             if not 0 <= number <= MAX_REWALK:
                 raise SparqlError(f"vec:rewalk is between 0 and {MAX_REWALK}")
             plan.rewalk = number
+        elif name == "rewalkEf":
+            try:
+                number = int(float(obj.value))
+            except ValueError:
+                raise SparqlError("vec:rewalkEf is a number") from None
+            if not 1 <= number <= MAX_EF:
+                raise SparqlError(f"vec:rewalkEf is between 1 and {MAX_EF}")
+            plan.rewalk_ef = number
         elif name == "exact":
             if obj.value.lower() not in ("true", "false"):
                 raise SparqlError("vec:exact is true or false")

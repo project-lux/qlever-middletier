@@ -22,7 +22,7 @@ a dense cluster shows up as low recall and a lower best score:
 
 ``--try`` compares other ways of searching, each a comma-separated set of options:
 
-    --try default --try ef=3000 --try ef=3000,rewalk=5 --try exact
+    --try default --try ef=3000 --try ef=3000,rewalk=5 --try ef=10000,rewalk=5,rewalkEf=300 --try exact
 
 When the records sharing a word are too many for QLever to push down (a common word such as
 "new"), that text is reported and skipped.
@@ -109,10 +109,10 @@ def variant_options(variant: str) -> str:
         name, _, value = part.partition("=")
         if name == "exact":
             out.append(f"vec:exact {value or 'true'}")
-        elif name in ("ef", "rewalk") and value.isdigit():
+        elif name in ("ef", "rewalk", "rewalkEf") and value.isdigit():
             out.append(f"vec:{name} {value}")
         else:
-            raise SystemExit(f"cannot read {part!r} in --try {variant!r}: use ef=N, rewalk=N or exact")
+            raise SystemExit(f"cannot read {part!r} in --try {variant!r}: use ef=N, rewalk=N, rewalkEf=N or exact")
     return "".join(f" ; {option}" for option in out)
 
 

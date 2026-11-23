@@ -27,6 +27,9 @@ def main() -> None:
     parser.add_argument("--rewalk", type=int, default=0,
                         help="walk the graph again from the best N hits' own vectors and rerank the pool; "
                              "recovers records a text query's walk passes by. vec:rewalk overrides it")
+    parser.add_argument("--rewalk-ef", type=int, default=300,
+                        help="expansion factor of the second walks (at least top-K x 3 is used); they start "
+                             "from records, where a narrow walk is reliable. vec:rewalkEf overrides it")
     parser.add_argument("--exact-below", type=int, default=0,
                         help="score every vector, no graph, in scopes of at most this many records "
                              "(perfect recall, linear cost). vec:exact overrides it")
@@ -39,7 +42,8 @@ def main() -> None:
     args = parser.parse_args()
     app = create_app(args.store, device=args.device, timeout=args.timeout, exact_threshold=args.exact_threshold,
                      cache_bytes=int(args.cache_mb * (1 << 20)), expansion_factor=args.expansion_factor,
-                     rewalk=args.rewalk, exact_below=args.exact_below,
+                     rewalk=args.rewalk, rewalk_ef=args.rewalk_ef,
+                     exact_below=args.exact_below,
                      warm=args.warm, warm_bytes=None if args.warm_gb is None else int(args.warm_gb * 1e9))
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
 

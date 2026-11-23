@@ -86,7 +86,8 @@ def plan_key(plan: Plan) -> tuple:
     candidates = None if plan.candidates is None else (len(plan.candidates), digest("\n".join(sorted(plan.candidates))))
     return ("hits", tuple((seed.kind, seed.value) for seed in plan.seeds), plan.top_k,
             tuple(plan.scopes) if plan.scopes is not None else None, plan.mode, plan.combine,
-            plan.include_seeds, plan.min_score, plan.max_gap, plan.ef, plan.rewalk, plan.exact, candidates)
+            plan.include_seeds, plan.min_score, plan.max_gap, plan.ef, plan.rewalk, plan.rewalk_ef, plan.exact,
+            candidates)
 
 
 def scope_of(iri: str) -> str | None:
@@ -98,13 +99,13 @@ def scope_of(iri: str) -> str | None:
 class VectorService:
     def __init__(self, store_path: str, *, device: str = "auto", refresh_seconds: float = 10.0,
                  exact_threshold: int = 200_000, expansion_factor: int = 128, cache_bytes: int = 256 << 20,
-                 rewalk: int = 0, exact_below: int = 0):
+                 rewalk: int = 0, rewalk_ef: int = 300, exact_below: int = 0):
         self.path = store_path
         self.cache = ByteLRU(cache_bytes)
         self.env = lmdb.open(store_path, readonly=True, max_dbs=MAX_DBS, readahead=False, subdir=True, map_size=1 << 40)
         self.device, self.refresh_seconds = device, refresh_seconds
         self.exact_threshold, self.expansion_factor = exact_threshold, expansion_factor
-        self.rewalk, self.exact_below = rewalk, exact_below
+        self.rewalk, self.rewalk_ef, self.exact_below = rewalk, rewalk_ef, exact_below
         self._stores: dict[str, LmdbVectorStore] = {}
         self._checked: dict[str, float] = {}
         self._lock = threading.Lock()
@@ -304,6 +305,7 @@ class VectorService:
         wanted = plan.top_k + len(excluded)  # seeds would otherwise use up result slots
         ef = plan.ef or self.expansion_factor
         rewalk = self.rewalk if plan.rewalk is None else plan.rewalk
+        rewalk_ef = plan.rewalk_ef or self.rewalk_ef
 
         def search(queries: np.ndarray) -> list[tuple[str, float]]:
             hits: list[tuple[str, float]] = []
@@ -314,7 +316,8 @@ class VectorService:
                     if exact:
                         hits += store.search_exact(queries, wanted)
                     else:
-                        hits += store.search_global(queries, wanted, expansion_factor=ef, rewalk=rewalk)
+                        hits += store.search_global(queries, wanted, expansion_factor=ef, rewalk=rewalk,
+                                                    rewalk_expansion_factor=rewalk_ef)
                 else:  # exact below the threshold; a filtered walk above it, which ef widens too
                     hits += store.search_candidates(queries, candidates, wanted, exact_threshold=self.exact_threshold,
                                                     expansion_factor=max(ef, 256))
