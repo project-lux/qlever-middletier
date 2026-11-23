@@ -19,6 +19,15 @@ store into the page cache (graphs, then IRI maps, then vectors, within a budget)
 scope's graph, loads the encoder and runs one encode and one search per scope. Done on the first request instead, the model load alone outlasts the deadline, so the
 first few queries after a restart fail.
 
+Results are cached, because one search runs the same SERVICE call several times: the facet
+queries all repeat the search's pattern, so QLever sends the same body once per facet, mostly at
+the same moment. Three levels share one byte budget (:class:`~sparql_service.cache.ByteLRU`):
+the rendered response by a hash of the body; the ranked hits by the plan, with the pushed-down
+candidates hashed as a sorted set so the same candidates in another order still hit; and encoded
+query text. Identical requests in flight share one computation rather than all missing at once,
+and one that outlives its deadline still finishes and fills the cache for the retry. Every entry
+is tagged with the scopes' graph generations, so a new graph invalidates it.
+
 QLever has no SERVICE timeout, so the service enforces its own deadline. Searches run on worker
 threads with no USearch executor pool (an idle pool busy-spins its workers).
 """
@@ -26,6 +35,7 @@ threads with no USearch executor pool (an idle pool busy-spins its workers).
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -44,6 +54,7 @@ from starlette.concurrency import run_in_threadpool
 
 from qleverlux.vectors.lmdb_vector_store import MAX_DBS, LmdbVectorStore, _open_dbs, scopes_in
 
+from .cache import ByteLRU
 from .sparql import XSD, Plan, SparqlError, parse
 
 DATA = "https://lux.collections.yale.edu/data/"
@@ -65,6 +76,19 @@ def physical_memory() -> int:
         return 1 << 62
 
 
+def digest(text: str) -> bytes:
+    return hashlib.blake2b(text.encode("utf-8"), digest_size=16).digest()
+
+
+def plan_key(plan: Plan) -> tuple:
+    """Everything about a plan that decides its hits - not the variable names, which only shape
+    the response - with the candidates as a sorted set."""
+    candidates = None if plan.candidates is None else (len(plan.candidates), digest("\n".join(sorted(plan.candidates))))
+    return ("hits", tuple((seed.kind, seed.value) for seed in plan.seeds), plan.top_k,
+            tuple(plan.scopes) if plan.scopes is not None else None, plan.mode, plan.combine,
+            plan.include_seeds, candidates)
+
+
 def scope_of(iri: str) -> str | None:
     if not iri.startswith(DATA):
         return None
@@ -73,8 +97,9 @@ def scope_of(iri: str) -> str | None:
 
 class VectorService:
     def __init__(self, store_path: str, *, device: str = "auto", refresh_seconds: float = 10.0,
-                 exact_threshold: int = 200_000, expansion_factor: int = 128):
+                 exact_threshold: int = 200_000, expansion_factor: int = 128, cache_bytes: int = 256 << 20):
         self.path = store_path
+        self.cache = ByteLRU(cache_bytes)
         self.env = lmdb.open(store_path, readonly=True, max_dbs=MAX_DBS, readahead=False, subdir=True, map_size=1 << 40)
         self.device, self.refresh_seconds = device, refresh_seconds
         self.exact_threshold, self.expansion_factor = exact_threshold, expansion_factor
@@ -107,6 +132,16 @@ class VectorService:
                 store.refresh()
                 self._checked[scope] = now
             return store
+
+    def generations(self) -> tuple:
+        """The graph generation of every scope: the tag cached results are checked against."""
+        out = []
+        for scope in self.scopes():
+            try:
+                out.append((scope, self.store(scope).meta["generation"]))
+            except SparqlError:
+                out.append((scope, None))
+        return tuple(out)
 
     def describe(self) -> dict:
         out = {}
@@ -198,11 +233,18 @@ class VectorService:
         vectors, sliced Matryoshka-style; text through the encoder), or their centroid for
         ``vec:combine "mean"``."""
         rows = []
-        texts = [seed.value for seed in plan.seeds if seed.kind == "literal"]
+        texts = list(dict.fromkeys(seed.value for seed in plan.seeds if seed.kind == "literal"))
         if texts:
-            encoder = self.encoder()
-            with self._encoder_lock:  # one forward pass at a time on the device
-                encoded = {text: encoder.encode_query(text, widest) for text in texts}
+            model = self.model()
+            encoded = {text: self.cache.get(("text", model, widest, text)) for text in texts}
+            todo = [text for text, vector in encoded.items() if vector is None]
+            if todo:
+                encoder = self.encoder()
+                with self._encoder_lock:  # one forward pass at a time on the device
+                    for text in todo:
+                        vector = encoded[text] = np.asarray(encoder.encode_query(text, widest), dtype=np.float32)
+                        vector.setflags(write=False)  # shared through the cache
+                        self.cache.put(("text", model, widest, text), vector, vector.nbytes + len(text) + 200)
         missing = []
         for seed in plan.seeds:
             if seed.kind == "literal":
@@ -282,6 +324,16 @@ class VectorService:
                     merged.append(ranking[position])
         return merged[: plan.top_k]
 
+    def run_cached(self, plan: Plan, tag: tuple) -> tuple[list[tuple[str, float]], str]:
+        """:meth:`run`, through the cache; also says whether it was a hit."""
+        key = plan_key(plan)
+        hits = self.cache.get(key, tag)
+        if hits is not None:
+            return hits, "hits"
+        hits = self.run(plan)
+        self.cache.put(key, hits, sum(len(iri) + 120 for iri, _ in hits) + 200, tag)
+        return hits, "miss"
+
     @staticmethod
     def results(plan: Plan, hits: list[tuple[str, float]]) -> dict:
         bindings = []
@@ -311,13 +363,39 @@ def create_app(store_path: str, *, device: str = "auto", timeout: float = 30.0, 
     app = FastAPI(title="LUX vector SERVICE", docs_url=None, redoc_url=None, lifespan=lifespan)
     app.state.service = service
 
-    def answer(query: str) -> tuple[dict, dict]:
+    def answer(query: str, key: bytes) -> tuple[bytes, dict]:
         started = time.perf_counter()
-        plan = parse(query)
-        hits = service.run(plan)
-        timing = {"candidates": len(plan.candidates) if plan.candidates is not None else None,
-                  "ms": round((time.perf_counter() - started) * 1e3, 1)}
-        return service.results(plan, hits), timing
+        tag = service.generations()
+        cached = service.cache.get(("response", key), tag)
+        if cached is not None:
+            (body, candidates), source = cached, "response"
+        else:
+            plan = parse(query)
+            hits, source = service.run_cached(plan, tag)
+            body = json.dumps(service.results(plan, hits)).encode("utf-8")
+            candidates = len(plan.candidates) if plan.candidates is not None else None
+            service.cache.put(("response", key), (body, candidates), len(body) + 200, tag)
+        return body, {"X-Vector-Candidates": str(candidates), "X-Vector-Cache": source,
+                      "X-Vector-Ms": str(round((time.perf_counter() - started) * 1e3, 1))}
+
+    inflight: dict[bytes, asyncio.Future] = {}
+
+    def settled(key: bytes, future: asyncio.Future) -> None:
+        inflight.pop(key, None)
+        if not future.cancelled():
+            future.exception()  # retrieved, so an error nobody waited for is not logged as lost
+
+    async def shared_answer(query: str) -> tuple[bytes, dict]:
+        """One computation per distinct body in flight. It runs to completion even when every
+        waiter has timed out, so the retry finds it cached."""
+        key = digest(query)
+        future = inflight.get(key)
+        if future is not None:
+            body, headers = await asyncio.wait_for(asyncio.shield(future), timeout)
+            return body, {**headers, "X-Vector-Cache": "shared"}
+        future = inflight[key] = asyncio.ensure_future(run_in_threadpool(answer, query, key))
+        future.add_done_callback(lambda done: settled(key, done))
+        return await asyncio.wait_for(asyncio.shield(future), timeout)
 
     async def read_query(request: Request) -> str:
         if request.method == "GET":
@@ -334,16 +412,19 @@ def create_app(store_path: str, *, device: str = "auto", timeout: float = 30.0, 
         if not query.strip():
             return JSONResponse({"error": "no query"}, status_code=400)
         try:
-            results, timing = await asyncio.wait_for(run_in_threadpool(answer, query), timeout)
+            body, headers = await shared_answer(query)
         except SparqlError as error:
             return JSONResponse({"error": str(error)}, status_code=400)
         except asyncio.TimeoutError:
             return JSONResponse({"error": f"vector search exceeded {timeout:g}s"}, status_code=503)
-        return Response(json.dumps(results), media_type=RESULTS_JSON,
-                        headers={"X-Vector-Candidates": str(timing["candidates"]), "X-Vector-Ms": str(timing["ms"])})
+        return Response(body, media_type=RESULTS_JSON, headers=headers)
 
     @app.get("/health")
     async def health() -> dict:
         return await run_in_threadpool(service.describe)
+
+    @app.get("/cache")
+    async def cache() -> dict:
+        return service.cache.describe()
 
     return app

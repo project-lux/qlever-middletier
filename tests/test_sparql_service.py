@@ -184,6 +184,76 @@ def test_text_query_goes_through_the_encoder(client):
     assert post(client, query).json()["results"]["bindings"][0]["c"]["value"] == concept(7)
 
 
+def test_repeated_requests_are_answered_from_the_cache(client):
+    pushed = [concept(i) for i in range(40, 60)]
+    query = qlever_request(f"?c vec:similarTo <{concept(41)}> ; vec:score ?score ; vec:topK 4", pushed)
+    first, again = post(client, query), post(client, query)
+    assert first.headers["X-Vector-Cache"] == "miss" and again.headers["X-Vector-Cache"] == "response"
+    assert again.content == first.content
+    # The same candidates in another order, under other variable names: same hits, own response.
+    renamed = qlever_request(f"?x vec:similarTo <{concept(41)}> ; vec:score ?s ; vec:topK 4", pushed[::-1])
+    renamed = renamed.replace("?c", "?x")
+    reordered = post(client, renamed)
+    assert reordered.headers["X-Vector-Cache"] == "hits"
+    assert [row["x"]["value"] for row in reordered.json()["results"]["bindings"]] == \
+        [row["c"]["value"] for row in first.json()["results"]["bindings"]]
+    assert client.get("/cache").json()["hits"] >= 2
+
+
+def test_text_is_encoded_once(client):
+    service = client.app.state.service
+    calls = []
+    real = service._encoder
+    class Counting:
+        def encode_query(self, text, dims):
+            calls.append(text)
+            return real.encode_query(text, dims)
+    service._encoder = Counting()
+    try:
+        for top_k in (2, 3):  # different plans, same text
+            query = PROLOGUE + ('SELECT ?c ?score { ?c vec:similarTo "encoded once" ; vec:score ?score ; '
+                                f'vec:index "concept" ; vec:topK {top_k} }}')
+            assert post(client, query).headers["X-Vector-Cache"] == "miss"
+    finally:
+        service._encoder = real
+    assert calls == ["encoded once"]
+
+
+def test_concurrent_identical_requests_share_one_search(client):
+    from concurrent.futures import ThreadPoolExecutor
+
+    service = client.app.state.service
+    runs, real_run = [], service.run
+    def slow_run(plan):
+        runs.append(plan)
+        time.sleep(0.3)
+        return real_run(plan)
+    service.run = slow_run
+    try:
+        query = qlever_request(f"?c vec:similarTo <{concept(77)}> ; vec:score ?score ; vec:topK 5")
+        with ThreadPoolExecutor(4) as pool:
+            responses = list(pool.map(lambda _: post(client, query), range(4)))
+    finally:
+        del service.run
+    assert len(runs) == 1 and {r.status_code for r in responses} == {200}
+    assert len({r.content for r in responses}) == 1
+    assert sorted(r.headers["X-Vector-Cache"] for r in responses) == ["miss", "shared", "shared", "shared"]
+
+
+def test_a_new_generation_invalidates(tmp_path):
+    from sparql_service.cache import ByteLRU
+
+    cache = ByteLRU(100)
+    cache.put("k", "v", 10, tag=("concept", 1))
+    assert cache.get("k", ("concept", 1)) == "v"
+    assert cache.get("k", ("concept", 2)) is None and cache.size == 0
+    for i in range(12):
+        cache.put(i, i, 10)
+    assert cache.size == 100 and cache.get(0) is None and cache.get(11) == 11
+    cache.put("huge", "x", 101)
+    assert cache.get("huge") is None
+
+
 def test_form_and_get_requests_and_errors(client):
     query = qlever_request(f"?c vec:similarTo <{concept(2)}> ; vec:score ?score ; vec:topK 1")
     assert client.post("/sparql", data={"query": query}).status_code == 200
