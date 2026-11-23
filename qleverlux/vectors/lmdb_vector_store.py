@@ -472,7 +472,7 @@ class LmdbVectorStore:
 
     def search_global(
         self, query: np.ndarray, top_k: int = 20, *, rerank_factor: int = 3, expansion_factor: int = 128,
-        rewalk: int = 0,
+        rewalk: int = 0, rewalk_expansion_factor: int | None = None,
     ) -> list[tuple[str, float]]:
         """Vector-first: quantized HNSW walk, then exact cosine rerank from LMDB.
 
@@ -483,7 +483,9 @@ class LmdbVectorStore:
         reranks the pool. A text query sits away from every record (its best cosine is about
         0.6), and a walk from there misses records the graph does link: each one missed on dev
         was found first when its own vector was the query. A walk from a record starts where the
-        graph is reliable, so the second walks find what the first one passed by."""
+        graph is reliable, so the second walks find what the first one passed by - and need far
+        less width to do it: ``rewalk_expansion_factor`` (``expansion_factor`` when None). On dev
+        five second walks at ef 10,000 cost 300-500 ms."""
         q = self._queries(query)
         wanted = top_k * max(rerank_factor, 1)
         graph = self._graph  # held for the whole call: keeps this generation's pages pinned
@@ -499,7 +501,7 @@ class LmdbVectorStore:
             if rewalk:
                 seeds = self._vectors(txn, ids[self._top(scores, rewalk)])
         if rewalk:
-            more = self._walk(graph, seeds, wanted, expansion_factor)
+            more = self._walk(graph, seeds, wanted, rewalk_expansion_factor or expansion_factor)
             ids = np.union1d(ids, np.fromiter(more, dtype=np.uint64, count=len(more)))
         with self.env.begin(buffers=True) as txn:
             if rewalk:

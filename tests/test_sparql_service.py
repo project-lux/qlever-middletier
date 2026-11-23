@@ -368,15 +368,16 @@ def test_exact_and_rewalk_reach_the_store(client):
     store = service.store("concept")
     calls, real_global, real_exact = [], store.search_global, store.search_exact
     def recording_global(queries, top_k, **options):
-        calls.append(("walk", options["rewalk"]))
+        calls.append(("walk", options["rewalk"], options["rewalk_expansion_factor"]))
         return real_global(queries, top_k, **options)
     def recording_exact(queries, top_k, **options):
-        calls.append(("exact", None))
+        calls.append(("exact", None, None))
         return real_exact(queries, top_k, **options)
     store.search_global, store.search_exact = recording_global, recording_exact
     try:
         base = f"?c vec:similarTo <{concept(11)}> ; vec:score ?score ; vec:topK 4"
         walked = ranked(client, qlever_request(f"{base} ; vec:rewalk 3"))
+        narrow = ranked(client, qlever_request(f"{base} ; vec:rewalk 3 ; vec:rewalkEf 50"))
         exact = ranked(client, qlever_request(f"{base} ; vec:exact true"))
         service.exact_below = 10_000  # a 200-record scope is then scored exactly by default
         by_size = ranked(client, qlever_request(f"{base} ; vec:ef 777"))
@@ -384,14 +385,16 @@ def test_exact_and_rewalk_reach_the_store(client):
     finally:
         service.exact_below = 0
         del store.search_global, store.search_exact
-    assert calls == [("walk", 3), ("exact", None), ("exact", None), ("walk", 0)]
-    assert walked == exact == by_size == forced  # 200 records: every way finds the true top 4
+    assert calls == [("walk", 3, service.rewalk_ef), ("walk", 3, 50), ("exact", None, None),
+                     ("exact", None, None), ("walk", 0, service.rewalk_ef)]
+    assert walked == narrow == exact == by_size == forced  # 200 records: every way finds the true top 4
 
 
 @pytest.mark.parametrize("option, message", [
     ("vec:minScore 2", "between -1 and 1"),
     ("vec:ef 0", "between 1 and"),
     ("vec:rewalk 51", "between 0 and"),
+    ("vec:rewalkEf 0", "between 1 and"),
     ('vec:exact "yes"', "true or false"),
     ("vec:ef 1e9", "between 1 and"),
     ('vec:ef "wide"', "vec:ef is a number"),

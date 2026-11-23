@@ -117,6 +117,8 @@ def test_rewalk_never_loses_what_one_walk_found(store):
         truth = {iris[i] for i in _exact_top(data, q, 20)}
         once = s.search_global(q, 20, expansion_factor=16)
         twice = s.search_global(q, 20, expansion_factor=16, rewalk=5)
+        narrow = s.search_global(q, 20, expansion_factor=16, rewalk=5, rewalk_expansion_factor=1)
         assert all(b >= a - 1e-6 for (_, a), (_, b) in zip(once, twice))
+        assert all(b >= a - 1e-6 for (_, a), (_, b) in zip(once, narrow))
         exact_hits += len(truth & {iri for iri, _ in twice}) - len(truth & {iri for iri, _ in once})
     assert exact_hits >= 0
