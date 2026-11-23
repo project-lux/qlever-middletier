@@ -14,9 +14,9 @@ target index is narrower) or free text encoded with the model the store was buil
 records it; stores from before that are EmbeddingGemma 2), using that model's query prompt. Every
 scope must share one model, because one text query vector serves them all.
 
-Nothing is loaded lazily: before the port opens, :meth:`VectorService.warm` reads the store into
-the page cache, opens every scope's graph, loads the encoder and runs one encode and one search
-per scope. Done on the first request instead, the model load alone outlasts the deadline, so the
+Nothing is loaded lazily: before the port opens, :meth:`VectorService.warm` reads the live
+store into the page cache (graphs, then IRI maps, then vectors, within a budget), opens every
+scope's graph, loads the encoder and runs one encode and one search per scope. Done on the first request instead, the model load alone outlasts the deadline, so the
 first few queries after a restart fail.
 
 QLever has no SERVICE timeout, so the service enforces its own deadline. Searches run on worker
@@ -29,6 +29,8 @@ import asyncio
 import json
 import logging
 import os
+import subprocess
+import sys
 import threading
 import time
 import urllib.parse
@@ -53,8 +55,14 @@ SCOPE_OF_SEGMENT = {
 }
 RESULTS_JSON = "application/sparql-results+json"
 LEGACY_MODEL = "google/embeddinggemma-2"  # what stores built before the meta recorded a model used
-WARM_CHUNK = 64 << 20
 log = logging.getLogger("uvicorn.error")
+
+
+def physical_memory() -> int:
+    try:
+        return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+    except (ValueError, OSError):
+        return 1 << 62
 
 
 def scope_of(iri: str) -> str | None:
@@ -109,14 +117,33 @@ class VectorService:
                 out[scope] = {"unavailable": str(error)}
         return out
 
-    def warm(self) -> None:
+    def warm(self, budget: int | None = None) -> None:
         """Pays every first-query cost up front: the store's pages, each scope's graph, the
         encoder (load plus the first forward pass, which compiles kernels on MPS/CUDA) and one
         search per scope. Raises if the encoder cannot load - a sidecar that cannot encode
-        text answers every `similar` with an error, so it should not come up looking healthy."""
-        started = time.perf_counter()
-        read = self.warm_pages()
-        log.info("vector store: %.1f GB read into the page cache in %.1fs", read / 1e9, time.perf_counter() - started)
+        text answers every `similar` with an error, so it should not come up looking healthy.
+
+        The pages are read by a child process (:mod:`sparql_service.warm` says why) while the
+        encoder loads here; ``budget`` bytes at most, half of physical memory by default."""
+        if budget is None:
+            budget = physical_memory() // 2
+        log.info("vector store: warming up to %.1f GB, graphs first", budget / 1e9)
+        package_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        child = subprocess.Popen(
+            [sys.executable, "-m", "sparql_service.warm", self.path, "--budget", str(budget)],
+            env={**os.environ, "PYTHONPATH": os.pathsep.join(filter(None, [package_root, os.environ.get("PYTHONPATH")]))},
+        )
+        try:
+            started = time.perf_counter()
+            log.info("loading encoder %s (device %s)", self.model(), self.device)
+            encoder = self.encoder()
+            log.info("encoder loaded on %s in %.1fs", getattr(encoder, "device", self.device), time.perf_counter() - started)
+            if child.wait():
+                log.warning("vector store: warming failed (exit %d); searches will read from disk", child.returncode)
+        finally:
+            if child.poll() is None:
+                child.kill()
+                child.wait()
 
         stores = {}
         for scope in self.scopes():
@@ -129,36 +156,12 @@ class VectorService:
             return
 
         started = time.perf_counter()
-        encoder = self.encoder()
         widest = max(store.meta["dimensions"] for store in stores.values())
         with self._encoder_lock:
             vector = encoder.encode_query("warm-up", widest)
-        log.info("encoder %s ready in %.1fs", self.model(), time.perf_counter() - started)
-
-        started = time.perf_counter()
         for store in stores.values():
             store.search_global(vector, 10, expansion_factor=self.expansion_factor)
-        log.info("vector search ready for %s in %.2fs", ", ".join(stores), time.perf_counter() - started)
-
-    def warm_pages(self) -> int:
-        """Reads the LMDB file sequentially so the mmap serves from memory. The environment is
-        opened with readahead off, which makes a cold page fault fetch one page at a time; one
-        sequential pass is far faster than the random faults an HNSW walk would otherwise take.
-        Stops at half of physical memory, so a store bigger than RAM does not evict everything."""
-        path = os.path.join(self.path, "data.mdb") if os.path.isdir(self.path) else self.path
-        try:
-            limit = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") // 2
-        except (ValueError, OSError):
-            limit = 1 << 62
-        size = os.path.getsize(path)
-        if size > limit:
-            log.warning("vector store: %.1f GB is more than half of RAM; warming only the first %.1f GB",
-                        size / 1e9, limit / 1e9)
-        buffer, read = bytearray(WARM_CHUNK), 0
-        with open(path, "rb", buffering=0) as handle:
-            while read < limit and (n := handle.readinto(buffer)):
-                read += n
-        return read
+        log.info("first encode and search on %s took %.2fs", ", ".join(stores), time.perf_counter() - started)
 
     # -- query vectors --------------------------------------------------------------------------
 
@@ -294,7 +297,7 @@ class VectorService:
 
 
 def create_app(store_path: str, *, device: str = "auto", timeout: float = 30.0, warm: bool = True,
-               **options) -> FastAPI:
+               warm_bytes: int | None = None, **options) -> FastAPI:
     service = VectorService(store_path, device=device, **options)
 
     @asynccontextmanager
@@ -302,7 +305,7 @@ def create_app(store_path: str, *, device: str = "auto", timeout: float = 30.0, 
         # uvicorn opens the port only after this returns, so QLever is refused rather than
         # timed out while the model loads.
         if warm:
-            await run_in_threadpool(service.warm)
+            await run_in_threadpool(service.warm, warm_bytes)
         yield
 
     app = FastAPI(title="LUX vector SERVICE", docs_url=None, redoc_url=None, lifespan=lifespan)
