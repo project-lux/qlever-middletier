@@ -108,8 +108,19 @@ def _write_graph(txn: lmdb.Transaction, env: lmdb.Environment, dbs: dict, monoli
     return graph_pad
 
 
+#: Graph quantizations the store can build: it hands USearch float vectors, which the integer and
+#: bit kinds do not convert - I8 from float input truncated every value and built a graph with
+#: seeded recall@10 0.814 against 0.99 (they want input already scaled, or one 0/1 byte per bit).
+#: E4M3 is the one-byte choice: same recall as BF16 at half the size (files/graph_quantization.py).
+FLOAT_QUANTIZATIONS = ("F64", "F32", "F16", "BF16", "E5M2", "E4M3", "E3M2", "E2M3")
+
+
 def _build_graph(chunks: Iterable[tuple[int, np.ndarray]], count: int, dims: int, quantization: Scalar,
                  connectivity: int, refine: bool) -> memoryview:
+    if quantization.name not in FLOAT_QUANTIZATIONS:
+        raise ValueError(f"cannot build a {quantization.name} graph: the store gives USearch float vectors, "
+                         f"which that kind does not convert. Use one of {', '.join(FLOAT_QUANTIZATIONS)} "
+                         f"(E4M3 for one byte a dimension).")
     pool = usearch.Executor.for_ram()
     index = DenseIndex.init_ram(dims, DenseMetric.ANGULAR, quantization, connectivity=connectivity)
     index.reserve(count)

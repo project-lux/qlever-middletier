@@ -192,3 +192,29 @@ def test_small_inline_chunks_are_read_through_lmdb(tmp_path):
             np.testing.assert_array_equal(s._vectors(txn, np.array([0, 10, 49], dtype=np.uint64)), data[[0, 10, 49]])
     finally:
         s.close()
+
+
+@pytest.mark.parametrize("kind", ["I8", "U8", "U1X8", "I4X2"])
+def test_build_index_refuses_kinds_it_cannot_feed(tmp_path, kind):
+    data = np.random.default_rng(2).standard_normal((50, 8)).astype(np.float32)
+    path = str(tmp_path / "store.lmdb")
+    iris = [f"https://example.org/data/concept/{i}" for i in range(50)]
+    with pytest.raises(ValueError, match="cannot build"):
+        lvs.build_store(path, iris, data, scope="concept", quantization=getattr(lvs.Scalar, kind))
+    lvs.build_store(path, iris, data, scope="concept")
+    with pytest.raises(ValueError, match="cannot build"):
+        lvs.build_index(path, "concept", quantization=getattr(lvs.Scalar, kind))
+
+
+def test_build_index_builds_an_e4m3_graph_the_store_serves(tmp_path):
+    rng = np.random.default_rng(4)
+    data = rng.standard_normal((2000, 32)).astype(np.float32)
+    iris = [f"https://example.org/data/concept/{i}" for i in range(2000)]
+    path = str(tmp_path / "store.lmdb")
+    lvs.build_store(path, iris, data, scope="concept")
+    assert lvs.build_index(path, "concept", quantization=lvs.Scalar.E4M3)["quantization"] == "E4M3"
+    s = lvs.LmdbVectorStore(path, "concept")
+    try:
+        assert s.search_global(data[7], 5, expansion_factor=200)[0][0] == iris[7]
+    finally:
+        s.close()
