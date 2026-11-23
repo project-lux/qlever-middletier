@@ -164,6 +164,14 @@ class Settings(BaseSettings):
     #: about concepts similar to X: each similar record brings in its related records
     #: unranked, so a long tail of weak matches would drown the close ones.
     vector_nested_top_k: int = 5
+    #: Cosine cutoffs the sidecar applies after top-K, for clauses at the top and under
+    #: a relationship respectively. `min_score` is an absolute floor; `max_gap` keeps
+    #: only hits within that distance of the query's best one, which follows the query
+    #: rather than the model's cosine band. 0 disables either.
+    vector_min_score: float = 0.0
+    vector_max_gap: float = 0.0
+    vector_nested_min_score: float = 0.0
+    vector_nested_max_gap: float = 0.0
     #: Ask for `vec:mode "constrained"` when a similar clause is ANDed with
     #: others, so a constraint too large for QLever to push down is an error
     #: rather than a near-empty result. A lone clause always uses "auto".

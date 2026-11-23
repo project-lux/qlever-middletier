@@ -198,6 +198,10 @@ class QueryCatalogue:
             service=settings.vector_service,
             top_k=settings.vector_top_k,
             nested_top_k=settings.vector_nested_top_k,
+            min_score=settings.vector_min_score,
+            max_gap=settings.vector_max_gap,
+            nested_min_score=settings.vector_nested_min_score,
+            nested_max_gap=settings.vector_nested_max_gap,
             constrain_in_and=settings.vector_constrain_in_and,
         )
 

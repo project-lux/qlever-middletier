@@ -88,6 +88,9 @@ class SparqlTranslator:
         self.vector_service = ""
         self.vector_top_k = 100
         self.vector_nested_top_k = 5
+        # (min_score, max_gap) at the top and nested; 0 leaves a cutoff off.
+        self.vector_cutoffs = (0.0, 0.0)
+        self.vector_nested_cutoffs = (0.0, 0.0)
         self.vector_constrain_in_and = True
         self.max_hops = 8
 
@@ -100,7 +103,8 @@ class SparqlTranslator:
         """Longest chain a transitive term (``broader+`` and friends) follows; 0 is unbounded."""
         self.max_hops = max_hops
 
-    def configure_vectors(self, service="", top_k=100, constrain_in_and=True, nested_top_k=5):
+    def configure_vectors(self, service="", top_k=100, constrain_in_and=True, nested_top_k=5,
+                          min_score=0.0, max_gap=0.0, nested_min_score=0.0, nested_max_gap=0.0):
         """Where the vector SERVICE is; an empty ``service`` disables ``similar``.
 
         ``top_k`` is for a similarity clause at the top of the query, where the
@@ -109,12 +113,18 @@ class SparqlTranslator:
         related records unranked, so the weak matches near the bottom of a long
         list would swamp the strong ones.
 
+        ``min_score`` / ``max_gap`` (and their nested forms) become the sidecar's
+        ``vec:minScore`` / ``vec:maxGap``, cutting that top-K list by cosine: an
+        absolute floor, and a distance below the best hit. 0 leaves one off.
+
         ``service`` is a bare URL. It is bracketed here, and the builder passes
         a bracketed name through untouched because it contains a ``:``.
         """
         self.vector_service = iri(service) if service else ""
         self.vector_top_k = int(top_k)
         self.vector_nested_top_k = int(nested_top_k)
+        self.vector_cutoffs = (float(min_score), float(max_gap))
+        self.vector_nested_cutoffs = (float(nested_min_score), float(nested_max_gap))
         self.vector_constrain_in_and = constrain_in_and
 
     @property
@@ -693,13 +703,20 @@ class SparqlTranslator:
         if not self.vector_service:
             raise ValueError("Similarity search is not configured")
         n = self.counter
-        top_k = self.vector_nested_top_k if self._under_relationship(query) else self.vector_top_k
+        if self._under_relationship(query):
+            top_k, (min_score, max_gap) = self.vector_nested_top_k, self.vector_nested_cutoffs
+        else:
+            top_k, (min_score, max_gap) = self.vector_top_k, self.vector_cutoffs
         triples = [Triple(query.var, "vec:similarTo", seed) for seed in seeds]
         triples += [
             Triple(query.var, "vec:score", f"?score_{n}"),
             Triple(query.var, "vec:topK", str(top_k)),
             Triple(query.var, "vec:index", string_literal(scope)),
         ]
+        if min_score > 0:
+            triples.append(Triple(query.var, "vec:minScore", repr(min_score)))
+        if max_gap > 0:
+            triples.append(Triple(query.var, "vec:maxGap", repr(max_gap)))
         if self.vector_constrain_in_and and self._has_and_siblings(query):
             triples.append(Triple(query.var, "vec:mode", '"constrained"'))
 

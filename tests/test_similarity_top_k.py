@@ -35,3 +35,25 @@ def compile_search():
 ])
 def test_top_k_depends_on_depth(compile_search, scope, query, expected):
     assert compile_search(query, scope) == expected
+
+
+def test_cutoffs_follow_the_same_depth_rule():
+    from qleverlux.query.catalogue import QueryCatalogue
+    from qleverlux.settings import load_settings
+
+    catalogue = QueryCatalogue(load_settings([
+        "--vector-service", "http://127.0.0.1:8081/sparql",
+        "--vector-max-gap", "0.15", "--vector-nested-min-score", "0.65",
+    ]))
+    query = {"AND": [{"aboutConcept": {"similar": "quantum physics"}}, {"similar": "textbooks"}]}
+    text = catalogue.translator.translate_search(catalogue.json_reader.read(query, "work"), scope="work").get_text()
+    assert re.findall(r"\?(\w+) vec:(minScore|maxGap) ([\d.]+)", text) == [("var0", "minScore", "0.65"),
+                                                                       ("uri", "maxGap", "0.15")]
+
+
+def test_no_cutoff_by_default(compile_search):
+    from qleverlux.settings import load_settings
+
+    settings = load_settings([])
+    assert (settings.vector_min_score, settings.vector_max_gap,
+            settings.vector_nested_min_score, settings.vector_nested_max_gap) == (0, 0, 0, 0)
