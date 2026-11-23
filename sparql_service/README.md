@@ -33,6 +33,7 @@ SELECT ?set ?name ?score WHERE {
 | `vec:rank` | variable | 1-based rank. |
 | `vec:topK` | number | Results to return. Default 20, maximum 10,000. |
 | `vec:minScore` | number | Drops hits below this cosine, after `topK`. |
+| `vec:ef` | number | HNSW expansion factor for this query (at most 50,000), overriding `--expansion-factor` (default 128; at least `topK` × 3 is always used). A walk can be trapped by a dense cluster of near-duplicates and miss the true neighbours; a wider walk escapes it, at a roughly linear cost. `files/similarity_cutoffs.py --recall` measures what a value finds. Exact scoring of pushed-down candidates ignores it. |
 | `vec:maxGap` | number | Drops hits more than this below the best hit (of each seed's ranking, for `"each"`), after `topK`. Raw cosines sit in a band that moves with the query and the model, so this follows the query where `minScore` cannot. `files/similarity_cutoffs.py` shows the curve and what each value keeps. |
 | `vec:index` | `"concept"`, `"work,item"`, … | Restricts or chooses scopes. Optional: by default the scope is inferred from the IRIs' path segments (`object`/`digital` → item, `visual`/`text` → work, `person`/`group` → agent, `activity` → event, …). |
 | `vec:mode` | `"auto"`, `"constrained"`, `"global"` | `"constrained"` refuses to run without pushed-down candidates; see below. |

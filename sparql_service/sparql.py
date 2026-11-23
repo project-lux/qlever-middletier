@@ -15,6 +15,7 @@ silently ignoring patterns it cannot honour.
                vec:topK 20 ;               # optional, default 20
                vec:minScore 0.6 ;          # optional: drop hits with a lower cosine
                vec:maxGap 0.1 ;            # optional: drop hits more than this below the best
+               vec:ef 1000 ;               # optional: HNSW expansion factor for this query
                vec:index "concept" ;       # optional; inferred from IRIs otherwise
                vec:mode "constrained" .    # optional: refuse to run without pushed-down VALUES
     }
@@ -31,7 +32,13 @@ Seed IRIs are left out of the results unless ``vec:includeSeeds true``.
 
 ``vec:minScore`` and ``vec:maxGap`` cut the top-K list further: the first is an absolute cosine
 floor, the second keeps only hits within that distance of the best one (of each seed's ranking,
-for ``"each"``). Raw cosines sit in a band whose position depends on the query and the model, so a
+for ``"each"``).
+
+``vec:ef`` sets the HNSW expansion factor - how many candidates a graph walk keeps in play - for
+one query, overriding the service's ``--expansion-factor``. A walk can be trapped by a dense
+cluster of near-duplicates (hundreds of "quintets (…)" concepts) and miss the real neighbours;
+a wider walk escapes it, at a roughly linear cost. Exact scoring of pushed-down candidates uses
+no graph and ignores it. Raw cosines sit in a band whose position depends on the query and the model, so a
 floor that suits one query can empty another; the gap follows the query's own best match.
 
 The ``VALUES`` block is split off and parsed with one regex pass before the (small) remainder is
@@ -50,6 +57,7 @@ MAX_TOP_K = 10_000
 MODES = ("auto", "constrained", "global")
 COMBINES = ("max", "each", "mean")
 MAX_SEEDS = 100
+MAX_EF = 50_000
 
 
 class SparqlError(ValueError):
@@ -81,6 +89,7 @@ class Plan:
     include_seeds: bool = False
     min_score: float | None = None  # absolute cosine floor
     max_gap: float | None = None  # keep hits within this of the best
+    ef: int | None = None  # HNSW expansion factor; the service's default when None
     candidates: list[str] | None = None  # pushed-down IRIs for `subject`, if any
     limit: int | None = None
     notes: list[str] = field(default_factory=list)
@@ -360,6 +369,14 @@ def _plan(triples, select: list[str], star: bool) -> Plan:
             if name == "maxGap" and number < 0:
                 raise SparqlError("vec:maxGap is not negative")
             setattr(plan, "min_score" if name == "minScore" else "max_gap", number)
+        elif name == "ef":
+            try:
+                number = int(float(obj.value))
+            except ValueError:
+                raise SparqlError("vec:ef is a number") from None
+            if not 1 <= number <= MAX_EF:
+                raise SparqlError(f"vec:ef is between 1 and {MAX_EF}")
+            plan.ef = number
         elif name == "includeSeeds":
             if obj.value.lower() not in ("true", "false"):
                 raise SparqlError("vec:includeSeeds is true or false")

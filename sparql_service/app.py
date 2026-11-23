@@ -86,7 +86,7 @@ def plan_key(plan: Plan) -> tuple:
     candidates = None if plan.candidates is None else (len(plan.candidates), digest("\n".join(sorted(plan.candidates))))
     return ("hits", tuple((seed.kind, seed.value) for seed in plan.seeds), plan.top_k,
             tuple(plan.scopes) if plan.scopes is not None else None, plan.mode, plan.combine,
-            plan.include_seeds, plan.min_score, plan.max_gap, candidates)
+            plan.include_seeds, plan.min_score, plan.max_gap, plan.ef, candidates)
 
 
 def scope_of(iri: str) -> str | None:
@@ -300,15 +300,17 @@ class VectorService:
         query = self.query_vectors(plan, max(s.meta["dimensions"] for s in stores.values()))
         excluded = set() if plan.include_seeds else {seed.value for seed in plan.seeds if seed.kind == "iri"}
         wanted = plan.top_k + len(excluded)  # seeds would otherwise use up result slots
+        ef = plan.ef or self.expansion_factor
 
         def search(queries: np.ndarray) -> list[tuple[str, float]]:
             hits: list[tuple[str, float]] = []
             for scope, candidates in by_scope.items():
                 store = stores[scope]
                 if candidates is None:
-                    hits += store.search_global(queries, wanted, expansion_factor=self.expansion_factor)
-                else:
-                    hits += store.search_candidates(queries, candidates, wanted, exact_threshold=self.exact_threshold)
+                    hits += store.search_global(queries, wanted, expansion_factor=ef)
+                else:  # exact below the threshold; a filtered walk above it, which ef widens too
+                    hits += store.search_candidates(queries, candidates, wanted, exact_threshold=self.exact_threshold,
+                                                    expansion_factor=max(ef, 256))
             hits.sort(key=lambda hit: -hit[1])
             return [hit for hit in hits if hit[0] not in excluded]
 
