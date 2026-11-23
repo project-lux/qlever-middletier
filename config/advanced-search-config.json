@@ -369,8 +369,8 @@
     },
     "set": {
       "memberOf": {
-        "label": "are a member of",
-        "helpText": "Search for Collections that are hierarchically within the specified Collection.",
+        "label": "are directly within",
+        "helpText": "Search for Collections that are directly within the specified Collection.",
         "relation": "set",
         "allowedOptionsName": "keyword",
         "defaultOptionsName": "keyword"
@@ -417,6 +417,13 @@
         "allowedOptionsName": "keyword",
         "defaultOptionsName": "keyword"
       },
+      "memberOf+": {
+        "label": "are anywhere within",
+        "helpText": "Search for all Collections that are anywhere within the specified Collection.",
+        "relation": "set",
+        "allowedOptionsName": "keyword",
+        "defaultOptionsName": "keyword"
+      },
       "classification": {
         "label": "are categorized as",
         "helpText": "Search for Collections that are categorized with the specified Concept or Type terms.",
@@ -448,9 +455,14 @@
         "helpText": "Search for Collections that contain the specified Objects.",
         "relation": "item"
       },
+      "containingSet+": {
+        "label": "contain anywhere",
+        "helpText": "Search for all Collections that contain the specified Collections.",
+        "relation": "set"
+      },
       "containingSet": {
-        "label": "contain",
-        "helpText": "Search for Collections that contain the specified Collections.",
+        "label": "directly contain",
+        "helpText": "Search for Collections that contain the specified Collections within one level.",
         "relation": "set"
       },
       "text": {
@@ -832,16 +844,21 @@
         "helpText": "Search for Places that are the subject of the specified Works.",
         "relation": "work"
       },
+      "contains+": {
+        "label": "contain anywhere",
+        "helpText": "Search for Places that contain the specified Places.",
+        "relation": "place"
+      },
       "partOf": {
-        "label": "are within",
-        "helpText": "Search for Places that are within the specified Place.",
+        "label": "are directly within",
+        "helpText": "Search for Places that are directly within the specified Place.",
         "relation": "place",
         "allowedOptionsName": "keyword",
         "defaultOptionsName": "keyword"
       },
       "contains": {
-        "label": "contain",
-        "helpText": "Search for Places that contain the specified Places.",
+        "label": "directly contain",
+        "helpText": "Search for Places that directly contain the specified Places",
         "relation": "place"
       },
       "text": {
@@ -874,12 +891,19 @@
         "label": "influenced the creation of",
         "helpText": "Search for Places that influenced the specified Concepts.",
         "relation": "concept"
+      },
+      "partOf+": {
+        "label": "are anywhere within",
+        "helpText": "Search for Places that are anywhere within the specified Place.",
+        "relation": "place",
+        "allowedOptionsName": "keyword",
+        "defaultOptionsName": "keyword"
       }
     },
     "concept": {
       "narrower": {
-        "label": "are broader in scope than",
-        "helpText": "Search for Concept terms that are hierarchically broader than the specified narrower term.",
+        "label": "are parents of",
+        "helpText": "Search for Concept terms that are parents of the specified narrower term.",
         "relation": "concept"
       },
       "classification": {
@@ -898,8 +922,15 @@
         "defaultOptionsName": "keyword"
       },
       "broader": {
-        "label": "are narrower in scope than",
-        "helpText": "Search for Concept terms that are hierarchically narrower than the specified broader term.",
+        "label": "are children of",
+        "helpText": "Search for Concept terms that are children of the specified broader term.",
+        "relation": "concept",
+        "allowedOptionsName": "keyword",
+        "defaultOptionsName": "keyword"
+      },
+      "broader+": {
+        "label": "are descendants of",
+        "helpText": "Search for all Concept terms that are descendants of the specified broader term.",
         "relation": "concept",
         "allowedOptionsName": "keyword",
         "defaultOptionsName": "keyword"
@@ -1058,6 +1089,11 @@
         "autoCompleteContext": "concept.influencedByPlace",
         "allowedOptionsName": "keyword",
         "defaultOptionsName": "keyword"
+      },
+      "narrower+": {
+        "label": "are ancestors of",
+        "helpText": "Search for all Concept terms that are ancestors of the specified narrower term.",
+        "relation": "concept"
       }
     },
     "event": {

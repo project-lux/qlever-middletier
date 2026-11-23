@@ -147,13 +147,23 @@ class Settings(BaseSettings):
     text_score_scale: float = 1.0
     vector_score_scale: float = 1.0
 
+    #: Most hops a transitive search term (``broader+``, ``partOf+``, ``memberOf+``
+    #: and their inverses) follows: ``lux:broader{1,8}`` rather than ``lux:broader+``.
+    #: The hierarchies have cycles, so the full closure is huge. 0 means unbounded.
+    max_hops: int = 8
+
     # -- vector similarity
     #: The `similar` search term is answered by the vectors/sparql_service
     #: sidecar through SERVICE. The URL is the one QLever
     #: calls, so loopback means QLever's host. Empty disables the term.
     vector_service: str = ""
-    #: Results per `similar` clause, so also the most a similar search returns.
+    #: Results per `similar` / `similarRecords` clause at the top of the query (not under a
+    #: relationship; booleans do not count), so also the most a similar search returns.
     vector_top_k: int = 100
+    #: Results per `similar` / `similarRecords` clause under a relationship, as in works
+    #: about concepts similar to X: each similar record brings in its related records
+    #: unranked, so a long tail of weak matches would drown the close ones.
+    vector_nested_top_k: int = 5
     #: Ask for `vec:mode "constrained"` when a similar clause is ANDed with
     #: others, so a constraint too large for QLever to push down is an error
     #: rather than a near-empty result. A lone clause always uses "auto".
