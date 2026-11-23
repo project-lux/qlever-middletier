@@ -95,3 +95,28 @@ def test_open_store_does_not_spin_when_idle(store, monkeypatch, in_place):
     time.sleep(1.0)
     assert cpu() - before < 0.3
     assert opened.describe()["in_place"] is in_place
+
+
+def test_search_exact_matches_brute_force_across_chunks(store):
+    s, data, iris = store  # 3000 rows in 1024-row chunks, scanned in blocks smaller than a chunk
+    q = np.random.default_rng(3).standard_normal(DIM).astype(np.float32)
+    hits = s.search_exact(q, 25, block_rows=500)
+    assert [iri for iri, _ in hits] == [iris[i] for i in _exact_top(data, q, 25)]
+    unit = data / np.linalg.norm(data, axis=1, keepdims=True)
+    assert [score for _, score in hits] == pytest.approx(
+        (unit @ (q / np.linalg.norm(q)))[_exact_top(data, q, 25)].tolist(), abs=1e-5)
+
+
+def test_rewalk_never_loses_what_one_walk_found(store):
+    """The second walks add to the pool and the pool is reranked exactly, so the result is at
+    least as good at every rank - measured on queries away from every record, like text."""
+    s, data, iris = store
+    rng = np.random.default_rng(11)
+    exact_hits = 0
+    for q in rng.standard_normal((20, DIM)).astype(np.float32):
+        truth = {iris[i] for i in _exact_top(data, q, 20)}
+        once = s.search_global(q, 20, expansion_factor=16)
+        twice = s.search_global(q, 20, expansion_factor=16, rewalk=5)
+        assert all(b >= a - 1e-6 for (_, a), (_, b) in zip(once, twice))
+        exact_hits += len(truth & {iri for iri, _ in twice}) - len(truth & {iri for iri, _ in once})
+    assert exact_hits >= 0

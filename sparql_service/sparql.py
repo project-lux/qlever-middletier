@@ -16,6 +16,8 @@ silently ignoring patterns it cannot honour.
                vec:minScore 0.6 ;          # optional: drop hits with a lower cosine
                vec:maxGap 0.1 ;            # optional: drop hits more than this below the best
                vec:ef 1000 ;               # optional: HNSW expansion factor for this query
+               vec:rewalk 5 ;              # optional: walk again from the best 5 hits' vectors
+               vec:exact true ;            # optional: score the whole scope, no graph (or false)
                vec:index "concept" ;       # optional; inferred from IRIs otherwise
                vec:mode "constrained" .    # optional: refuse to run without pushed-down VALUES
     }
@@ -38,7 +40,13 @@ for ``"each"``).
 one query, overriding the service's ``--expansion-factor``. A walk can be trapped by a dense
 cluster of near-duplicates (hundreds of "quintets (…)" concepts) and miss the real neighbours;
 a wider walk escapes it, at a roughly linear cost. Exact scoring of pushed-down candidates uses
-no graph and ignores it. Raw cosines sit in a band whose position depends on the query and the model, so a
+no graph and ignores it.
+
+``vec:rewalk N`` walks again from the stored vectors of the best N hits and reranks the pool. A
+text query sits away from every record, where a walk misses records the graph does link; a walk
+from a record starts where the graph is reliable. ``vec:exact true`` scores every vector of the
+scope instead (perfect recall, linear cost), ``false`` forces the graph; by default a scope at or
+below the service's ``--exact-below`` size is scored exactly. Raw cosines sit in a band whose position depends on the query and the model, so a
 floor that suits one query can empty another; the gap follows the query's own best match.
 
 The ``VALUES`` block is split off and parsed with one regex pass before the (small) remainder is
@@ -58,6 +66,7 @@ MODES = ("auto", "constrained", "global")
 COMBINES = ("max", "each", "mean")
 MAX_SEEDS = 100
 MAX_EF = 50_000
+MAX_REWALK = 50
 
 
 class SparqlError(ValueError):
@@ -90,6 +99,8 @@ class Plan:
     min_score: float | None = None  # absolute cosine floor
     max_gap: float | None = None  # keep hits within this of the best
     ef: int | None = None  # HNSW expansion factor; the service's default when None
+    rewalk: int | None = None  # second walks from the best hits; the service's default when None
+    exact: bool | None = None  # score the whole scope; by the service's size threshold when None
     candidates: list[str] | None = None  # pushed-down IRIs for `subject`, if any
     limit: int | None = None
     notes: list[str] = field(default_factory=list)
@@ -377,6 +388,18 @@ def _plan(triples, select: list[str], star: bool) -> Plan:
             if not 1 <= number <= MAX_EF:
                 raise SparqlError(f"vec:ef is between 1 and {MAX_EF}")
             plan.ef = number
+        elif name == "rewalk":
+            try:
+                number = int(float(obj.value))
+            except ValueError:
+                raise SparqlError("vec:rewalk is a number") from None
+            if not 0 <= number <= MAX_REWALK:
+                raise SparqlError(f"vec:rewalk is between 0 and {MAX_REWALK}")
+            plan.rewalk = number
+        elif name == "exact":
+            if obj.value.lower() not in ("true", "false"):
+                raise SparqlError("vec:exact is true or false")
+            plan.exact = obj.value.lower() == "true"
         elif name == "includeSeeds":
             if obj.value.lower() not in ("true", "false"):
                 raise SparqlError("vec:includeSeeds is true or false")
