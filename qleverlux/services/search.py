@@ -182,13 +182,14 @@ class SearchService:
         # print(qt)
         res = await run_query(self.qlever, qt)
         # print(res["time"])
+        total = await self._total(res, offset, scope, q, pageLength, pred, ascdesc)
 
         mt = self.settings.mt_uri
         js = envelopes.collection_page(
             f"{mt}api/search/{scope}?q={uq}&page=1",
             part_of=envelopes.collection(
                 f"{mt}api/search-estimate/{scope}?q={uq}",
-                total=res["total"],
+                total=total,
                 label="Search Results",
                 summary="Description of Search Results",
             ),
@@ -205,6 +206,21 @@ class SearchService:
                 {"id": self.uris.outbound_record(r[0], la_type), "type": la_type}
             )
         return JSONResponse(content=js)
+
+    async def _total(self, res, offset, scope, q, pageLength, pred, ascdesc):
+        """The whole result set's size, for a page whose query ran at the rounded-down offset.
+
+        QLever counts the rows *after* OFFSET (resultsize, resultSizeTotal and
+        resultSizeExported alike), so pages 4-6 of 20 reported 60 fewer than
+        pages 1-3. Past the last row that count is 0 and says nothing about the
+        total, so it comes from the offset-0 query instead - the text page 1
+        sends, usually already in the cache.
+        """
+        soffset = (offset // OFFSET_GRANULARITY) * OFFSET_GRANULARITY
+        if res["total"] or not soffset:
+            return res["total"] + soffset
+        first = await self.make_sparql_query(scope, q, 1, pageLength, pred, ascdesc)
+        return (await run_query(self.qlever, first))["total"]
 
     async def estimate(self, scope, q={}, page=1):
         uq = urllib.parse.quote(q)
