@@ -305,8 +305,14 @@ SERVICE <http://127.0.0.1:8081/sparql> {
 - User values go through `iri()` / `string_literal()` (`sparql/terms.py`), which reject or escape anything
   that could break out of the term; a `similarRecords` id must also start `http://`/`https://`.
 
-Pagination is deliberately coarse: SPARQL is issued at offsets rounded down to multiples of 60 (so the alru cache
-hits across nearby pages) and the exact page is sliced out of the result list in Python.
+Pagination is deliberately coarse: SPARQL is issued at offsets rounded down to multiples of 60, for a 60-row
+window (`LIMIT`; wider only when a page would cross its end), so the alru cache hits across nearby pages, and the
+exact page is sliced out of the window in Python. The total is a separate `COUNT(*)` over the same pattern and
+(`?uri`, `?type`) grouping (`translate_search_total`; HAL's `translate_search_count` counts bare URIs and can
+differ), run alongside the window and shared by every page, sort order and search-estimate. It cannot come from
+the window: QLever counts the rows after `OFFSET` and, with a `LIMIT`, only the rows it returns. Before the window
+had a `LIMIT`, every page fetched every row from its offset to the end: 40 MB for concepts `broader+` "art", and
+26 s for items `text: "sculpture"` sorted by name, against 1.7 s for the window.
 
 ### AI query translation
 

@@ -4,12 +4,21 @@ A query arrives either as a LUX JSON query or as a simple string; both end up
 as a luxql tree, which the translator turns into SPARQL.
 
 Pagination is deliberately coarse. SPARQL is issued at offsets rounded down to
-a multiple of 60 so that nearby pages share an ``alru_cache`` entry, and the
-exact page is sliced out of the results in Python.
+a multiple of 60, for a window of 60 rows (more only when a page would cross
+the window's end), so that nearby pages share an ``alru_cache`` entry, and the
+exact page is sliced out of the window in Python.
+
+The total comes from a separate ``COUNT(*)`` over the same pattern. With a
+``LIMIT`` QLever counts only the rows it returns, so the window cannot carry
+it; and the count needs no sort or scoring, is one row, and is shared by every
+page, every sort order and search-estimate. Before the window had a ``LIMIT``,
+every page fetched every row from its offset to the end - 7.8 MB and 40,562
+rows for items ``text: "painting"`` - to show 20.
 """
 
 from __future__ import annotations
 
+import asyncio
 import urllib.parse
 
 import ujson as json
@@ -93,21 +102,32 @@ class SearchService:
         """A search is multi if the path says so or the query declares it."""
         return scope == MULTI_SCOPE or jq.get("_scope") == MULTI_SCOPE
 
-    async def make_sparql_query(
-        self, scope, q, page=1, pageLength=0, sort="relevance", order="DESC"
-    ):
-        if pageLength < 1:
-            pageLength = self.settings.page_length
+    @staticmethod
+    def window(page, pageLength):
+        """(offset, limit) of the SPARQL window holding this page: the offset rounded
+        down to OFFSET_GRANULARITY, the limit rounded up to it from there to the
+        page's end - one granule for any page length that divides it."""
         offset = (page - 1) * pageLength
         soffset = (offset // OFFSET_GRANULARITY) * OFFSET_GRANULARITY
+        needed = offset - soffset + pageLength
+        return soffset, -(-needed // OFFSET_GRANULARITY) * OFFSET_GRANULARITY
+
+    async def make_sparql_queries(
+        self, scope, q, page=1, pageLength=0, sort="relevance", order="DESC"
+    ):
+        """SPARQL for one page's window of rows and for the total, as text."""
+        if pageLength < 1:
+            pageLength = self.settings.page_length
+        soffset, limit = self.window(page, pageLength)
         q = self.uris.inbound(q)
         jq = self.parse_query(q, scope)
         # A query luxql rejects, or one whose text is entirely stopwords, is the
         # caller's mistake: raise so it surfaces as a 400 rather than being
         # swallowed into a None query and reported as a QLever timeout.
         translator = self.catalogue.translator
+        multi = self.is_multi(scope, jq)
         try:
-            if self.is_multi(scope, jq):
+            if multi:
                 branches = read_multi_branches(self.catalogue.json_reader, jq)
             else:
                 parsed = self.catalogue.json_reader.read(jq, scope)
@@ -115,27 +135,36 @@ class SearchService:
             raise BadQuery(str(e)) from e
         # similarRecords given a query: run it now for its seed records
         try:
-            for tree in [b for _, b in branches] if self.is_multi(scope, jq) else [parsed]:
+            for tree in [b for _, b in branches] if multi else [parsed]:
                 await resolve_similar_records(tree, self.catalogue, self.qlever)
         except ValueError as e:
             raise BadQuery(str(e)) from e
         try:
-            if self.is_multi(scope, jq):
+            # Both translations read the same tree: the seed records resolved
+            # above live on its nodes and would be lost by reading the JSON again.
+            if multi:
                 spq = translator.translate_multi_search(
-                    branches, offset=soffset, sort=sort, order=order
+                    branches, limit=limit, offset=soffset, sort=sort, order=order
                 )
+                total = translator.translate_multi_search_total(branches)
             else:
                 spq = translator.translate_search(
-                    parsed, scope=scope, offset=soffset, sort=sort, order=order
+                    parsed, scope=scope, limit=limit, offset=soffset, sort=sort, order=order
                 )
+                total = translator.translate_search_total(parsed, scope=scope)
         except ValueError as e:
             raise BadQuery(str(e)) from e
         except Exception as e:
             print(f"Error translating search: {e}")
-            return None
+            return None, None
         txt = spq.get_text()
         print(txt)
-        return txt
+        return txt, total.get_text()
+
+    async def count(self, sparql):
+        """The number a total query returns."""
+        res = await run_query(self.qlever, sparql)
+        return int(res["results"][0][0]) if res["results"] else 0
 
     def translate_string_query(self, scope, q):
         """Simple string query -> the equivalent LUX JSON query."""
@@ -159,7 +188,7 @@ class SearchService:
         if pageLength < 1:
             pageLength = self.settings.page_length
         # must default pageLength first: offset has to match the one
-        # make_sparql_query computes, or the slice below is taken from the
+        # make_sparql_queries computes, or the slice below is taken from the
         # wrong place in the result set
         offset = (page - 1) * pageLength
         sort = sort.strip()
@@ -176,13 +205,10 @@ class SearchService:
         pred = self.resolve_sort(scope, sort, q)
         uq = urllib.parse.quote(q)
 
-        qt = await self.make_sparql_query(scope, q, page, pageLength, pred, ascdesc)
-
-        # print("---query---")
-        # print(qt)
-        res = await run_query(self.qlever, qt)
-        # print(res["time"])
-        total = await self._total(res, offset, scope, q, pageLength, pred, ascdesc)
+        qt, qtotal = await self.make_sparql_queries(scope, q, page, pageLength, pred, ascdesc)
+        # Both at once: the window and the count are independent, and each is
+        # cached on its own (the count shared by every page and sort order).
+        res, total = await asyncio.gather(run_query(self.qlever, qt), self.count(qtotal))
 
         mt = self.settings.mt_uri
         js = envelopes.collection_page(
@@ -207,21 +233,6 @@ class SearchService:
             )
         return JSONResponse(content=js)
 
-    async def _total(self, res, offset, scope, q, pageLength, pred, ascdesc):
-        """The whole result set's size, for a page whose query ran at the rounded-down offset.
-
-        QLever counts the rows *after* OFFSET (resultsize, resultSizeTotal and
-        resultSizeExported alike), so pages 4-6 of 20 reported 60 fewer than
-        pages 1-3. Past the last row that count is 0 and says nothing about the
-        total, so it comes from the offset-0 query instead - the text page 1
-        sends, usually already in the cache.
-        """
-        soffset = (offset // OFFSET_GRANULARITY) * OFFSET_GRANULARITY
-        if res["total"] or not soffset:
-            return res["total"] + soffset
-        first = await self.make_sparql_query(scope, q, 1, pageLength, pred, ascdesc)
-        return (await run_query(self.qlever, first))["total"]
-
     async def estimate(self, scope, q={}, page=1):
         uq = urllib.parse.quote(q)
         mt = self.settings.mt_uri
@@ -234,10 +245,8 @@ class SearchService:
                 summary="Description of Search Results",
             )
         )
-        qt = await self.make_sparql_query(scope, q)
-        print(qt)
-
-        res = await run_query(self.qlever, qt)
-        js["totalItems"] = res["total"]
+        _, qtotal = await self.make_sparql_queries(scope, q)
+        res = await run_query(self.qlever, qtotal)
+        js["totalItems"] = int(res["results"][0][0]) if res["results"] else 0
         js["_timing"] = res["time"]
         return JSONResponse(content=js)
