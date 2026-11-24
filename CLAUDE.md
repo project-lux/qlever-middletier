@@ -413,11 +413,17 @@ so runtime work is string substitution:
   plus a cheap `LIMIT 1` HAL existence test; both are ordered by a hand-tuned heuristic score (classification
   and `workAbout` boost, multi-hop paths and Set/Event penalise) so HAL checks can short-circuit on the first
   hit. `json_stub` builds the equivalent user-facing JSON query using `config/terms_inverse.json`.
+  The count query ranks related records by `DESC(?total) ?uri` (the `?uri` tie-break keeps the order the
+  same at every LIMIT) and ends `LIMIT V_LIMIT`. As on the MarkLogic backend, a page counts *entries*, one
+  per record and relation (`pageLength` default `QLMT_RELATED_PAGELENGTH`=25, max 1000). Each record
+  gives at least one entry, so `RelatedListService` asks for `offset + pageLength + 1` records, rounded up to
+  60 for the cache, expands them and slices the page out. `next` appears only when there is another
+  entry: the front end shows its Next button exactly when `next` is present.
 - `config/facets.json` — facet name → `searchTermName`; entries whose term isn't in `LuxConfig` are dropped at
   startup with a warning. `config/sorts.json` — sort key → predicate, per scope.
 
 Placeholders used across the templates: `URI-HERE`, `V_TARGET_URI`, `V_FROM_URI`, `V_TO_URI`,
-`V_NAME_REL`/`V_URI_REL`/`V_TARGET_REL`, `{q}`, `{id}`, `{searchUriHost}`.
+`V_NAME_REL`/`V_URI_REL`/`V_TARGET_REL`, `V_LIMIT`, `{q}`, `{id}`, `{searchUriHost}`.
 
 ### Caching layers
 

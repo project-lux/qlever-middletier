@@ -269,6 +269,10 @@ class RelatedListBuilder:
         fragments.sort(key=lambda x: x[1], reverse=True)
         fragments = [x[0] for x in fragments]
 
+        # V_LIMIT is filled in per request: a page counts entries (one per
+        # relation), not records, so how many records it needs depends on the
+        # page. ?uri breaks ties so every LIMIT sees the same order, or a
+        # record could appear on two pages or on none.
         newline = "\n"  # work around no backslash in f string
         q = f"""
 {PREFIXES}
@@ -276,5 +280,5 @@ SELECT ?uri ?total {vars} WHERE {{
     {newline.join(fragments)}
     FILTER(!(?uri = <V_TARGET_URI>))
     BIND({coalesces} AS ?total)
-}} ORDER BY DESC(?total) LIMIT 20"""
+}} ORDER BY DESC(?total) ?uri LIMIT V_LIMIT"""
         return q, hal_probes, skipped_keys
