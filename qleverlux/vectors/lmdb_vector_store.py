@@ -123,8 +123,11 @@ def _write_graph(txn: lmdb.Transaction, env: lmdb.Environment, dbs: dict, monoli
 #: Graph quantizations the store can build: it hands USearch float vectors, which the integer and
 #: bit kinds do not convert - I8 from float input truncated every value and built a graph with
 #: seeded recall@10 0.814 against 0.99 (they want input already scaled, or one 0/1 byte per bit).
-#: E4M3 is the one-byte choice: same recall as BF16 at half the size (files/graph_quantization.py).
 FLOAT_QUANTIZATIONS = ("F64", "F32", "F16", "BF16", "E5M2", "E4M3", "E3M2", "E2M3")
+#: What graphs are built as unless asked otherwise. E4M3, one byte a dimension, had the recall of
+#: BF16 at half the size: on dev's 586k Harrier concepts text recall@10/@100 0.997/0.980 against
+#: 0.997/0.985, 1112 bytes a vector against 2136 (files/graph_quantization.py).
+GRAPH_QUANTIZATION = Scalar.E4M3
 
 
 def _graph_rows(vectors: np.ndarray, graph_dims: int) -> np.ndarray:
@@ -172,7 +175,7 @@ def build_store(
     vectors: np.ndarray,
     *,
     scope: str | None = None,
-    quantization: Scalar = Scalar.BF16,
+    quantization: Scalar = GRAPH_QUANTIZATION,
     connectivity: int = 16,
     refine: bool = True,
     chunk_rows: int = CHUNK_ROWS,
@@ -308,7 +311,7 @@ class VectorWriter:
         self.env.close()
 
 
-def build_index(path: str, scope: str | None, *, quantization: Scalar = Scalar.BF16, connectivity: int = 16,
+def build_index(path: str, scope: str | None, *, quantization: Scalar = GRAPH_QUANTIZATION, connectivity: int = 16,
                 refine: bool = True, map_size: int = 1 << 40, graph_dimensions: int = 0) -> dict:
     """Builds a scope's HNSW graph from its stored vectors and publishes it as the next generation.
 

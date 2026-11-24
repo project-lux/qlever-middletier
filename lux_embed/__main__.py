@@ -322,7 +322,7 @@ def main(argv=None):
     p.add_argument("--vector-dtype", default="float32", choices=["float32", "float16"])
     p.add_argument("--restart", action="store_true")
     p.add_argument("--no-index", action="store_true", help="skip building the graph at the end")
-    p.add_argument("--quantization", default="bf16")
+    p.add_argument("--quantization", default="e4m3", help="graph scalar type: e4m3 (default), bf16, f16, f32")
     p.add_argument("--connectivity", type=int, default=16)
     p.add_argument("--graph-dims", type=int, default=0,
                    help="build the graph on the first N dimensions, reranking on all of them (default: all)")
@@ -330,12 +330,12 @@ def main(argv=None):
     p.add_argument("shards", nargs="+", help="shard directories written by `embed --out` (other scopes are ignored)")
     p.add_argument("--restart", action="store_true", help="replace the scope if the store already has it")
     p.add_argument("--no-index", action="store_true", help="skip building the graph after loading")
-    p.add_argument("--quantization", default="bf16")
+    p.add_argument("--quantization", default="e4m3", help="graph scalar type: e4m3 (default), bf16, f16, f32")
     p.add_argument("--connectivity", type=int, default=16)
     p.add_argument("--graph-dims", type=int, default=0,
                    help="build the graph on the first N dimensions, reranking on all of them (default: all)")
     p = add("index", cmd_index, "store", "scope")
-    p.add_argument("--quantization", default="bf16")
+    p.add_argument("--quantization", default="e4m3", help="graph scalar type: e4m3 (default), bf16, f16, f32")
     p.add_argument("--connectivity", type=int, default=16)
     p.add_argument("--graph-dims", type=int, default=0,
                    help="build the graph on the first N dimensions, reranking on all of them (default: all)")
