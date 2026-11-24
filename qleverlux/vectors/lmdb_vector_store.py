@@ -14,6 +14,14 @@ a scope always describe the same snapshot:
 
 ``scope=None`` uses the unprefixed names of the original single-scope layout.
 
+The graph may be built on fewer dimensions than the vectors hold (``graph_dimensions`` in the
+meta, absent when it is the full width): the first N of each vector, re-normalized, as the
+Matryoshka slicing of queries does. Walks then use the same slice of the query, and the exact
+rerank the full stored vectors, so the graph only has to put the true neighbours in the pool.
+On 327k concepts a Harrier graph on 512 of 1024 dimensions kept full-width recall at 600 bytes a
+vector instead of 1112; at 256 text recall@100 fell to 0.79 (files/graph_quantization.py).
+It needs a bigger rerank pool for that, which :data:`NARROW_RERANK_FACTOR` gives it by default.
+
 Large LMDB values live in contiguous overflow pages starting 16 bytes past a page boundary (the
 page header), so a 48-byte PAD makes a vector chunk 64-byte aligned, and a (page - 16)-byte pad
 puts the graph exactly on a page boundary. Reading a chunk is a zero-copy NumPy view: fetching
@@ -60,6 +68,10 @@ _READ_POOL = ThreadPoolExecutor(max_workers=16, thread_name_prefix="vector-rows"
 CAN_VIEW = hasattr(DenseIndex, "view_ram_buffer")
 CHUNK_ROWS = 65_536
 MAX_DBS = 64
+#: Candidates reranked per result wanted, by default: a graph on fewer dimensions orders its pool
+#: less well, so it needs a bigger one. On 327k Harrier concepts with a 512-of-1024 graph, text
+#: recall@100 was 0.961 at 3, 0.980 at 5 and 0.990 at 10 (full width: 0.992 at 3).
+RERANK_FACTOR, NARROW_RERANK_FACTOR = 3, 10
 TABLES = ("meta", "iri_to_id", "id_to_iri", "vectors", "graph")
 
 PACK_U64 = struct.Struct(">Q").pack  # big-endian, so LMDB order == numeric order (append=True works)
@@ -108,8 +120,43 @@ def _write_graph(txn: lmdb.Transaction, env: lmdb.Environment, dbs: dict, monoli
     return graph_pad
 
 
+#: Graph quantizations the store can build: it hands USearch float vectors, which the integer and
+#: bit kinds do not convert - I8 from float input truncated every value and built a graph with
+#: seeded recall@10 0.814 against 0.99 (they want input already scaled, or one 0/1 byte per bit).
+FLOAT_QUANTIZATIONS = ("F64", "F32", "F16", "BF16", "E5M2", "E4M3", "E3M2", "E2M3")
+#: What graphs are built as unless asked otherwise. E4M3, one byte a dimension, had the recall of
+#: BF16 at half the size: on dev's 586k Harrier concepts text recall@10/@100 0.997/0.980 against
+#: 0.997/0.985, 1112 bytes a vector against 2136 (files/graph_quantization.py).
+GRAPH_QUANTIZATION = Scalar.E4M3
+
+
+def _graph_rows(vectors: np.ndarray, graph_dims: int) -> np.ndarray:
+    """``vectors`` as the graph sees them: the first ``graph_dims`` dimensions, re-normalized when
+    that is fewer than they have. A zero row stays zero rather than becoming NaN."""
+    vectors = np.asarray(vectors, dtype=np.float32)
+    if graph_dims >= vectors.shape[1]:
+        return vectors
+    sliced = vectors[:, :graph_dims]
+    norms = np.linalg.norm(sliced, axis=1, keepdims=True)
+    return sliced / np.where(norms > 0, norms, 1)
+
+
+def _check_graph_dims(graph_dims: int, dims: int) -> int:
+    """``graph_dims`` as stored: 0 means the vectors' full width."""
+    if graph_dims == 0:
+        return dims
+    if not 0 < graph_dims <= dims:
+        raise ValueError(f"a graph on {graph_dims} dimensions does not fit {dims}d vectors")
+    return graph_dims
+
+
 def _build_graph(chunks: Iterable[tuple[int, np.ndarray]], count: int, dims: int, quantization: Scalar,
                  connectivity: int, refine: bool) -> memoryview:
+    """An HNSW graph over ``chunks``, each already cut to the graph's ``dims``."""
+    if quantization.name not in FLOAT_QUANTIZATIONS:
+        raise ValueError(f"cannot build a {quantization.name} graph: the store gives USearch float vectors, "
+                         f"which that kind does not convert. Use one of {', '.join(FLOAT_QUANTIZATIONS)} "
+                         f"(E4M3 for one byte a dimension).")
     pool = usearch.Executor.for_ram()
     index = DenseIndex.init_ram(dims, DenseMetric.ANGULAR, quantization, connectivity=connectivity)
     index.reserve(count)
@@ -128,18 +175,21 @@ def build_store(
     vectors: np.ndarray,
     *,
     scope: str | None = None,
-    quantization: Scalar = Scalar.BF16,
+    quantization: Scalar = GRAPH_QUANTIZATION,
     connectivity: int = 16,
     refine: bool = True,
     chunk_rows: int = CHUNK_ROWS,
     generation: int = 1,
+    graph_dimensions: int = 0,
 ) -> None:
-    """Builds a scope in one go from in-memory arrays: graph, vectors and IRI maps in one transaction."""
+    """Builds a scope in one go from in-memory arrays: graph, vectors and IRI maps in one transaction.
+    ``graph_dimensions`` builds the graph on that many leading dimensions (0: all of them)."""
     vectors = np.ascontiguousarray(vectors, dtype=np.float32)
     n, dim = vectors.shape
     if len(iris) != n:
         raise ValueError(f"{len(iris)} IRIs for {n} vectors")
-    monolith = _build_graph([(0, vectors)], n, dim, quantization, connectivity, refine)
+    graph_dims = _check_graph_dims(graph_dimensions, dim)
+    monolith = _build_graph([(0, _graph_rows(vectors, graph_dims))], n, graph_dims, quantization, connectivity, refine)
 
     iri_bytes = sum(len(s.encode()) for s in iris)
     payload = vectors.nbytes + len(monolith) + 2 * (iri_bytes + 32 * n)
@@ -168,6 +218,8 @@ def build_store(
             "graph_pad": graph_pad,
             "complete": True,
         }
+        if graph_dims < dim:
+            meta["graph_dimensions"] = graph_dims
         txn.put(b"meta", json.dumps(meta).encode(), db=dbs["meta"])
     env.close()
 
@@ -259,25 +311,37 @@ class VectorWriter:
         self.env.close()
 
 
-def build_index(path: str, scope: str | None, *, quantization: Scalar = Scalar.BF16, connectivity: int = 16,
-                refine: bool = True, map_size: int = 1 << 40) -> dict:
-    """Builds a scope's HNSW graph from its stored vectors and publishes it as the next generation."""
+def build_index(path: str, scope: str | None, *, quantization: Scalar = GRAPH_QUANTIZATION, connectivity: int = 16,
+                refine: bool = True, map_size: int = 1 << 40, graph_dimensions: int = 0) -> dict:
+    """Builds a scope's HNSW graph from its stored vectors and publishes it as the next generation.
+
+    ``graph_dimensions`` builds it on that many leading dimensions of each vector (0: all of them).
+    Like the quantization it is a property of this build, not the store: rebuilding without it
+    goes back to the full width."""
     env = lmdb.open(path, map_size=map_size, max_dbs=MAX_DBS, subdir=True)
     dbs = _open_dbs(env, scope, create=False)
     with env.begin() as txn:
         meta = json.loads(txn.get(b"meta", db=dbs["meta"]))
     dims, rows, dtype = meta["dimensions"], meta["chunk_rows"], np.dtype(meta.get("vector_dtype", "float32"))
+    try:
+        graph_dims = _check_graph_dims(graph_dimensions, dims)
+    except ValueError:
+        env.close()
+        raise
 
     def chunks():
         with env.begin(buffers=True) as txn:
             for key, value in txn.cursor(db=dbs["vectors"]):
                 block = np.frombuffer(value, dtype=dtype, offset=PAD).reshape(-1, dims)
-                yield struct.unpack(">I", bytes(key))[0] * rows, block.astype(np.float32)
+                yield struct.unpack(">I", bytes(key))[0] * rows, _graph_rows(block, graph_dims)
 
-    monolith = _build_graph(chunks(), meta["count"], dims, quantization, connectivity, refine)
+    monolith = _build_graph(chunks(), meta["count"], graph_dims, quantization, connectivity, refine)
     with env.begin(write=True) as txn:
         meta.update(graph_pad=_write_graph(txn, env, dbs, monolith), quantization=quantization.name,
                     connectivity=connectivity, generation=meta.get("generation", 0) + 1)
+        meta.pop("graph_dimensions", None)
+        if graph_dims < dims:
+            meta["graph_dimensions"] = graph_dims
         txn.put(b"meta", json.dumps(meta).encode(), db=dbs["meta"])
     env.close()
     return meta
@@ -481,6 +545,7 @@ class LmdbVectorStore:
             "in_place": graph.in_place,
             "entries": len(graph.index),
             "dimensions": graph.meta["dimensions"],
+            "graph_dimensions": graph.meta.get("graph_dimensions", graph.meta["dimensions"]),
             "owned_bytes": graph.index.describe().memory_usage,
             "generation": graph.meta["generation"],
         }
@@ -592,11 +657,18 @@ class LmdbVectorStore:
             _, ids = self._ids_for(txn, [iri])
             return self._vectors(txn, ids)[0] if len(ids) else None
 
+    @staticmethod
+    def _for_graph(graph: _GraphSnapshot, queries: np.ndarray) -> np.ndarray:
+        """Query rows of the vectors' width cut to the width ``graph`` was built on."""
+        return _graph_rows(queries, graph.meta.get("graph_dimensions", graph.meta["dimensions"]))
+
     def _walk(self, graph: _GraphSnapshot, queries: np.ndarray, wanted: int, expansion_factor: int) -> dict[int, float]:
-        """One HNSW walk per query row; each id found with its best quantized cosine."""
+        """One HNSW walk per query row; each id found with its best quantized cosine (over the
+        graph's dimensions, which may be fewer than the vectors')."""
         # The walk returns at most expansion_factor hits, so widen it to cover what is wanted;
         # otherwise a top_k above expansion_factor / rerank_factor silently comes back short.
-        matches = graph.index.search(queries, wanted, self._arena, expansion_factor=max(expansion_factor, wanted))
+        matches = graph.index.search(self._for_graph(graph, queries), wanted, self._arena,
+                                     expansion_factor=max(expansion_factor, wanted))
         distances = np.array(matches.distances)
         best: dict[int, float] = {}
         for row, ids in enumerate(_matched_ids(matches)):
@@ -605,7 +677,7 @@ class LmdbVectorStore:
         return best
 
     def search_global(
-        self, query: np.ndarray, top_k: int = 20, *, rerank_factor: int = 3, expansion_factor: int = 128,
+        self, query: np.ndarray, top_k: int = 20, *, rerank_factor: int | None = None, expansion_factor: int = 128,
         rewalk: int = 0, rewalk_expansion_factor: int | None = None,
     ) -> list[tuple[str, float]]:
         """Vector-first: quantized HNSW walk, then exact cosine rerank from LMDB.
@@ -620,16 +692,23 @@ class LmdbVectorStore:
         graph is reliable, so the second walks find some of what the first one passed by.
         ``rewalk_expansion_factor`` is their width (``expansion_factor`` when None). On dev narrow
         ones (300) were cheap and recovered a missed top hit; wide ones (10,000) recovered more on
-        place queries but cost as much as the first walk again."""
+        place queries but cost as much as the first walk again.
+
+        ``rerank_factor`` is how many candidates are reranked per result wanted; None picks
+        :data:`RERANK_FACTOR`, or :data:`NARROW_RERANK_FACTOR` for a graph on fewer dimensions."""
         q = self._queries(query)
-        wanted = top_k * max(rerank_factor, 1)
         graph = self._graph  # held for the whole call: keeps this generation's pages pinned
+        if rerank_factor is None:
+            rerank_factor = NARROW_RERANK_FACTOR if "graph_dimensions" in graph.meta else RERANK_FACTOR
+        wanted = top_k * max(rerank_factor, 1)
         best = self._walk(graph, q, wanted, expansion_factor)
         ids = np.fromiter(best, dtype=np.uint64, count=len(best))
         if not len(ids):
             return []
+        # A graph on fewer dimensions scores over those alone, so its cosines are always replaced.
+        exact = rerank_factor > 1 or rewalk or "graph_dimensions" in graph.meta
         with self.env.begin(buffers=True) as txn:
-            if rerank_factor > 1 or rewalk:
+            if exact:
                 scores = self._cosine(self._vectors(txn, ids), q)
             else:
                 scores = np.fromiter(best.values(), dtype=np.float64, count=len(best))
@@ -701,7 +780,7 @@ class LmdbVectorStore:
         graph = self._graph  # held for the whole call: keeps this generation's pages pinned
         wanted = top_k * 3
         matches = graph.index.search(
-            q, wanted, self._arena, expansion_factor=max(expansion_factor, wanted),
+            self._for_graph(graph, q), wanted, self._arena, expansion_factor=max(expansion_factor, wanted),
             predicate=lambda key: int(key) in allowed,
         )
         hit_ids = np.unique(np.concatenate(_matched_ids(matches)))

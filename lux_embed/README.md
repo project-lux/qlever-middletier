@@ -9,7 +9,7 @@ This package builds per-class vector indexes (item, work, set, agent, place, con
 | Stage 1 offline | `facets` | The same facets, extracted once beside QLever into a portable LMDB (`--out facets.lmdb`). `cards` / `embed` then take `--facets facets.lmdb` instead of `--qlever`, so the embedding machine needs no endpoint. See below. |
 | Stage 2 | `cards` (preview, or `--out` to build them all) | One card per record, using the per-class field table in `cards.py`. Hierarchies (concept `broader`, place `part_of`) are walked in the records themselves. Statements are English or untagged, HTML-stripped, boilerplate kinds removed, and capped at 300 words. Cards are built by a pool of worker processes (`--card-workers`, default: the CPUs the job may use, less two). With `--out cards.lmdb` every card of the scope goes into a card store, so it's a CPU-only job. |
 | Stage 3 | `embed` (`--cards cards.lmdb` to read a card store) | EmbeddingGemma 2 (text-only, 271M parameters). Runs in bf16 on CUDA/MPS, else f32, never f16. Documents use `title: … \| text: …`. Vectors use Matryoshka `truncate_dim` and are re-normalized in f32. The run resumes after the last committed 4096-row chunk. |
-| Graph | `index` (run by `embed` unless `--no-index`) | A bf16 HNSW graph over the stored vectors, published as the scope's next generation. Readers pick it up with `refresh()`. |
+| Graph | `index` (run by `embed` unless `--no-index`) | An e4m3 HNSW graph (one byte a dimension) over the stored vectors, published as the scope's next generation. Readers pick it up with `refresh()`. It has the recall of the bf16 graphs built before at half the size; `--quantization bf16` still builds one. `--graph-dims N` builds it on the first N dimensions of each vector and keeps the full vectors for the exact rerank: 512 of Harrier's 1024 kept full-width recall on 327k concepts (with the bigger rerank pool the store then uses), at 600 bytes a vector instead of 1112 for e4m3; 256 lost text recall. Both are per build, so pass them again when rebuilding. |
 
 ## Setup
 
@@ -34,7 +34,7 @@ $PY -m lux_embed query --store $DATA/vectors.lmdb --labels $DATA/labels.lmdb --s
 
 **Defaults:**
 - **Dimensions:** 512d for item and work, 768d for the other classes (`--dims` overrides). Any wider query vector is sliced and re-normalized to an index's dimension, so cross-class queries work.
-- **Model:** EmbeddingGemma 2 unless `embed --model` names another model with a profile in `encoder.py`. The profile sets the document format, the query prompt, and whether the model can be truncated. Today the only alternative is `microsoft/harrier-oss-v1-0.6b`. It produces 1024d vectors and wasn't trained for truncation, so it is used at full width in every class.
+- **Model:** EmbeddingGemma 2 unless `embed --model` names another model with a profile in `encoder.py`. The profile sets the document format, the query prompt, and whether the model can be truncated. Today the only alternative is `microsoft/harrier-oss-v1-0.6b`. It produces 1024d vectors and wasn't trained for truncation, so it is used at full width in every class. (Its leading 512 dimensions are still good enough to *walk* a graph on, as long as the full vectors rerank: see `index --graph-dims`.)
   - The store records its model. `query` encodes with that model, and `embed` won't resume a store built with a different one.
   - Every class in a store must use the same model, because cross-class queries reuse one query vector.
   - The `sparql_service` sidecar encodes text queries with the model the store records.

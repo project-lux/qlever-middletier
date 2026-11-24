@@ -99,7 +99,7 @@ def scope_of(iri: str) -> str | None:
 class VectorService:
     def __init__(self, store_path: str, *, device: str = "auto", refresh_seconds: float = 10.0,
                  exact_threshold: int = 200_000, expansion_factor: int = 10_000, cache_bytes: int = 256 << 20,
-                 rewalk: int = 10, rewalk_ef: int = 300, exact_below: int = 0):
+                 rewalk: int = 10, rewalk_ef: int = 300, exact_below: int = 0, rerank_factor: int | None = None):
         # The search defaults were measured on dev (Harrier, 4 scopes) with files/similarity_cutoffs.py
         # --recall: ef 10,000 fixed a walk trapped by near-duplicates ("quantum entanglement", 0 -> 10
         # of the 10 exact top hits) at ~40 ms over ef 3,000; ten narrow second walks then add ~20-30 ms
@@ -111,6 +111,7 @@ class VectorService:
         self.device, self.refresh_seconds = device, refresh_seconds
         self.exact_threshold, self.expansion_factor = exact_threshold, expansion_factor
         self.rewalk, self.rewalk_ef, self.exact_below = rewalk, rewalk_ef, exact_below
+        self.rerank_factor = rerank_factor  # None: each store's own default, by how its graph was built
         self._stores: dict[str, LmdbVectorStore] = {}
         self._checked: dict[str, float] = {}
         self._lock = threading.Lock()
@@ -322,7 +323,8 @@ class VectorService:
                         hits += store.search_exact(queries, wanted)
                     else:
                         hits += store.search_global(queries, wanted, expansion_factor=ef, rewalk=rewalk,
-                                                    rewalk_expansion_factor=rewalk_ef)
+                                                    rewalk_expansion_factor=rewalk_ef,
+                                                    rerank_factor=self.rerank_factor)
                 else:  # exact below the threshold; a filtered walk above it, which ef widens too
                     hits += store.search_candidates(queries, candidates, wanted, exact_threshold=self.exact_threshold,
                                                     expansion_factor=max(ef, 256))
