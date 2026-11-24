@@ -55,7 +55,11 @@ class FacetService:
         self.uris = uris
 
     def resolve_predicate(self, name, scope):
-        """Facet name -> (predicate, search term name)."""
+        """Facet name -> (predicate, search term name).
+
+        Raises ``BadQuery`` for a name that is not a configured facet, which
+        includes one ``_trim_facets`` dropped at startup.
+        """
         if name.endswith("RecordType"):
             return "a", RECORD_TYPE_TERM
         if name in FIXED_FACET_PREDICATES:
@@ -63,10 +67,8 @@ class FacetService:
 
         pname = self.catalogue.facets.get(name, None)
         if not pname:
-            print(f" *** request for unknown facet {name} ***")
-            term = "MISSING"
-        else:
-            term = pname["searchTermName"]
+            raise BadQuery(f"'{name}' is not a configured facet.")
+        term = pname["searchTermName"]
 
         translator = self.catalogue.translator
         pred = translator.get_predicate(term, scope)
@@ -108,9 +110,15 @@ class FacetService:
             sort = ""
             ascdesc = ""
 
+        # Before the query is read: an unknown facet is a 400 whatever the
+        # query, and reading it can already mean a QLever call for seeds.
+        pred, term = self.resolve_predicate(name, scope)
+
         q = self.uris.inbound(q)
-        jq = json.loads(q)
+        # JSONDecodeError is a ValueError, so a q that is not JSON is a 400
+        # like one luxql rejects.
         try:
+            jq = json.loads(q)
             parsed = self.catalogue.json_reader.read(jq, scope)
             await resolve_similar_records(parsed, self.catalogue, self.qlever)
         except ValueError as e:
@@ -124,7 +132,6 @@ class FacetService:
             part_of={"type": "OrderedCollection", "totalItems": 0},
         )
 
-        pred, term = self.resolve_predicate(name, scope)
         # As in search: an all-stopword text clause, or `similar` with no
         # vector service configured, is the caller's mistake - a 400, not a 500.
         try:
