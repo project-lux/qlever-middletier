@@ -237,9 +237,11 @@ def cmd_index(args):
 
     started = time.time()
     meta = build_index(args.store, args.scope, quantization=getattr(Scalar, args.quantization.upper()),
-                       connectivity=args.connectivity)
+                       connectivity=args.connectivity, graph_dimensions=args.graph_dims)
+    width = meta.get("graph_dimensions", meta["dimensions"])
     print(f"{args.scope}: graph generation {meta['generation']} over {meta['count']:,} vectors "
-          f"({meta['quantization']}, M={meta['connectivity']}) in {time.time() - started:,.0f}s")
+          f"({meta['quantization']}, M={meta['connectivity']}, {width} of {meta['dimensions']} dimensions) "
+          f"in {time.time() - started:,.0f}s")
 
 
 def cmd_query(args):
@@ -322,15 +324,21 @@ def main(argv=None):
     p.add_argument("--no-index", action="store_true", help="skip building the graph at the end")
     p.add_argument("--quantization", default="bf16")
     p.add_argument("--connectivity", type=int, default=16)
+    p.add_argument("--graph-dims", type=int, default=0,
+                   help="build the graph on the first N dimensions, reranking on all of them (default: all)")
     p = add("load", cmd_load, "store", "scope")
     p.add_argument("shards", nargs="+", help="shard directories written by `embed --out` (other scopes are ignored)")
     p.add_argument("--restart", action="store_true", help="replace the scope if the store already has it")
     p.add_argument("--no-index", action="store_true", help="skip building the graph after loading")
     p.add_argument("--quantization", default="bf16")
     p.add_argument("--connectivity", type=int, default=16)
+    p.add_argument("--graph-dims", type=int, default=0,
+                   help="build the graph on the first N dimensions, reranking on all of them (default: all)")
     p = add("index", cmd_index, "store", "scope")
     p.add_argument("--quantization", default="bf16")
     p.add_argument("--connectivity", type=int, default=16)
+    p.add_argument("--graph-dims", type=int, default=0,
+                   help="build the graph on the first N dimensions, reranking on all of them (default: all)")
     p = add("query", cmd_query, "store", "labels", "scope", "device")
     p.add_argument("text")
     p.add_argument("--top", type=int, default=10)

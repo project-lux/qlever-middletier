@@ -218,3 +218,60 @@ def test_build_index_builds_an_e4m3_graph_the_store_serves(tmp_path):
         assert s.search_global(data[7], 5, expansion_factor=200)[0][0] == iris[7]
     finally:
         s.close()
+
+
+def test_a_graph_on_fewer_dimensions_walks_narrow_and_scores_full(tmp_path):
+    rng = np.random.default_rng(5)
+    data = rng.standard_normal((2000, 32)).astype(np.float32)
+    unit = data / np.linalg.norm(data, axis=1, keepdims=True)
+    iris = [f"https://example.org/data/concept/{i}" for i in range(2000)]
+    path = str(tmp_path / "store.lmdb")
+    lvs.build_store(path, iris, data, scope="concept")
+    meta = lvs.build_index(path, "concept", quantization=lvs.Scalar.E4M3, graph_dimensions=16)
+    assert (meta["graph_dimensions"], meta["dimensions"]) == (16, 32)
+    s = lvs.LmdbVectorStore(path, "concept")
+    try:
+        assert s.describe()["graph_dimensions"] == 16
+        # Even with no rerank asked for, the scores are full-width cosines, not the graph's.
+        hits = s.search_global(data[7], 5, rerank_factor=1, expansion_factor=200)
+        assert hits[0][0] == iris[7]
+        for iri, score in hits:
+            assert score == pytest.approx(float(unit[iris.index(iri)] @ unit[7]), abs=1e-5)
+        # A narrow graph reranks a bigger pool by default.
+        wanted = []
+        walk = s._walk
+        s._walk = lambda graph, queries, n, ef: wanted.append(n) or walk(graph, queries, n, ef)
+        s.search_global(data[7], 5, expansion_factor=200)
+        s.search_global(data[7], 5, rerank_factor=2, expansion_factor=200)
+        del s._walk
+        assert wanted == [5 * lvs.NARROW_RERANK_FACTOR, 10]
+        # The filtered walk takes the same narrow query.
+        candidates = iris[:1500]
+        found = s.search_candidates(data[3], candidates, 5, exact_threshold=10, expansion_factor=400)
+        assert found[0][0] == iris[3]
+    finally:
+        s.close()
+    # Rebuilding without it goes back to the full width.
+    assert "graph_dimensions" not in lvs.build_index(path, "concept")
+
+
+def test_graph_dimensions_must_fit_the_vectors(tmp_path):
+    data = np.random.default_rng(6).standard_normal((50, 8)).astype(np.float32)
+    path = str(tmp_path / "store.lmdb")
+    iris = [f"https://example.org/data/concept/{i}" for i in range(50)]
+    with pytest.raises(ValueError, match="does not fit"):
+        lvs.build_store(path, iris, data, scope="concept", graph_dimensions=9)
+    lvs.build_store(path, iris, data, scope="concept", graph_dimensions=4)
+    s = lvs.LmdbVectorStore(path, "concept")
+    try:
+        assert s.meta["graph_dimensions"] == 4
+        generation = s.meta["generation"]
+    finally:
+        s.close()
+    with pytest.raises(ValueError, match="does not fit"):
+        lvs.build_index(path, "concept", graph_dimensions=9)
+    s = lvs.LmdbVectorStore(path, "concept")
+    try:
+        assert s.meta["generation"] == generation  # nothing was published
+    finally:
+        s.close()

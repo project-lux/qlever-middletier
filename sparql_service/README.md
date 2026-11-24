@@ -83,6 +83,7 @@ The SERVICE body may contain only these `vec:` triples about one subject variabl
   - encoded query text.
 
   Identical requests in flight share one computation, and one that outlives the deadline still finishes and fills the cache for the retry. Entries are tagged with every scope's graph generation, so a new graph invalidates them. `X-Vector-Cache` on each response says `response`, `hits`, `shared` or `miss`; `GET /cache` gives entries, bytes, hits and misses.
+- **Rerank pool.** A walk's candidates are rescored exactly from the stored vectors, `topK` × 3 of them, or × 10 in a scope whose graph was built on fewer dimensions than its vectors (`lux_embed index --graph-dims`), which orders its pool less well. `--rerank-factor` sets one factor for every scope. Each extra candidate is a row read, about 0.15–0.3 ms when the vectors are cold.
 - **New graphs.** New graph generations written by `lux_embed index` are picked up within 10 s. A scope whose graph isn't built yet shows as unavailable in `/health`.
 - **Concurrency.** One process. Searches run on FastAPI's worker threads without a USearch executor pool, because an idle pool busy-spins its workers. Index pages are served in place from the LMDB mmap (`view_ram_buffer`).
 - **Names in joins.** LUX has one primary name per language, so join a single English/sort name, or aggregate with `SAMPLE`, to avoid one row per language.
