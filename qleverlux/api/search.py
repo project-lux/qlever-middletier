@@ -40,9 +40,13 @@ async def get_search(
 
 @router.get("/api/search-estimate/{scope}", operation_id="get_estimate")
 async def get_search_estimate(
-    scope: searchScopeEnum, q={}, page=1, mt=Depends(get_middletier)
+    scope: searchScopeEnum, q: str, page: int = 1, mt=Depends(get_middletier)
 ):
-    """The number of records a query matches."""
+    """The number of records a query matches.
+
+    ``q`` is required, as for search: it once defaulted to ``{}``, a dict,
+    which failed URL-quoting and turned a missing query into a 500.
+    """
     return await mt.search.estimate(scope, q, page)
 
 

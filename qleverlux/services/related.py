@@ -21,7 +21,7 @@ import urllib.parse
 
 from fastapi.responses import JSONResponse
 
-from qleverlux.errors import run_query
+from qleverlux.errors import BadQuery, run_query
 from qleverlux.presentation import envelopes
 
 #: Records requested are rounded up to a multiple of this, to share cache entries.
@@ -57,7 +57,12 @@ class RelatedListService:
         # get query from the catalogue's sparql cache and substitute in the uri
         # the uri arrives in this deployment's form; the index only knows data URIs
         target = self.uris.inbound(uri)
-        spq = self.catalogue.related_list_sparql[scope][name]
+        # Only some scopes have related lists at all, so the scope can miss too.
+        spq = self.catalogue.related_list_sparql.get(scope, {}).get(name)
+        if spq is None:
+            raise BadQuery(
+                f"No configuration for the '{name}' related list in the '{scope}' scope."
+            )
         spq = spq.replace("V_TARGET_URI", target).replace("V_LIMIT", str(records))
 
         res = await run_query(self.qlever, spq)
