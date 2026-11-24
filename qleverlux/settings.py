@@ -57,6 +57,7 @@ NO_CLI = frozenset(
         "lmdb_key_format",
         "lmdb_json_path",
         "facet_page_length",
+        "related_page_length",
     }
 )
 
@@ -136,6 +137,9 @@ class Settings(BaseSettings):
     # -- search behaviour
     page_length: int = Field(default=20, alias="QLMT_PAGELENGTH")
     facet_page_length: int = Field(default=20, alias="QLMT_FACET_PAGELENGTH")
+    #: Related-list entries per page (one per related record and relation), when
+    #: the request gives no pageLength. 25 is the MarkLogic backend's default.
+    related_page_length: int = Field(default=25, alias="QLMT_RELATED_PAGELENGTH")
     facet_delay: int = 0
     portal: str = ""
     use_stopwords: Bool = Field(default=True, alias="QLMT_USESTOPWORDS")
