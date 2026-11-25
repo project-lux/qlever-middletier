@@ -12,7 +12,9 @@ not in its full-width top 1000. Ranks 101-1000 are left alone: they are harmless
 Anchors are encoded query texts (``--fit-texts``) and record vectors (more-like-this), mixed in
 every batch - half each, or ``--record-share`` records - so neither kind is traded for the other.
 Training starts from query-aware PCA on the training queries (``qpcaN@1`` in graph_quantization.py,
-the best fixed projection measured), so any gain is the training's. The negatives are every
+the best fixed projection measured), so any gain is the training's; ``--epochs 0`` saves that starting map
+untrained (the best agent map on local LUX data, at 320 dimensions). Either file builds a graph with
+``lux_embed index --projection``. The negatives are every
 record outside the anchor's full-width top 1000, scored with the map as it is at that step (the
 whole store is projected each step anyway),
 and each positive is pushed above all of them: ``softplus(logsumexp(negatives) - positive)``,
