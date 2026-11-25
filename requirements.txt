@@ -8,12 +8,22 @@ hypercorn
 aiohttp
 async_lru
 uvloop
-dotenv
+# reads .env for pydantic_settings. Not "dotenv": that is a different, deprecated project
+python-dotenv
 httpx[http2]
 git+https://github.com/project-lux/luxql.git
 uvicorn
 lmdb
 pydantic_settings
+
+# Floors for dependencies (mostly indirect) with known vulnerabilities below them, from pip-audit.
+# Raise one when a new advisory names it; drop it once what pulls it in requires as much itself.
+h2>=4.4.1                  # PYSEC-2026-3628: duplicate Host headers (hypercorn's HTTP/2, httpx)
+hpack>=4.2.0               # PYSEC-2026-4053: unbounded integer decoding; any HTTP/2 client can burn CPU
+certifi>=2026.10.18        # PYSEC-2026-4320: trusted CAs with compromised keys (all outbound TLS)
+cryptography>=50.0.0       # PYSEC-2026-3552/3553/3554, GHSA-537c-gmf6-5ccf (google-auth, PyJWT)
+multidict>=6.9.1           # PYSEC-2026-4244: unbounded memory (aiohttp)
+pyasn1>=0.6.5              # PYSEC-2026-3455/3456/3457, CVE-2026-119194..119197 (google-auth)
 
 # Optional, one per AI query translation backend (QLMT_AI_TRANSLATE_BACKEND).
 # All three imports are guarded, so install only the one you use.

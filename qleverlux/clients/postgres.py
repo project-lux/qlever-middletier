@@ -25,6 +25,27 @@ class PostgresCache:
     def enabled(self) -> bool:
         return self.settings.use_pg_data_cache or self.settings.use_pg_hal_cache
 
+    def connect_args(self) -> dict:
+        """Keyword arguments for the connection, which psycopg quotes itself.
+
+        They were once pasted into a conninfo string, so a password with a
+        space or a quote in it failed, or added parameters of its own
+        (``x host=elsewhere``). And QLMT_PGSSLMODE, "require" by default, was
+        never passed at all: libpq's own default, "prefer", falls back to an
+        unencrypted connection, and can be made to by anyone on the path.
+        Over TCP (QLMT_PGHOST set) it is applied now; empty leaves libpq's
+        default. A Unix socket takes no SSL, so it is left out there.
+        """
+        settings = self.settings
+        args = {"user": settings.pguser, "dbname": settings.pgdb}
+        if settings.pghost:
+            args.update(host=settings.pghost, port=settings.pgport)
+            if settings.pgpass:
+                args["password"] = settings.pgpass
+            if settings.pgsslmode:
+                args["sslmode"] = settings.pgsslmode
+        return args
+
     async def connect(self):
         settings = self.settings
         print(
@@ -32,18 +53,7 @@ class PostgresCache:
             f"/{settings.pgdb}"
         )
         try:
-            if settings.pghost:
-                conninfo = (
-                    f"host={settings.pghost} port={settings.pgport} "
-                    f"user={settings.pguser} password={settings.pgpass} "
-                    f"dbname={settings.pgdb}"
-                )
-                self.conn = await AsyncConnection.connect(conninfo)
-            else:
-                self.conn = await AsyncConnection.connect(
-                    user=settings.pguser,
-                    dbname=settings.pgdb,
-                )
+            self.conn = await AsyncConnection.connect(**self.connect_args())
         except Exception as e:
             print(f"Error connecting to database: {e}")
 
