@@ -75,6 +75,31 @@ def test_a_query_asks_qlever_to_stop_when_the_client_stops_waiting(settings):
     assert open_requests == 0
 
 
+def test_results_are_asked_for_uncompressed(settings):
+    """httpx asks for gzip/deflate/br by default and QLever obliges: it compressed every result
+    and we decompressed it, on a local link, for results capped at ``send`` rows. The request
+    goes through a real httpx client here, so its default header is what is being overridden."""
+    import httpx
+
+    seen = []
+
+    def answer(request):
+        seen.append(request.headers)
+        return httpx.Response(200, json={"status": "OK", "res": [], "selected": []})
+
+    async def run():
+        qlever = QLeverClient(settings)
+        qlever.client = httpx.AsyncClient(transport=httpx.MockTransport(answer))
+        try:
+            return await qlever.query("SELECT ?uncompressed WHERE {}")
+        finally:
+            await qlever.client.aclose()
+
+    assert "error" not in asyncio.run(run())
+    assert seen[0]["accept-encoding"] == "identity"
+    assert seen[0]["accept"] == "application/qlever-results+json"
+
+
 def test_a_plain_text_refusal_from_qlever_reaches_the_log_and_the_count_recovers(settings, capsys):
     refusal = "User submitted timeout was higher than what is currently allowed by this instance (60s)."
 

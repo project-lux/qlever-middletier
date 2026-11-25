@@ -114,7 +114,12 @@ QLever stops when the client stops waiting instead of running on to its own `TIM
 above its `TIMEOUT` (60 s in `files/Qleverfile`) without the access token, so `QLMT_QLEVER_TIMEOUT` must not
 exceed it. Results come back in
 QLever's own `application/qlever-results+json` and are unwrapped by `process_qlever_results` into
-`{results, total, time, variables}` with `<uri>` brackets stripped and typed literals coerced.
+`{results, total, time, variables}` with `<uri>` brackets stripped and typed literals coerced. They are asked
+for uncompressed (`Accept-Encoding: identity`, `HEADERS`): both HTTP clients otherwise ask for gzip, and QLever
+compressed every result for us to decompress, on what is almost always a local link, for results capped at
+`send` rows. `files/qlever_serialization_eval.py` compares every serialization and encoding QLever offers on
+the middle tier's own queries. Connections are kept alive (httpx closes one idle for 5 s); `http2=True` has no
+effect, since QLever speaks HTTP/1.1.
 
 Services call `run_query(client, sparql)` from `errors.py`, which raises `QLeverError` on failure; one exception
 handler renders it, so handlers only deal with results that worked. A failure's detail (QLever's message, an

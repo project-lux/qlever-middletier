@@ -58,6 +58,12 @@ def process_qlever_results(ret):
     return results
 
 
+#: Sent with every query. ``identity`` because both clients otherwise ask for gzip, and QLever
+#: obliges: it compressed every result and we decompressed it, CPU on both sides to save bytes on
+#: what is almost always a local link, for results capped at ``send`` rows. Measured with
+#: files/qlever_serialization_eval.py.
+HEADERS = {"Accept": "application/qlever-results+json", "Accept-Encoding": "identity"}
+
 #: Returned instead of querying when too many requests are already in flight.
 SHED_RESPONSE = {
     "total": -1,
@@ -177,7 +183,7 @@ class QLeverClient:
             async with self.client.post(
                 self.endpoint,
                 data=self._form(q),
-                headers={"Accept": "application/qlever-results+json"},
+                headers=HEADERS,
             ) as response:
                 ret = await response.json()
         except Exception as e:
@@ -194,7 +200,7 @@ class QLeverClient:
             response = await self.client.post(
                 self.endpoint,
                 data=self._form(q),
-                headers={"Accept": "application/qlever-results+json"},
+                headers=HEADERS,
             )
             ret = response.json()
         except Exception as e:
