@@ -26,7 +26,7 @@ class FailingQLever:
     def __init__(self, status):
         self.status = status
 
-    async def query(self, sparql, sheddable=True):
+    async def query(self, sparql, sheddable=True, fmt=None):
         return {"results": [], "total": 0, "error": SECRET, "status": self.status}
 
 

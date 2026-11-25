@@ -38,9 +38,11 @@ class RankedQLever:
             uri = f"https://lux.collections.yale.edu/data/person/r{i:03d}"
             self.rows.append([uri, sum(c for c in counts if c)] + counts)
         self.queries = []
+        self.formats = []
 
-    async def query(self, sparql, sheddable=True):
+    async def query(self, sparql, sheddable=True, fmt=None):
         self.queries.append(sparql)
+        self.formats.append(fmt)
         limit = int(re.search(r"LIMIT (\d+)\s*$", sparql).group(1))
         rows = self.rows[:limit]
         return {"results": rows, "total": len(rows), "time": 1, "variables": self.columns}
@@ -151,6 +153,16 @@ def test_records_asked_for_cover_the_page_and_one_more_rounded_to_60(related, pa
     assert qlever.queries[-1].rstrip().endswith(f"LIMIT {limit}")
     assert "V_LIMIT" not in qlever.queries[-1]
     assert f"<{TARGET}>" in qlever.queries[-1]
+
+
+def test_related_lists_are_asked_for_as_tsv(related):
+    """On a QLever cache miss the related-list queries cost 17-65 ms as TSV and 360-900 ms as JSON,
+    with the same rows; they hold only IRIs and counts, so TSV loses nothing."""
+    from qleverlux.clients.qlever import TSV
+
+    service, qlever = related
+    fetch(service)
+    assert qlever.formats == [TSV]
 
 
 @pytest.fixture(scope="module")

@@ -21,6 +21,7 @@ import urllib.parse
 
 from fastapi.responses import JSONResponse
 
+from qleverlux.clients.qlever import TSV
 from qleverlux.errors import BadQuery, run_query
 from qleverlux.presentation import envelopes
 from qleverlux.sparql import iri
@@ -74,7 +75,10 @@ class RelatedListService:
             )
         spq = spq.replace("V_TARGET_URI", target).replace("V_LIMIT", str(records))
 
-        res = await run_query(self.qlever, spq)
+        # TSV: on a QLever cache miss these queries cost 17-65 ms as TSV and 360-900 ms as JSON,
+        # with the same rows. They return only IRIs and counts, so TSV's one loss (a tab inside a
+        # literal) cannot arise, and they need neither the total nor `send` (they carry V_LIMIT).
+        res = await run_query(self.qlever, spq, fmt=TSV)
 
         # Every entry up to one past this page, in rank order; the page is
         # sliced out of them afterwards.

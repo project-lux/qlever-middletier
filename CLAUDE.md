@@ -112,14 +112,31 @@ shared call once every caller has gone) raises `CancelledError`, which `except E
 left the count one higher until everything was shed. Each query carries `timeout=<QLMT_QLEVER_TIMEOUT>s`, so
 QLever stops when the client stops waiting instead of running on to its own `TIMEOUT`; QLever refuses a timeout
 above its `TIMEOUT` (60 s in `files/Qleverfile`) without the access token, so `QLMT_QLEVER_TIMEOUT` must not
-exceed it. Results come back in
-QLever's own `application/qlever-results+json` and are unwrapped by `process_qlever_results` into
-`{results, total, time, variables}` with `<uri>` brackets stripped and typed literals coerced. They are asked
-for uncompressed (`Accept-Encoding: identity`, `HEADERS`): both HTTP clients otherwise ask for gzip, and QLever
-compressed every result for us to decompress, on what is almost always a local link, for results capped at
-`send` rows. `files/qlever_serialization_eval.py` compares every serialization and encoding QLever offers on
-the middle tier's own queries. Connections are kept alive (httpx closes one idle for 5 s); `http2=True` has no
-effect, since QLever speaks HTTP/1.1.
+exceed it. Results are
+unwrapped into `{results, total, time, variables}` with IRIs bare and int/decimal literals as numbers, from one of
+two formats, `query(..., fmt=)` (also `run_query`; part of the cache key):
+
+- `JSON` (default) asks for `application/sparql-results+json`; `total` and `time` come from QLever's `meta`
+  (`result-size-total`, `query-time-ms`, needing its runtime setting `sparql-results-json-with-time`, on by
+  default), and `send` is honoured. Facets and HAL counts read the total. It replaced QLever's own
+  `application/qlever-results+json`, whose query-plan tree made related-list and HAL responses 24-30 times
+  the size for the same rows; `process_qlever_results` is kept as the reference the evaluation checks against.
+- `TSV` is for related lists only. On a QLever cache miss their queries (dozens of OPTIONAL count sub-selects)
+  cost 360-900 ms as either JSON format and 17-65 ms as TSV, CSV or XML, with identical rows - the two JSON
+  formats are the ones that report the total. TSV has no total and ignores `send`, which related lists (own
+  LIMIT) do not need, and writes a tab inside a literal as a space, which their IRIs and counts cannot have.
+
+Both are asked for uncompressed (`Accept-Encoding: identity`): both HTTP clients otherwise ask for gzip, and
+QLever compressed every result for us to decompress, on what is almost always a local link. QLever answers an
+error as JSON with an `exception` and a 400 in either format. `files/qlever_serialization_eval.py` compares
+every serialization and encoding QLever offers on the middle tier's own queries, warm, on a cache miss
+(`--cold`) and under concurrency. Connections are kept alive (httpx closes one idle for 5 s); `http2=True`
+has no effect, since QLever speaks HTTP/1.1.
+
+QLever's result cache is limited by entry count as well as size, and the count is what fills: at qlever's
+default of 200 it was full holding 29 MB, while one search plus one uncached record's HAL links is over 400
+distinct queries. `files/Qleverfile` sets `CACHE_MAX_NUM_ENTRIES = 10000`; on the same workload throughput
+went from 42 to 750 queries a second on one client, 313 to 2,000 on eight.
 
 Services call `run_query(client, sparql)` from `errors.py`, which raises `QLeverError` on failure; one exception
 handler renders it, so handlers only deal with results that worked. A failure's detail (QLever's message, an

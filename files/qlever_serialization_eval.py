@@ -265,11 +265,12 @@ async def capture_workload(records: dict[str, str], send: int) -> list[dict]:
     captured: list[dict] = []
     current = {"kind": "", "label": ""}
 
-    async def record(query, sheddable=True):
+    async def record(query, sheddable=True, fmt=None):
         kind = current["kind"]
         if kind == "search" and "COUNT(*)" in query:
             kind = "search-total"
-        captured.append({"kind": kind, "label": current["label"], "query": query, "send": send})
+        captured.append({"kind": kind, "label": current["label"], "query": query, "send": send,
+                         "client_format": fmt or "json"})  # what the middle tier itself asks for
         return {"results": [], "total": 0, "time": "0ms", "variables": []}
 
     mt.qlever.query = record
@@ -297,11 +298,11 @@ async def capture_workload(records: dict[str, str], send: int) -> list[dict]:
             if not isinstance(query, str):  # a related list: answered by the probes below
                 continue
             captured.append({"kind": "hal-count", "label": f"{scope} {hal}", "query": query.replace("URI-HERE", uri),
-                             "send": send})
+                             "send": send, "client_format": "json"})
         for name, probes in catalogue.hal_related_list_tests.get(scope, {}).items():
             for i, query in enumerate(probes):
                 captured.append({"kind": "hal-probe", "label": f"{scope} {name} #{i}",
-                                 "query": query.replace("V_TARGET_URI", uri), "send": send})
+                                 "query": query.replace("V_TARGET_URI", uri), "send": send, "client_format": "json"})
     seen, unique = set(), []
     for item in captured:
         if item["query"] not in seen:
