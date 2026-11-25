@@ -100,7 +100,10 @@ QLever's own `application/qlever-results+json` and are unwrapped by `process_qle
 `{results, total, time, variables}` with `<uri>` brackets stripped and typed literals coerced.
 
 Services call `run_query(client, sparql)` from `errors.py`, which raises `QLeverError` on failure; one exception
-handler renders it, so handlers only deal with results that worked.
+handler renders it, so handlers only deal with results that worked. A failure's detail (QLever's message, an
+exception's text) goes to the log, and the client gets a plain message with the same status: QLever's message
+can quote the query and internal addresses. `QLMT_DEBUG_ERRORS=true` adds the detail to the response as
+`detail`, for development. Validation errors (`BadQuery`, 400) are the caller's own and are shown as they are.
 
 ### Query translation
 

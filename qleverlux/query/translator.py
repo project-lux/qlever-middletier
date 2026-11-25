@@ -854,10 +854,10 @@ class SparqlTranslator:
                     raise ValueError(f"Not a record type: {query.value!r}")
                 parent.add_triples([Triple(query.var, "a", f"la:{query.value}")])
             elif query.field == self.name_field and query.complete:
+                # an exact match on the whole name: escaped like any literal. Stripping quotes alone
+                # left a trailing backslash or a newline to break the query.
                 pred = f"lux:{scope}Name"
-                val = query.value.lower()
-                val = val.replace('"', "")
-                parent.add_triples([Triple(query.var, pred, f'"{val}"')])
+                parent.add_triples([Triple(query.var, pred, string_literal(query.value.lower()))])
             else:
                 self.text.build(query, parent, scope, self.counter)
                 # this clause emitted ?score_<counter>; record it so the

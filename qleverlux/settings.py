@@ -118,6 +118,10 @@ class Settings(BaseSettings):
     mtpath: str = ""
     cert_name: str = Field(default="qleverlux", alias="QLMT_CERTNAME")
     log_level: str = Field(default="info", alias="QLMT_LOGLEVEL")
+    #: Add the full error (QLever's message, an exception) to error responses as "detail". Off,
+    #: a client gets a plain message and the detail goes to the log: QLever's message can quote
+    #: the whole query and internal addresses (the vector sidecar's, a SERVICE's).
+    debug_errors: Bool = False
 
     # -- URI rewriting: data URIs in, this deployment's URIs out
     data_uri: str = Field(

@@ -24,6 +24,7 @@ import ujson as json
 from fastapi.responses import JSONResponse
 
 from qleverlux.enums import scopeEnum
+from qleverlux.errors import error_content
 
 #: Fields whose values must be coerced out of whatever the model produced.
 _FLOAT_FIELDS = ("height", "width", "depth", "dimension")
@@ -167,12 +168,14 @@ class AiTranslateService:
             if options is None:
                 print(f"AI translate: {error}; retrying once")
                 options, error = self._attempt(prompt, which)
-        except Exception as e:
-            print(f"AI translate failed: {e}")
-            return JSONResponse(
-                content={"error": f"AI backend failed: {e}"}, status_code=502
-            )
+        except Exception as e:  # its text can name the backend's endpoint or the provider's error
+            print(f"AI translate failed: {e!r}")
+            return JSONResponse(content=error_content(
+                self.settings, "The AI translation service is unavailable.", repr(e)), status_code=502)
 
         if options is None:
-            return JSONResponse(content={"error": error}, status_code=502)
+            print(f"AI translate gave up: {error}")
+            return JSONResponse(content=error_content(
+                self.settings, "The AI translation service did not return a usable answer.", error),
+                status_code=502)
         return JSONResponse(content=options)

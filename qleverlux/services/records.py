@@ -11,6 +11,7 @@ from __future__ import annotations
 from fastapi.responses import JSONResponse
 
 from qleverlux.clients.lmdb_store import normalise_identifier
+from qleverlux.errors import error_content
 
 #: AAT terms used to pick a record's primary name.
 AAT_ENGLISH = "http://vocab.getty.edu/aat/300388277"
@@ -112,8 +113,10 @@ class RecordService:
 
         try:
             res = await self.cache.fetch(identifier, scope)
-        except Exception as e:
-            return JSONResponse(content={"error": str(e)}, status_code=500)
+        except Exception as e:  # a cache failure: its text can name paths and hosts
+            print(f"Record cache failed for {scope}/{identifier}: {e!r}")
+            return JSONResponse(content=error_content(self.settings, "The record could not be read.", repr(e)),
+                                status_code=500)
 
         cache_links = {}
         js = None
