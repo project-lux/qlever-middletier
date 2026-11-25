@@ -203,7 +203,7 @@ class BlockingBackend:
         self.started = threading.Event()
         self.calls = 0
 
-    def generate(self, prompt, which):
+    def generate(self, prompt, which, deadline=None):
         self.calls += 1
         self.started.set()
         assert self.release.wait(5), "never released"

@@ -21,6 +21,7 @@ alternatives the model was asked to produce and label them.
 from __future__ import annotations
 
 import asyncio
+import time
 
 import ujson as json
 from fastapi.responses import JSONResponse
@@ -122,14 +123,14 @@ class AiTranslateService:
             print(json.dumps(js, indent=2))
             raise
 
-    def _attempt(self, prompt, which):
+    def _attempt(self, prompt, which, deadline=None):
         """One round trip. Returns (options, error); options is None if unusable.
 
         A backend exception is re-raised: a connection refused or a timeout will
         not come good on a second try, and retrying a timeout just doubles how
         long the caller waits.
         """
-        qjs = self.backend.generate(prompt, which)
+        qjs = self.backend.generate(prompt, which, deadline=deadline)
         if qjs is None:
             return None, "no usable response from the AI backend"
         print(qjs)
@@ -141,29 +142,44 @@ class AiTranslateService:
             return None, "the AI backend returned no options"
         return options, None
 
-    def _translate_blocking(self, prompt, which):
-        """Both attempts, in the calling thread: every backend's SDK call blocks."""
-        options, error = self._attempt(prompt, which)
+    def _translate_blocking(self, prompt, which, deadline=None):
+        """Both attempts, in the calling thread: every backend's SDK call blocks.
+
+        Both share one ``deadline``: the retry gets only the time the first attempt left.
+        """
+        options, error = self._attempt(prompt, which, deadline)
         if options is None:
+            if deadline is not None and time.monotonic() >= deadline:
+                return None, f"{error}; no time left to retry"
             print(f"AI translate: {error}; retrying once")
-            options, error = self._attempt(prompt, which)
+            options, error = self._attempt(prompt, which, deadline)
         return options, error
 
-    async def _run_off_loop(self, prompt, which):
+    def deadline(self):
+        """When a translation starting now must be finished by, as ``time.monotonic()``.
+
+        QLMT_AI_TRANSLATE_TIMEOUT is the whole translation, retry included; 0 is none.
+        """
+        timeout = self.settings.ai_translate_timeout
+        return time.monotonic() + timeout if timeout > 0 else None
+
+    async def _run_off_loop(self, prompt, which, deadline=None):
         """Run the blocking translation on a worker thread, or None if every slot is taken.
 
         It used to run on the event loop, so one request for a model that takes a minute stopped
         the process serving anything else for that minute. The slot is held until the thread
         finishes, not until the caller stops waiting: a thread cannot be cancelled, so releasing
         it when a client disconnected would let abandoned translations pile up past the limit.
+        That is safe only because each backend stops itself at ``deadline``: a slot cannot be held
+        past it for longer than one SDK wait.
         """
         loop = asyncio.get_running_loop()
         if self._slots is None:
-            return await loop.run_in_executor(None, self._translate_blocking, prompt, which)
+            return await loop.run_in_executor(None, self._translate_blocking, prompt, which, deadline)
         if self._slots.locked():
             return None
         await self._slots.acquire()
-        future = loop.run_in_executor(None, self._translate_blocking, prompt, which)
+        future = loop.run_in_executor(None, self._translate_blocking, prompt, which, deadline)
 
         def finished(f):
             self._slots.release()
@@ -207,10 +223,16 @@ class AiTranslateService:
             which = "improve"
             prompt = build_improve_prompt(previous, q)
 
+        deadline = self.deadline()
         try:
-            outcome = await self._run_off_loop(prompt, which)
+            outcome = await self._run_off_loop(prompt, which, deadline)
         except Exception as e:  # its text can name the backend's endpoint or the provider's error
             print(f"AI translate failed: {e!r}")
+            # each SDK names its own timeout; whichever it was, the deadline is what stopped it
+            if isinstance(e, TimeoutError) or (deadline is not None and time.monotonic() >= deadline):
+                return JSONResponse(content=error_content(
+                    self.settings, "The AI translation service took too long to answer.", repr(e)),
+                    status_code=504)
             return JSONResponse(content=error_content(
                 self.settings, "The AI translation service is unavailable.", repr(e)), status_code=502)
         if outcome is None:

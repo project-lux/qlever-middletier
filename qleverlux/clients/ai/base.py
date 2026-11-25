@@ -9,11 +9,18 @@ requested - stays behind ``generate()``.
 Two system prompts are in play and every backend has to honour both: "build"
 turns a natural-language question into candidate queries, "improve" takes an
 existing query plus a requested change and returns revised candidates.
+
+Every backend also has to honour a ``deadline`` (a ``time.monotonic()`` value):
+one per translation, covering the service's retry as well as each SDK call.
+The calls block a worker thread, which cannot be cancelled from outside, so
+the only way to bound a translation is for the backend itself to stop - by
+giving the SDK the time that is left, and checking between streamed chunks.
 """
 
 from __future__ import annotations
 
 import sys
+import time
 from abc import ABC, abstractmethod
 
 import ujson as json
@@ -61,6 +68,16 @@ def parse_model_json(text, source="model"):
     return None
 
 
+def time_left(deadline):
+    """Seconds until ``deadline``, or None for no deadline. TimeoutError once it has passed."""
+    if deadline is None:
+        return None
+    left = deadline - time.monotonic()
+    if left <= 0:
+        raise TimeoutError("the AI translation deadline passed")
+    return left
+
+
 class AiBackend(ABC):
     """One model backend. Construct through ``clients.ai.build_ai_backend``."""
 
@@ -85,8 +102,12 @@ class AiBackend(ABC):
         return self.settings.ai_translate_enabled and self.client is not None
 
     @abstractmethod
-    def generate(self, prompt, which="build"):
-        """Run one prompt. Returns parsed JSON, or None if it was unusable."""
+    def generate(self, prompt, which="build", deadline=None):
+        """Run one prompt. Returns parsed JSON, or None if it was unusable.
+
+        Raises TimeoutError, or the SDK's own timeout error, once ``deadline``
+        has passed.
+        """
 
     def close(self):
         """Release anything the backend holds open."""
@@ -105,5 +126,5 @@ class NullBackend(AiBackend):
     def enabled(self) -> bool:
         return False
 
-    def generate(self, prompt, which="build"):
+    def generate(self, prompt, which="build", deadline=None):
         return None
