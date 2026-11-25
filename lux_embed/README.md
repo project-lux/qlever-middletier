@@ -39,7 +39,7 @@ $PY -m lux_embed query --store $DATA/vectors.lmdb --labels $DATA/labels.lmdb --s
   - Every class in a store must use the same model, because cross-class queries reuse one query vector.
   - The `sparql_service` sidecar encodes text queries with the model the store records.
 - **Trial runs:** `--limit N` marks the class as a trial. Use `--restart` for the full build.
-- **Name-only records:** `--skip-name-only` (`cards` and `embed`) gives no card, so no vector, to a record whose card would hold only its name and other names. On full LUX that is half of all agents.
+- **Name-only records:** `--skip-name-only` (`cards` and `embed`) gives no card, so no vector, to a record whose card would hold only its names, or names and dates ("Works published: 1986", a birth year with no place). On the 44M-record LUX subset that leaves 5.16M of 6.39M agents.
 - **Vector storage:** `--vector-dtype float16` halves the space taken by the exact vectors (about 30 GB → 15 GB for MDS). That's safe for unit vectors; only inference must avoid f16.
 
 ## Throughput (M4 Max GPU (MPS), bf16, MDS data)

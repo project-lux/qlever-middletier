@@ -118,7 +118,7 @@ def _export_cards(args):
     writer.finish(limit=args.limit)
     read = next(seen)
     reasons = "no name, a holding with nothing of its own" + (
-        ", or nothing but names (--skip-name-only)" if args.skip_name_only else "")
+        ", or nothing but names and dates (--skip-name-only)" if args.skip_name_only else "")
     print(f"{args.scope}: {read:,} records read this run, {done:,} cards ({read - done:,} without one: "
           f"{reasons})", flush=True)
     print(f"{args.scope}: complete, {writer.meta['count']:,} cards in {time.time() - started:,.0f}s -> {args.out}"
@@ -280,7 +280,7 @@ def main(argv=None):
             p.add_argument("--facets", default=None, help="Stage 1 facets extracted by `facets`, instead of --qlever")
             p.add_argument("--note-words", type=int, default=300)
             p.add_argument("--skip-name-only", action="store_true",
-                           help="no card (so no vector) for a record with nothing but its name and other names")
+                           help="no card (so no vector) for a record with nothing but its names, or names and dates")
         if "device" in needs:
             p.add_argument("--device", default="auto", help="auto | cuda | mps | cpu")
         return p
