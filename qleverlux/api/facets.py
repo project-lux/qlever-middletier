@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from qleverlux.api.deps import get_middletier
 from qleverlux.enums import scopeEnum
@@ -15,7 +15,7 @@ async def get_facet(
     scope: scopeEnum,
     q: str,
     name: str,
-    page: int = 1,
+    page: int = Query(1, ge=1),
     sort: str = "",
     mt=Depends(get_middletier),
 ):
@@ -25,7 +25,7 @@ async def get_facet(
         scope (scopeEnum): The scope of the search
         q (url encoded dict): The query
         name (str): The name of the facet
-        page (int): The page number, defaults to 1
+        page (int): The page number, from 1 (the default)
         sort (str): "asc" or "desc"
 
     Returns:

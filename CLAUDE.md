@@ -52,7 +52,9 @@ process; use `.env`. `parse_known_args` is used, so unknown flags (e.g. uvicorn'
 `settings.remaining_args`.
 
 QLever setup (indexing, materialized views, the UI) is described in `README.md` and `installing_qlever.md`; the
-canonical index/server settings live in `files/Qleverfile`.
+canonical index/server settings live in `files/Qleverfile`. Its `ACCESS_TOKEN` is read from `QLEVER_ACCESS_TOKEN`
+in the environment (`$$(printenv ...)`), so every `qlever` command needs that set: the repository is public and
+the token authorises SPARQL UPDATE. Never write one into the file.
 
 ## Architecture
 
@@ -95,7 +97,13 @@ which caches successes only: a failure (timeout, QLever error, failed SERVICE) i
 and turned back into an error dict outside it. Caching failures once made a single slow first attempt fail
 that query instantly until evicted. Requests are shed with a 504-ish stub when
 `open_requests > max_qlever_requests`, decided per call and outside the cache, unless called with
-`sheddable=False` (HAL generation does, so it can't be shed halfway through a links block). Results come back in
+`sheddable=False`, which nothing uses now: HAL generation once did, so every uncached record pushed 6-25 queries
+past the limit. `open_requests` is decremented in `finally`, because a cancelled request (async-lru cancels a
+shared call once every caller has gone) raises `CancelledError`, which `except Exception` misses, and each miss
+left the count one higher until everything was shed. Each query carries `timeout=<QLMT_QLEVER_TIMEOUT>s`, so
+QLever stops when the client stops waiting instead of running on to its own `TIMEOUT`; QLever refuses a timeout
+above its `TIMEOUT` (60 s in `files/Qleverfile`) without the access token, so `QLMT_QLEVER_TIMEOUT` must not
+exceed it. Results come back in
 QLever's own `application/qlever-results+json` and are unwrapped by `process_qlever_results` into
 `{results, total, time, variables}` with `<uri>` brackets stripped and typed literals coerced.
 
@@ -384,6 +392,14 @@ or a timeout will not come good on a second try and retrying a timeout just doub
 
 A local 27B model takes about a minute per query, so `QLMT_AI_TRANSLATE_TIMEOUT` is generous by default.
 
+Every backend's SDK call blocks, so `translate()` runs it (both attempts) on a worker thread; on the event loop
+one request stopped the process serving anything else for that minute. At most
+`QLMT_AI_TRANSLATE_MAX_CONCURRENT` (2) run at once per process and a request beyond that is a 503, not a queue.
+The slot is held until the thread finishes rather than until the caller leaves, since a thread cannot be
+cancelled. `q` and `prevQuery` longer than `QLMT_AI_TRANSLATE_MAX_QUERY_LENGTH` (1000) /
+`QLMT_AI_TRANSLATE_MAX_PREV_QUERY_LENGTH` (20000) characters are a 400: the endpoint is public and a hosted
+model bills by the token.
+
 ### CMS stub (`/jsonapi`)
 
 The front end takes its editorial content (landing page, hero images, featured collections, FAQs, content pages,
@@ -440,7 +456,10 @@ Placeholders used across the templates: `URI-HERE`, `V_TARGET_URI`, `V_FROM_URI`
   what the record route accepts as an identifier (`normalise_identifier`): a non-UUID on a `uuid` instance is
   a 422.
 - HAL links: disk (`hal_cache/*.json`, default) or PostgreSQL `hal_data_cache`, behind `HalCache`. Computing
-  them is expensive — one query per candidate relation — so a cache miss is a slow request.
+  them is expensive — one query per candidate relation — so a cache miss is a slow request. A block is cached
+  only if every query it needed answered: a probe that timed out or was shed says nothing about the link, so
+  that block is served but not kept, and the next request tries again. Caching it once made a moment of
+  overload permanent for those records.
 - SPARQL responses: in-process `alru_cache` on `QLeverClient`.
 
 ### URI rewriting

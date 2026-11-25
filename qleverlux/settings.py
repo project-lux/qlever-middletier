@@ -211,6 +211,14 @@ class Settings(BaseSettings):
     #: server supports it, so the backend retries without it if it is rejected.
     ai_translate_json_mode: Bool = True
     ai_translate_timeout: int = 120
+    #: Translations running at once, per process; a request beyond that is a 503 rather than a
+    #: wait. Every backend's SDK blocks, so each one holds a thread for up to the timeout (twice,
+    #: with the retry). 0 is no limit.
+    ai_translate_max_concurrent: int = 2
+    #: Longest ``q`` and ``prevQuery`` accepted, in characters: past these a request is a 400
+    #: rather than a prompt someone pays for by the token.
+    ai_translate_max_query_length: int = 1000
+    ai_translate_max_prev_query_length: int = 20000
 
     # -- server tuning
     backlog: int = 512
