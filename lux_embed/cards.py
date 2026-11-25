@@ -263,10 +263,15 @@ class CardBuilder:
         self._span(parts, facets, "published", "Works published")
 
     def _card_place(self, r, parts, facets):
+        own = len(parts)
         self._field(parts, "Type", self._types(r.get("classified_as")))
         self._field(parts, "Part of", " > ".join(self._chain(r["id"], "part_of")))
-        # Incoming: what the works about this place are about, and what kind of works they are.
-        self._facets(parts, facets, [("work subject", "Works about it cover"), ("work type", "Works about it")])
+        # Incoming: what the works about this place are about, and what kind of works they are - only
+        # for a place with a type or a part-of chain of its own. On a bare name ("Veitnam", a stub) the
+        # facets were the whole card, so the place became its one work's subject (Buddhism); with
+        # something of its own they add to the place instead of replacing it.
+        if len(parts) > own:
+            self._facets(parts, facets, [("work subject", "Works about it cover"), ("work type", "Works about it")])
 
     def _card_concept(self, r, parts, facets):
         kind = {"Material": "material", "Language": "language", "Currency": "currency",
