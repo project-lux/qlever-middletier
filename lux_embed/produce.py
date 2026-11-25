@@ -79,7 +79,9 @@ def open_inputs(args, need_facets: bool):
         if not facets.enabled:
             print(f"facets: the endpoint has none of the {args.scope} facet predicates; cards go without", flush=True)
             facets = None
-    return records, labels, CardBuilder(records, labels, max_note_words=args.note_words), facets
+    builder = CardBuilder(records, labels, max_note_words=args.note_words,
+                          skip_name_only=bool(getattr(args, "skip_name_only", False)))
+    return records, labels, builder, facets
 
 
 # -- the worker pool -------------------------------------------------------------------------------
@@ -119,7 +121,8 @@ def card_batches(args, inputs, members: Iterator[str], workers: int, packed: boo
         yield from prefetch(_build(inputs, uuids, packed)
                             for uuids in iter(lambda: list(itertools.islice(members, args.batch)), []))
         return
-    settings = {key: getattr(args, key, None) for key in ("records", "labels", "facets", "qlever", "scope", "note_words")}
+    settings = {key: getattr(args, key, None)
+                for key in ("records", "labels", "facets", "qlever", "scope", "note_words", "skip_name_only")}
     pieces = iter(lambda: list(itertools.islice(members, PIECE)), [])
     pool = ProcessPoolExecutor(workers, mp_context=mp.get_context("spawn"), initializer=_init_worker,
                                initargs=(settings,))

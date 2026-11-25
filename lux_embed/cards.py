@@ -14,7 +14,9 @@ work       type, creator/place/date, subjects, language,        creators, materi
            description                                           places and dates of carrying objects
 set        type, creator, curator, parent set, scope note       top member creators, types, subjects
 agent      kind, nationality, occupation, gender, birth/death   active places, object types, mediums,
-           or formation/dissolution, residence, groups, bio      subjects (tf-idf), active span
+           or formation/dissolution, residence, groups, bio      what their works are about and what their
+                                                                 objects depict (tf-idf), active span,
+                                                                 when their works were published
 place      type, part-of chain, notes                           - (never incoming objects)
 concept    type, broader chain, scope note                      - (never incoming objects)
 event      type, date, place, participants, part of, notes      -
@@ -54,8 +56,12 @@ def _join(values) -> str:
 
 
 class CardBuilder:
-    def __init__(self, records: RecordStore, labels: LabelStore, max_note_words: int = 300):
+    def __init__(self, records: RecordStore, labels: LabelStore, max_note_words: int = 300,
+                 skip_name_only: bool = False):
         self.records, self.labels, self.max_note_words = records, labels, max_note_words
+        # No card for a record whose card would hold only its name and other names: on full LUX
+        # that is half of all agents, whose vectors could only match on how a name looks.
+        self.skip_name_only = skip_name_only
         self._parents: dict[str, list[str]] = {}
         self._generics: dict[str, bool] = {}
 
@@ -128,6 +134,12 @@ class CardBuilder:
                 values = [v for v in values if not self._generic(v)]
             self._field(parts, name, self.labels.labels(values, LIST))
 
+    def _span(self, parts: list[str], facets: dict, span: str, name: str) -> None:
+        """A (start year, end year) facet as "1650" or "1650–1702"."""
+        if span in facets:
+            start, end = facets[span]
+            self._field(parts, name, start if start == end else f"{start}–{end}")
+
     def _generic(self, concept: str) -> bool:
         """Whether a facet value is one of the blanket GENERIC_TYPES, by the AAT its record names."""
         key = concept.rsplit("/", 1)[-1]
@@ -160,10 +172,13 @@ class CardBuilder:
             return None
         parts: list[str] = []
         self._field(parts, "Also known as", alternate_names(record, title, 3))
+        names_only = len(parts)
         getattr(self, f"_card_{scope}")(record, parts, facets or {})
         notes = statements(record, self.max_note_words)
         if notes:
             parts.append(" ".join(notes))
+        if self.skip_name_only and len(parts) == names_only:
+            return None
         return title, " ".join(parts) or title
 
     def _card_item(self, r, parts, facets):
@@ -222,11 +237,14 @@ class CardBuilder:
         self._field(parts, ended, _join(x for x in (e["date"], _join(e["places"])) if x))
         self._field(parts, "Residence", self._labels(r.get("residence"), 3))
         self._field(parts, "Member of", self._labels(r.get("member_of"), 3))
+        # The two kinds of subject are named for the relation, so an author on Edo prints does not read
+        # like an Edo print designer; "subject" is the single kind of facets extracted before the split.
         self._facets(parts, facets, [("place", "Active in"), ("object type", "Associated with"),
-                                     ("material", "Mediums"), ("subject", "Subjects"), ("work type", "Works")])
-        if "dates" in facets:
-            start, end = facets["dates"]
-            self._field(parts, "Active", start if start == end else f"{start}–{end}")
+                                     ("material", "Mediums"), ("work subject", "Works about"),
+                                     ("depicted subject", "Depicted"), ("subject", "Subjects"),
+                                     ("work type", "Works")])
+        self._span(parts, facets, "dates", "Active")
+        self._span(parts, facets, "published", "Works published")
 
     def _card_place(self, r, parts, facets):
         self._field(parts, "Type", self._types(r.get("classified_as")))

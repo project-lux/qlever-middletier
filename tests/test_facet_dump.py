@@ -25,6 +25,7 @@ PREDICATES = ["agentOfItemBeginning", "placeOfItemBeginning", "itemClassificatio
 # (target, kind, value, count) - A3 has no incoming objects at all
 GROUPED = [(A1, "place", PARIS, 3), (A1, "place", ROME, 1), (A1, "object type", PRINT, 4), (A2, "place", ROME, 2)]
 DATES = [(A1, "1650-01-01T00:00:00", "1702-12-31T23:59:59"), (A2, "0950-01-01T00:00:00", "0960-01-01T00:00:00")]
+PUBLISHED = [(A1, "2022-01-01T00:00:00", "2023-12-31T23:59:59")]
 
 
 def tsv(header, rows):
@@ -47,11 +48,14 @@ class FakeQLever(BaseHTTPRequestHandler):
         elif "COUNT(?x)" in query:
             body = tsv(["?n"], [[100]])
         elif "VALUES ?target" in query and "?k" in query:
+            # as QLever would: only the kinds this query binds (each plan asks for its own)
             wanted = {t for t in (A1, A2, A3) if f"<{t}>" in query}
-            body = tsv(["?target", "?k", "?v", "?n"], [r for r in GROUPED if r[0] in wanted])
+            body = tsv(["?target", "?k", "?v", "?n"],
+                       [r for r in GROUPED if r[0] in wanted and f'"{r[1]}"' in query])
         elif "VALUES ?target" in query:
             wanted = {t for t in (A1, A2, A3) if f"<{t}>" in query}
-            body = tsv(["?target", "?start", "?end"], [r for r in DATES if r[0] in wanted])
+            rows = PUBLISHED if "startOfWorkPublication" in query else DATES
+            body = tsv(["?target", "?start", "?end"], [r for r in rows if r[0] in wanted])
         else:  # document frequencies, one GROUP BY per kind
             body = tsv(["?v", "?n"], [[PARIS, 10], [ROME, 40], [PRINT, 5]])
         data = body.encode()
@@ -129,3 +133,35 @@ def test_works_keep_their_carrier_type_however_common():
     assert facets._rank("object type", {"books": 1, "maps": 1}) == ["books", "maps"]  # Books is on 77%
     facets.scope = "set"
     assert facets._rank("object type", {"books": 3, "maps": 1}) == ["maps"]  # elsewhere it says nothing
+
+
+def test_agent_subjects_are_split_by_relation_and_publication_is_its_own_span(endpoint, tmp_path, monkeypatch):
+    """What an agent's works are about and what their objects depict are different kinds, so a card
+    can tell an author on a subject from a maker of it; when their works came out is its own span."""
+    import tests.test_facet_dump as here
+
+    hadith, landscape = (f"{D}concept/3000000{i}-0000-0000-0000-000000000000" for i in (1, 2))
+    monkeypatch.setattr(here, "PREDICATES", PREDICATES + [
+        "agentOfWorkBeginning", "workAboutConcept", "workClassification", "carries",
+        "startOfWorkBeginning", "endOfWorkBeginning", "startOfWorkPublication", "endOfWorkPublication"])
+    monkeypatch.setattr(here, "GROUPED", GROUPED + [(A1, "work subject", hadith, 2),
+                                                    (A1, "depicted subject", landscape, 1)])
+    facets = Facets(QLever(endpoint), "agent", cache_dir=str(tmp_path / "live"))
+    # (no material: the fake endpoint has no lux:material)
+    assert {kind for _, usable in facets.plans for kind in usable} == {
+        "place", "object type", "depicted subject", "work subject", "work type"}
+    assert set(facets.date_spans) == {"dates", "published"}
+    assert len(facets.date_spans["dates"]) == 2  # objects made and works created, UNIONed
+
+    live = facets.fetch([A1, A2])
+    assert live[A1]["work subject"] == [hadith] and live[A1]["depicted subject"] == [landscape]
+    assert "subject" not in live[A1]
+    assert live[A1]["published"] == ("2022", "2023") and "published" not in live[A2]
+
+    out = str(tmp_path / "facets.lmdb")
+    dump_scope(QLever(endpoint), "agent", out, batch=2, workers=1)
+    dumped = FacetDump(out, "agent")
+    assert dumped.meta["dates"] == ["dates", "published"]
+    a1 = dumped.fetch([A1])[A1]
+    assert a1["published"] == ["2022", "2023"]  # a span is stored as years, not looked up as a record
+    assert a1["work subject"] == [hadith.rsplit("/", 1)[-1]]
