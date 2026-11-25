@@ -20,6 +20,8 @@ alternatives the model was asked to produce and label them.
 
 from __future__ import annotations
 
+import asyncio
+
 import ujson as json
 from fastapi.responses import JSONResponse
 
@@ -45,6 +47,8 @@ class AiTranslateService:
         self.settings = settings
         self.catalogue = catalogue
         self.backend = backend
+        limit = settings.ai_translate_max_concurrent
+        self._slots = asyncio.Semaphore(limit) if limit > 0 else None
 
     def relation_scope(self, field, scope):
         """The scope a relationship leads into, or ``scope`` if it leads nowhere.
@@ -137,6 +141,38 @@ class AiTranslateService:
             return None, "the AI backend returned no options"
         return options, None
 
+    def _translate_blocking(self, prompt, which):
+        """Both attempts, in the calling thread: every backend's SDK call blocks."""
+        options, error = self._attempt(prompt, which)
+        if options is None:
+            print(f"AI translate: {error}; retrying once")
+            options, error = self._attempt(prompt, which)
+        return options, error
+
+    async def _run_off_loop(self, prompt, which):
+        """Run the blocking translation on a worker thread, or None if every slot is taken.
+
+        It used to run on the event loop, so one request for a model that takes a minute stopped
+        the process serving anything else for that minute. The slot is held until the thread
+        finishes, not until the caller stops waiting: a thread cannot be cancelled, so releasing
+        it when a client disconnected would let abandoned translations pile up past the limit.
+        """
+        loop = asyncio.get_running_loop()
+        if self._slots is None:
+            return await loop.run_in_executor(None, self._translate_blocking, prompt, which)
+        if self._slots.locked():
+            return None
+        await self._slots.acquire()
+        future = loop.run_in_executor(None, self._translate_blocking, prompt, which)
+
+        def finished(f):
+            self._slots.release()
+            if not f.cancelled():
+                f.exception()  # retrieved, so one whose caller left is not logged as lost
+
+        future.add_done_callback(finished)
+        return await asyncio.shield(future)
+
     async def translate(self, q, prevQuery=""):
         """Translate ``q``, or improve ``prevQuery`` according to ``q``.
 
@@ -150,6 +186,14 @@ class AiTranslateService:
             return JSONResponse(content={}, status_code=404)
         if not q:
             return JSONResponse(content={}, status_code=400)
+        settings = self.settings
+        if len(q) > settings.ai_translate_max_query_length:
+            return JSONResponse(content={"error": (
+                f"q is longer than {settings.ai_translate_max_query_length} characters")}, status_code=400)
+        if len(prevQuery) > settings.ai_translate_max_prev_query_length:
+            return JSONResponse(content={"error": (
+                f"prevQuery is longer than {settings.ai_translate_max_prev_query_length} characters")},
+                status_code=400)
 
         which = "build"
         prompt = q
@@ -164,15 +208,16 @@ class AiTranslateService:
             prompt = build_improve_prompt(previous, q)
 
         try:
-            options, error = self._attempt(prompt, which)
-            if options is None:
-                print(f"AI translate: {error}; retrying once")
-                options, error = self._attempt(prompt, which)
+            outcome = await self._run_off_loop(prompt, which)
         except Exception as e:  # its text can name the backend's endpoint or the provider's error
             print(f"AI translate failed: {e!r}")
             return JSONResponse(content=error_content(
                 self.settings, "The AI translation service is unavailable.", repr(e)), status_code=502)
+        if outcome is None:
+            return JSONResponse(content={"error": (
+                "The AI translation service is busy; please try again shortly.")}, status_code=503)
 
+        options, error = outcome
         if options is None:
             print(f"AI translate gave up: {error}")
             return JSONResponse(content=error_content(

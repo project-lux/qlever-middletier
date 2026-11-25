@@ -12,9 +12,9 @@ Two behaviours worth knowing about:
   out in Python. Failures (timeouts, QLever errors, shed requests) are never
   cached: one slow first attempt must not fail that query until it is evicted.
 * Requests are shed once more than ``max_qlever_requests`` are in flight,
-  returning a 504-ish stub rather than queueing. HAL generation passes
-  ``sheddable=False`` so it cannot be dropped halfway through building a
-  record's links.
+  returning a 504-ish stub rather than queueing. ``sheddable=False`` exempts a
+  call; nothing in the middle tier uses it now (HAL generation once did, and
+  so bypassed the limit for every uncached record).
 """
 
 from __future__ import annotations
@@ -141,8 +141,12 @@ class QLeverClient:
         print(q)
         # httpx timeouts carry no message, which used to surface as "error": ""
         message = str(e) or f"{type(e).__name__} after {self.settings.qlever_timeout}s"
+        # QLever answers some refusals in plain text, e.g. a timeout above its own TIMEOUT;
+        # the JSON decode error alone would hide why (httpx only: aiohttp's text is a coroutine)
+        body = getattr(response, "text", None)
+        if isinstance(body, str) and body.strip():
+            message = f"{message}: {body.strip()[:500]}"
         print(message)
-        self.open_requests -= 1
         status = response.status_code if response is not None else 0
         return _QueryFailed({"total": 0, "results": [], "error": message, "status": status})
 
@@ -153,34 +157,48 @@ class QLeverClient:
             raise _QueryFailed(results)
         return results
 
+    def _form(self, q):
+        """The POST body. ``timeout`` makes QLever itself stop when we stop waiting: without it a
+        query we have given up on runs on to the server's own TIMEOUT, and a retry runs beside it.
+        QLever refuses a timeout above its configured TIMEOUT unless given the access token, so
+        QLMT_QLEVER_TIMEOUT must not exceed the Qleverfile's."""
+        return {"query": q, "send": 60, "timeout": f"{self.settings.qlever_timeout}s"}
+
+    # open_requests is decremented in ``finally``: a request cancelled mid-flight (async-lru
+    # cancels a shared call once every caller has gone; a client disconnect can cancel the
+    # handler) raises CancelledError, which ``except Exception`` does not see. Missed, each one
+    # left the count a step higher until every sheddable query was shed.
+
     @alru_cache(maxsize=500)
     async def _query_aiohttp(self, q):
         response = None
+        self.open_requests += 1
         try:
-            self.open_requests += 1
             async with self.client.post(
                 self.endpoint,
-                data={"query": q, "send": 60},
+                data=self._form(q),
                 headers={"Accept": "application/qlever-results+json"},
             ) as response:
                 ret = await response.json()
-                self.open_requests -= 1
         except Exception as e:
             raise self._failure(q, e, response) from e
+        finally:
+            self.open_requests -= 1
         return self._checked(process_qlever_results(ret))
 
     @alru_cache(maxsize=500)
     async def _query_httpx(self, q):
         response = None
+        self.open_requests += 1
         try:
-            self.open_requests += 1
             response = await self.client.post(
                 self.endpoint,
-                data={"query": q, "send": 60},
+                data=self._form(q),
                 headers={"Accept": "application/qlever-results+json"},
             )
             ret = response.json()
-            self.open_requests -= 1
         except Exception as e:
             raise self._failure(q, e, response) from e
+        finally:
+            self.open_requests -= 1
         return self._checked(process_qlever_results(ret))

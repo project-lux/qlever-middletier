@@ -33,7 +33,10 @@ MATERIALIZED_VIEWS = {"itemWords": "PREFIX lux: <https://lux.collections.yale.ed
 [server]
 HOST_NAME          = localhost
 PORT               = 7010
-ACCESS_TOKEN       = ${data:NAME}_8E34F576_B530_4982_B4D9_85E3B028A4F3
+# The token for privileged operations (SPARQL UPDATE, cache clearing, materialized views). It is
+# read from the environment, never written here: this file is public. Set it before any qlever
+# command, e.g. once per host:  export QLEVER_ACCESS_TOKEN=$(openssl rand -hex 24)
+ACCESS_TOKEN       = $$(printenv QLEVER_ACCESS_TOKEN)
 MEMORY_FOR_QUERIES = 80G
 CACHE_MAX_SIZE     = 70G
 NUM_THREADS        = 20

@@ -11,8 +11,15 @@ Two kinds of candidate:
 * a related list, which has no single query - instead the catalogue's ordered
   cheap probes are tried in turn and the first hit wins.
 
-Queries here are issued with ``sheddable=False``: a half-built links block
-would be cached and served as if it were complete.
+A block is only cached when every query it needed answered. A probe that
+fails - a timeout, a QLever error, a request shed under load - says nothing
+about whether the link exists, so the block built around it is served but not
+kept, and the next request for the record tries again. Caching it made a
+moment of overload permanent: those records lost their links for good.
+
+That is also why the probes are sheddable like any other query. They were
+once exempt, so that a block could not be dropped halfway through, which let
+every uncached record request add some 6-25 queries past the load limit.
 """
 
 from __future__ import annotations
@@ -33,14 +40,17 @@ class HalService:
         self.uris = uris
 
     async def _probe(self, qt):
-        """Run one candidate query, treating any failure as "no results"."""
+        """Run one candidate query. A failure comes back as a result with no
+        rows and an ``error``, which the caller must not take for "none"."""
         try:
-            return await self.qlever.query(qt, sheddable=False)
+            return await self.qlever.query(qt)
         except Exception as e:
             return {"results": [], "error": str(e), "status": 504}
 
     async def _related_list_hit(self, entry, uri):
-        """True if any of a related list's probes finds something."""
+        """(hit, complete): whether any of a related list's probes finds
+        something, and whether the answer can be trusted. A hit is conclusive
+        whatever failed before it; a miss is only if no probe failed."""
         try:
             probes = self.catalogue.hal_related_list_tests[entry["scope"]][
                 entry["relatedList"]
@@ -49,16 +59,22 @@ class HalService:
             print(
                 f"Missing related list for {entry['scope']} and {entry['relatedList']}"
             )
-            return False
+            return False, True
+        complete = True
         for qt in probes:
             res = await self._probe(qt.replace("V_TARGET_URI", uri))
             if res["results"]:
-                return True
-        return False
+                return True, True
+            if "error" in res:
+                complete = False
+        return False, complete
 
     async def _count(self, qt, uri):
-        """The count a HAL relation's query reports, or 0."""
+        """(count, complete): the count a HAL relation's query reports, or 0,
+        and False for ``complete`` when the query failed."""
         res = await self._probe(qt.replace("URI-HERE", uri))
+        if "error" in res:
+            return 0, False
         try:
             res_array = res["results"][0]
             if len(res_array) == 1:
@@ -72,7 +88,7 @@ class HalService:
             ttl = 0
         if type(ttl) is not int:
             ttl = res["total"]
-        return ttl
+        return ttl, True
 
     def _search_href(self, hal, uri):
         """The search URL a HAL relation points at, with the record filled in."""
@@ -95,17 +111,25 @@ class HalService:
         hscope = scope_for_class(scope)
 
         links = {}
+        complete = True
         for hal, qt in self.catalogue.sparql_hal_queries[hscope].items():
             if type(qt) is dict:
                 # a related list: no count query, just the ordered probes
-                if not await self._related_list_hit(qt, uri):
+                hit, answered = await self._related_list_hit(qt, uri)
+                complete = complete and answered
+                if not hit:
                     continue
                 href = qt["template"].replace("{id}", uri)
             else:
-                if await self._count(qt, uri) <= 0:
+                count, answered = await self._count(qt, uri)
+                complete = complete and answered
+                if count <= 0:
                     continue
                 href = self._search_href(hal, uri)
             links[hal] = {"href": href, "_estimate": 1}
 
-        await self.hal_cache.put(key, links)
+        if complete:
+            await self.hal_cache.put(key, links)
+        else:
+            print(f"HAL links for {key} incomplete (a query failed); served, not cached")
         return links
