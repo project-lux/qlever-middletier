@@ -174,3 +174,36 @@ def test_shards_load_into_the_store_embed_would_have_written(tmp_path):
     assert loaded_dump.keys() == direct_dump.keys()
     for name in loaded_dump:  # chunks, IRIs and meta: byte for byte what embed --store writes
         assert loaded_dump[name] == direct_dump[name], name
+
+
+def test_token_budget_batches_one_length_each_and_keeps_the_order():
+    """--token-budget: cards of one token length per batch (no padding, so no attention mask), at
+    most budget // length cards each, and the vectors back in the cards' own order."""
+    from lux_embed.encoder import Encoder
+
+    seen = []
+
+    class Model:
+        max_seq_length = 6
+
+        def tokenizer(self, texts, add_special_tokens=True):
+            return {"input_ids": [text.split() for text in texts]}
+
+        def encode(self, texts, batch_size, truncate_dim, normalize_embeddings, convert_to_numpy):
+            seen.append([min(len(t.split()), self.max_seq_length) for t in texts])
+            return np.array([[float(t.split()[1]), 1.0] for t in texts])  # the card's number, to check order
+
+    encoder = Encoder.__new__(Encoder)  # no model download: only the batching is under test
+    encoder.model, encoder.profile, encoder.native_dims, encoder.name = Model(), {"document": "{title} {text}",
+                                                                              "matryoshka": True}, 2, "fake"
+    words = [3, 1, 3, 9, 2, 3, 1, 7, 3, 3]  # two cards over the cap of 6: those are one length, 6
+    cards = [(f"card {n}", " ".join(["w"] * (k - 2))) if k > 2 else (f"card {n}", "") for n, k in enumerate(words)]
+    texts = [encoder.document(t, x) for t, x in cards]
+    lengths = [min(len(t.split()), 6) for t in texts]
+
+    vectors = encoder.encode_documents(cards, 2, token_budget=9)
+    np.testing.assert_allclose(vectors[:, 0] / vectors[:, 1], range(len(cards)))  # order kept
+    assert all(len(set(batch)) == 1 for batch in seen)  # one length a batch
+    assert all(len(batch) <= max(1, 9 // batch[0]) for batch in seen)  # within the budget
+    assert sorted(n for batch in seen for n in batch) == sorted(lengths)  # every card exactly once
+    assert len(encoder.length_batches(texts, 10_000, most=2)) == sum(-(-lengths.count(n) // 2) for n in set(lengths))

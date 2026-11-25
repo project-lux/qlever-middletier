@@ -196,7 +196,8 @@ def cmd_embed(args):
     for cards in batches:
         if not cards:
             continue
-        vectors = encoder.encode_documents([(title, text) for _, title, text in cards], dims, args.encode_batch)
+        vectors = encoder.encode_documents([(title, text) for _, title, text in cards], dims, args.encode_batch,
+                                           token_budget=args.token_budget)
         writer.append([iri for iri, _, _ in cards], vectors)
         done += len(cards)
         rate = done / (time.time() - started)
@@ -319,6 +320,8 @@ def main(argv=None):
     p.add_argument("--limit", type=int, default=0, help="embed at most this many records (for trials)")
     p.add_argument("--batch", type=int, default=2048, help="records per card/facet batch")
     p.add_argument("--encode-batch", type=int, default=64)
+    p.add_argument("--token-budget", type=int, default=0,
+                   help="batch cards of one token length, up to this many tokens a batch, instead of --encode-batch cards (e.g. 16384, with --batch 65536 for fuller batches)")
     p.add_argument("--card-workers", type=int, default=-1,
                    help="processes building cards (default: the CPUs this job may use, less two; 0 = one thread)")
     p.add_argument("--max-seq-length", type=int, default=512)
