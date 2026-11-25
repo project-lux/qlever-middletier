@@ -1,3 +1,5 @@
+import re
+
 from luxql import LuxBoolean, LuxLeaf, LuxRelationship
 
 from qleverlux.query import predicates
@@ -23,6 +25,15 @@ from qleverlux.sparql import (
 from qleverlux.sparql import (
     GraphPattern as Pattern,
 )
+
+#: A whole date value: luxql's ``valid_date_re`` (with the fractional seconds and ``Z`` its own error
+#: message describes), matched to the end. luxql only anchors the start, so ``1900" . <any SPARQL>``
+#: passed it and reached the query text.
+DATE_VALUE = re.compile(
+    r"(-[0-9]{2})?[0-9]{4}(-[0-1][0-9]-[0-3][0-9](T[0-2][0-9]:[0-5][0-9]:[0-5][0-9](\.[0-9]+)?Z?)?)?"
+)
+#: A record type is a Linked Art class name, written into the query after ``la:``.
+RECORD_TYPE = re.compile(r"[A-Za-z][A-Za-z0-9_]*")
 
 #: The search terms answered by vector similarity rather than text search:
 #: `similar` takes free text, `similarRecords` the records to start from.
@@ -688,7 +699,7 @@ class SparqlTranslator:
                     raise ValueError("Invalid variable name")
                 parent.add_triples([Triple(query.var, pred, lf.value)])
             else:
-                parent.add_triples([Triple(query.var, pred, f"<{lf.value}>")])
+                parent.add_triples([Triple(query.var, pred, iri(lf.value))])
         else:
             parent.add_triples([Triple(query.var, pred, query.children[0].var)])
             self.translate_query(query.children[0], parent)
@@ -813,32 +824,34 @@ class SparqlTranslator:
                     # a variable ... assume the user knows what they're doing...
                     pass
                 else:
-                    v = Values([f"<{query.value}>"], query.var)
+                    v = Values([iri(query.value)], query.var)
                     parent.add_value(v)
             elif query.field == "identifier":
                 # do exact match on the string
                 pred = f"lux:{scope}Identifier"
-                # UNION with equivalent if starts with http
-                if query.value.startswith("http://") or query.value.startswith(
-                    "https://"
-                ):
+                literal = string_literal(query.value.lower())
+                # UNION with equivalent if it is an http(s) IRI; a value that only looks like
+                # one (a space, a quote) is matched as a string alone
+                equivalent = None
+                if query.value.startswith(("http://", "https://")):
+                    try:
+                        equivalent = iri(query.value)
+                    except ValueError:
+                        equivalent = None
+                if equivalent:
                     p1 = Pattern()
-                    p1.add_triples(
-                        [Triple(query.var, pred, f'"{query.value.lower()}"')]
-                    )
+                    p1.add_triples([Triple(query.var, pred, literal)])
                     p2 = Pattern(union=True)
-                    p2.add_triples(
-                        [Triple(query.var, "la:equivalent", f"<{query.value}>")]
-                    )
+                    p2.add_triples([Triple(query.var, "la:equivalent", equivalent)])
                     parent.add_nested_graph_pattern(p1)
                     parent.add_nested_graph_pattern(p2)
                 else:
-                    parent.add_triples(
-                        [Triple(query.var, pred, f'"{query.value.lower()}"')]
-                    )
+                    parent.add_triples([Triple(query.var, pred, literal)])
             elif query.field == SIMILAR_FIELD:
                 self.translate_similar(query, parent, scope)
             elif query.field == "recordType":
+                if not RECORD_TYPE.fullmatch(str(query.value)):
+                    raise ValueError(f"Not a record type: {query.value!r}")
                 parent.add_triples([Triple(query.var, "a", f"la:{query.value}")])
             elif query.field == self.name_field and query.complete:
                 pred = f"lux:{scope}Name"
@@ -854,6 +867,10 @@ class SparqlTranslator:
         elif typ == "date":
             # do date query per qlever
             dt = query.value
+            if not DATE_VALUE.fullmatch(str(dt)):
+                raise ValueError(
+                    "Dates require a specific format: 'YYYY-MM-DDThh:mm:ss.000Z' or '-YYYYYY-MM-DDThh:mm:ss.000Z'"
+                )
 
             # make sure date is in a valid format
             if ":" not in dt:

@@ -23,6 +23,7 @@ from fastapi.responses import JSONResponse
 
 from qleverlux.errors import BadQuery, run_query
 from qleverlux.presentation import envelopes
+from qleverlux.sparql import iri
 
 #: Records requested are rounded up to a multiple of this, to share cache entries.
 RECORD_GRANULARITY = 60
@@ -57,6 +58,14 @@ class RelatedListService:
         # get query from the catalogue's sparql cache and substitute in the uri
         # the uri arrives in this deployment's form; the index only knows data URIs
         target = self.uris.inbound(uri)
+        # It is substituted into the compiled query as <target>, so it must be an IRI that
+        # cannot close the brackets or start a new clause.
+        try:
+            if not target.startswith(("http://", "https://")):
+                raise ValueError(f"Not an http(s) URI: {uri!r}")
+            iri(target)
+        except ValueError as e:
+            raise BadQuery(str(e)) from e
         # Only some scopes have related lists at all, so the scope can miss too.
         spq = self.catalogue.related_list_sparql.get(scope, {}).get(name)
         if spq is None:
