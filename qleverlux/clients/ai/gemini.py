@@ -7,7 +7,7 @@ the thinking budget - because the system prompts were tuned against them.
 
 from __future__ import annotations
 
-from qleverlux.clients.ai.base import AiBackend, parse_model_json
+from qleverlux.clients.ai.base import AiBackend, parse_model_json, time_left
 
 try:
     from google import genai
@@ -62,15 +62,32 @@ class GeminiBackend(AiBackend):
             system_instruction=[types.Part.from_text(text=system_prompt)],
         )
 
-    def generate(self, prompt, which="build"):
+    def generate(self, prompt, which="build", deadline=None):
+        """One streamed generation, stopped at ``deadline``.
+
+        The SDK had no timeout here at all. The time left goes in as the
+        request's ``http_options.timeout`` (which also asks Vertex to stop, via
+        ``X-Server-Timeout``), but on a stream that bounds each read, not the
+        whole response, so the deadline is also checked between chunks. The
+        SDK does not retry unless asked to.
+        """
         contents = [
             types.Content(role="user", parts=[types.Part.from_text(text=prompt)])
         ]
+        config = self.configs["improve" if which == "improve" else "build"]
+        left = time_left(deadline)
+        if left is not None:
+            config = config.model_copy(
+                update={"http_options": types.HttpOptions(timeout=max(1, int(left * 1000)))}
+            )
         output = []
-        for chunk in self.client.models.generate_content_stream(
-            model=self.model,
-            contents=contents,
-            config=self.configs["improve" if which == "improve" else "build"],
-        ):
-            output.append(chunk.text)
+        stream = self.client.models.generate_content_stream(
+            model=self.model, contents=contents, config=config
+        )
+        try:
+            for chunk in stream:
+                output.append(chunk.text or "")
+                time_left(deadline)
+        finally:
+            stream.close()  # stopping early closes the response rather than reading it out
         return parse_model_json("".join(output), source="gemini")

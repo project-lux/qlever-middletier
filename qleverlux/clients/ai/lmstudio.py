@@ -17,7 +17,9 @@ token budget thinking in prose and never produce any JSON.
 
 from __future__ import annotations
 
-from qleverlux.clients.ai.base import AiBackend, parse_model_json
+import time
+
+from qleverlux.clients.ai.base import AiBackend, parse_model_json, time_left
 from qleverlux.clients.ai.schema import RESPONSE_SCHEMA
 
 try:
@@ -64,7 +66,37 @@ class LmStudioBackend(AiBackend):
             "maxTokens": settings.ai_translate_max_tokens,
         }
 
-    def generate(self, prompt, which="build"):
+    def _respond(self, chat, deadline, **kwargs):
+        """``respond()``, cancelled at ``deadline``.
+
+        The sync SDK only gives up after a spell with no message from the server
+        (60 s by default), so a generation that keeps streaming tokens had no limit at
+        all. This streams instead and checks the deadline as each fragment, and each
+        prompt-processing update, arrives; past it, the prediction is cancelled, which
+        stops the model, and TimeoutError raised once the stream ends. The callback
+        cannot raise itself: the SDK logs and swallows callback errors.
+        """
+        if deadline is None:
+            return self.client.respond(chat, **kwargs)
+        time_left(deadline)
+        expired = False
+        stream = None
+
+        def check(*_):
+            nonlocal expired
+            if not expired and time.monotonic() >= deadline:
+                expired = True
+                if stream is not None:
+                    stream.cancel()
+
+        stream = self.client.respond_stream(chat, on_prompt_processing_progress=check, **kwargs)
+        for _ in stream:
+            check()
+        if expired:
+            raise TimeoutError("the AI translation deadline passed")
+        return stream.result()
+
+    def generate(self, prompt, which="build", deadline=None):
         chat = lmstudio.Chat(self.system_prompt(which))
         chat.add_user_message(prompt)
         kwargs = {"config": self._prediction_config()}
@@ -78,13 +110,15 @@ class LmStudioBackend(AiBackend):
                 "jsonSchema": RESPONSE_SCHEMA,
             }
         try:
-            result = self.client.respond(chat, **kwargs)
+            result = self._respond(chat, deadline, **kwargs)
+        except TimeoutError:
+            raise
         except Exception as e:
             if not self.settings.ai_translate_json_mode:
                 raise
             # not every model served by LM Studio supports constrained JSON
             print(f"AI translate: lmstudio rejected JSON mode ({e}); retrying without")
-            result = self.client.respond(chat, config=self._prediction_config())
+            result = self._respond(chat, deadline, config=self._prediction_config())
 
         parsed = getattr(result, "parsed", None)
         if isinstance(parsed, (dict, list)):

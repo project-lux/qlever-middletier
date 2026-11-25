@@ -38,7 +38,7 @@ class FailingCache:
 class FailingBackend:
     enabled = True
 
-    def generate(self, prompt, which):
+    def generate(self, prompt, which, deadline=None):
         raise ConnectionError(SECRET)
 
 

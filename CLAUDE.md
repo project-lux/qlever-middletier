@@ -399,13 +399,28 @@ An empty list is deliberately not returned: the client indexes `[0]` when there 
 fail on the caller's side rather than here. A backend *exception* is not retried, because a refused connection
 or a timeout will not come good on a second try and retrying a timeout just doubles the wait.
 
-A local 27B model takes about a minute per query, so `QLMT_AI_TRANSLATE_TIMEOUT` is generous by default.
+A local 27B model takes about a minute per query, so `QLMT_AI_TRANSLATE_TIMEOUT` (120 s) is generous. It is one
+deadline for the whole translation, retry included (0 is none): the retry gets only what the first attempt
+left, and is skipped when nothing is left. Running out is a 504; any other backend failure a 502. A thread
+cannot be stopped from outside, so every backend stops itself (`generate(..., deadline=)`, helper `time_left`):
+
+- `openai`: the time left as the request's `timeout`, and the SDK's own retries off (`max_retries=0`); they
+  once tripled a timeout before the service's retry doubled it again.
+- `gemini`: the time left as `http_options.timeout` (which also sends Vertex `X-Server-Timeout`), plus a check
+  between streamed chunks, since on a stream that timeout bounds each read, not the response. It had none.
+- `lmstudio`: `respond_stream` instead of `respond`, checked at each fragment and each prompt-processing update;
+  past the deadline the prediction is cancelled, which stops the model. The SDK's only limit is 60 s with no
+  message at all, so a model still generating had none. The check is a callback that cancels rather than
+  raises, because the SDK swallows callback exceptions.
+
+A translation can therefore overrun its deadline by at most one SDK wait: one read for openai and gemini, and
+the SDK's 60 s silence limit for lmstudio.
 
 Every backend's SDK call blocks, so `translate()` runs it (both attempts) on a worker thread; on the event loop
 one request stopped the process serving anything else for that minute. At most
 `QLMT_AI_TRANSLATE_MAX_CONCURRENT` (2) run at once per process and a request beyond that is a 503, not a queue.
 The slot is held until the thread finishes rather than until the caller leaves, since a thread cannot be
-cancelled. `q` and `prevQuery` longer than `QLMT_AI_TRANSLATE_MAX_QUERY_LENGTH` (1000) /
+cancelled; the deadline above is what keeps a stalled backend from holding every slot. `q` and `prevQuery` longer than `QLMT_AI_TRANSLATE_MAX_QUERY_LENGTH` (1000) /
 `QLMT_AI_TRANSLATE_MAX_PREV_QUERY_LENGTH` (20000) characters are a 400: the endpoint is public and a hosted
 model bills by the token.
 

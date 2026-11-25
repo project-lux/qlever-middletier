@@ -17,7 +17,7 @@ rest of the process.
 
 from __future__ import annotations
 
-from qleverlux.clients.ai.base import AiBackend, parse_model_json
+from qleverlux.clients.ai.base import AiBackend, parse_model_json, time_left
 
 try:
     import openai
@@ -45,6 +45,9 @@ class OpenAiCompatBackend(AiBackend):
             # a local server usually wants no key, but the client insists on one
             "api_key": settings.ai_translate_api_key or "not-needed",
             "timeout": settings.ai_translate_timeout,
+            # the SDK would retry a timeout twice on its own, tripling the wait; the service
+            # retries once itself, inside one deadline
+            "max_retries": 0,
         }
         if settings.ai_translate_api_endpoint:
             kwargs["base_url"] = settings.ai_translate_api_endpoint
@@ -54,7 +57,7 @@ class OpenAiCompatBackend(AiBackend):
             print(f"AI translate: could not build the OpenAI client: {e}")
             self.client = None
 
-    def _create(self, prompt, which, json_mode):
+    def _create(self, prompt, which, json_mode, deadline):
         settings = self.settings
         kwargs = {
             "model": self.model,
@@ -68,11 +71,15 @@ class OpenAiCompatBackend(AiBackend):
         }
         if json_mode:
             kwargs["response_format"] = {"type": "json_object"}
+        left = time_left(deadline)
+        if left is not None:
+            # per request, so the JSON-mode retry below gets only what is left
+            kwargs["timeout"] = left
         return self.client.chat.completions.create(**kwargs)
 
-    def generate(self, prompt, which="build"):
+    def generate(self, prompt, which="build", deadline=None):
         try:
-            response = self._create(prompt, which, self.json_mode)
+            response = self._create(prompt, which, self.json_mode, deadline)
         except Exception as e:
             if not self.json_mode or not any(
                 s in str(e).lower() for s in _JSON_MODE_REJECTIONS
@@ -80,7 +87,7 @@ class OpenAiCompatBackend(AiBackend):
                 raise
             print(f"AI translate: server rejected JSON mode ({e}); disabling it")
             self.json_mode = False
-            response = self._create(prompt, which, False)
+            response = self._create(prompt, which, False, deadline)
 
         if not response.choices:
             print("AI translate: no choices in the response")

@@ -225,6 +225,8 @@ class Settings(BaseSettings):
     #: Ask the backend to constrain output to JSON. Not every OpenAI-compatible
     #: server supports it, so the backend retries without it if it is rejected.
     ai_translate_json_mode: Bool = True
+    #: Seconds for one whole translation, the retry included; 0 is none. Each backend stops
+    #: itself at it (a worker thread cannot be stopped from outside), within one SDK wait.
     ai_translate_timeout: int = 120
     #: Translations running at once, per process; a request beyond that is a 503 rather than a
     #: wait. Every backend's SDK blocks, so each one holds a thread for up to the timeout (twice,
