@@ -39,6 +39,9 @@ PORT               = 7010
 ACCESS_TOKEN       = $$(printenv QLEVER_ACCESS_TOKEN)
 MEMORY_FOR_QUERIES = 80G
 CACHE_MAX_SIZE     = 70G
+# The cache's count limit, not its size, is what fills: at qlever's default of 200 it was full
+# holding 29 MB. One search plus one uncached record's HAL links is over 400 distinct queries.
+CACHE_MAX_NUM_ENTRIES = 10000
 NUM_THREADS        = 20
 TIMEOUT            = 60s
 PRELOAD_MATERIALIZED_VIEWS = itemWords workWords setWords agentWords placeWords conceptWords eventWords

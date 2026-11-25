@@ -25,7 +25,7 @@ class WindowedQLever:
     def __init__(self):
         self.queries = []
 
-    async def query(self, sparql, sheddable=True):
+    async def query(self, sparql, sheddable=True, fmt=None):
         self.queries.append(sparql)
         if "(COUNT(*) AS ?count)" in sparql:
             return {"results": [[TOTAL]], "total": 1, "time": 1, "variables": ["count"]}

@@ -7,7 +7,7 @@ see ``await client.query(text)`` and never learn which one is in use.
 Two behaviours worth knowing about:
 
 * Every successful query is memoized with ``alru_cache`` keyed on the query
-  text. This is why pagination is issued at offsets rounded down to a multiple
+  text (and the result format asked for). This is why pagination is issued at offsets rounded down to a multiple
   of 60 - nearby pages then share a cache entry and the exact page is sliced
   out in Python. Failures (timeouts, QLever errors, shed requests) are never
   cached: one slow first attempt must not fail that query until it is evicted.
@@ -19,16 +19,128 @@ Two behaviours worth knowing about:
 
 from __future__ import annotations
 
+import json
+
 import aiohttp
 import httpx
 from async_lru import alru_cache
 
 
+#: Result formats a caller can ask for. JSON (``application/sparql-results+json``) is the default:
+#: it carries the total size (QLever's ``meta``), which facets and HAL counts read, and honours
+#: ``send``. TSV is for related lists: on a QLever cache miss their queries cost 17-65 ms as TSV
+#: and 360-900 ms as either JSON format (the two that report the total size), with identical rows,
+#: and they need neither the total nor ``send`` (they carry their own LIMIT). TSV only suits
+#: results without literals: QLever writes a tab inside a literal as a space. Measured with
+#: files/qlever_serialization_eval.py.
+JSON = "json"
+TSV = "tsv"
+ACCEPT = {JSON: "application/sparql-results+json", TSV: "text/tab-separated-values"}
+
+
+def headers_for(fmt: str) -> dict:
+    """``identity`` because both HTTP clients otherwise ask for gzip, and QLever obliges: it
+    compressed every result and we decompressed it, CPU on both sides on what is almost always a
+    local link, for results capped at ``send`` rows."""
+    return {"Accept": ACCEPT[fmt], "Accept-Encoding": "identity"}
+
+
+def _coerce(value: str, datatype: str):
+    """A typed literal: int and decimal become numbers, any other type its bare lexical form."""
+    if datatype.endswith("int"):
+        return int(value)
+    if datatype.endswith("decimal"):
+        return float(value)
+    return value
+
+
+_warned_no_total = False
+
+
+def process_sparql_json(ret: dict) -> dict:
+    """Unwrap ``application/sparql-results+json`` into the plain result dict: IRIs bare, int and
+    decimal literals as numbers, other typed literals as their lexical form, plain literals kept
+    quoted (with any ``@lang``), unbound as None - exactly what ``process_qlever_results`` gave.
+    ``total`` and ``time`` come from QLever's ``meta``, which needs its runtime setting
+    ``sparql-results-json-with-time`` (on by default)."""
+    global _warned_no_total
+    if "exception" in ret:
+        return {"results": [], "total": 0, "time": "unknown", "variables": [], "error": ret["exception"]}
+    names = ret["head"]["vars"]
+    rows = []
+    for binding in ret["results"]["bindings"]:
+        row = []
+        for name in names:
+            term = binding.get(name)
+            if term is None:
+                row.append(None)
+            elif term["type"] == "uri":
+                row.append(term["value"])
+            elif term["type"] == "bnode":
+                row.append("_:" + term["value"])
+            elif "datatype" in term:
+                row.append(_coerce(term["value"], term["datatype"]))
+            else:
+                lang = term.get("xml:lang")
+                row.append(f'"{term["value"]}"' + (f"@{lang}" if lang else ""))
+        rows.append(row)
+    meta = ret.get("meta", {})
+    total = meta.get("result-size-total")
+    if total is None:
+        if not _warned_no_total:
+            print("QLever sent no result-size-total: is sparql-results-json-with-time off? "
+                  "Totals fall back to the rows sent, so facet totals stop at send.")
+            _warned_no_total = True
+        total = len(rows)
+    time = f"{meta['query-time-ms']}ms" if "query-time-ms" in meta else "unknown"
+    return {"results": rows, "total": total, "time": time, "variables": ["?" + n for n in names]}
+
+
+def _tsv_term(cell: str):
+    if cell == "":
+        return None
+    if cell[0] == "<" and cell[-1] == ">":
+        return cell[1:-1]
+    if cell[0] == '"':
+        if cell[-1] == ">" and '"^^<' in cell:
+            lexical, datatype = cell[:-1].rsplit('"^^<', 1)
+            return _coerce(lexical[1:], datatype)
+        return cell
+    if cell.startswith("_:"):
+        return cell
+    try:  # QLever writes numbers bare in TSV
+        return int(cell)
+    except ValueError:
+        pass
+    try:
+        return float(cell)
+    except ValueError:
+        return cell
+
+
+def process_tsv(text: str) -> dict:
+    """Unwrap ``text/tab-separated-values`` into the same dict. TSV carries no total, so ``total``
+    is the rows received."""
+    lines = text.split("\n")
+    names = lines[0].split("\t") if lines and lines[0] else []
+    rows = [[_tsv_term(cell) for cell in line.split("\t")] for line in lines[1:] if line]
+    return {"results": rows, "total": len(rows), "time": "unknown", "variables": names}
+
+
+def process_results(status: int, text: str, fmt: str) -> dict:
+    """A response body as the plain result dict. QLever reports an error as JSON with an
+    ``exception`` whatever format was asked for; a body that is not JSON either raises."""
+    if fmt == TSV and status == 200:
+        return process_tsv(text)
+    return process_sparql_json(json.loads(text))
+
+
 def process_qlever_results(ret):
     """Unwrap ``application/qlever-results+json`` into a plain result dict.
 
-    ``<uri>`` brackets are stripped and typed literals coerced to int/float, so
-    the rest of the code never sees SPARQL syntax.
+    No longer requested: its query-plan tree made related-list and HAL responses 24-30 times the
+    size of SPARQL JSON. Kept as the reference files/qlever_serialization_eval.py checks the other
+    formats against.
     """
     results = {"results": []}
     results["total"] = ret.get("resultSizeTotal", 0)
@@ -119,20 +231,22 @@ class QLeverClient:
             await self.client.close()
         self.client = None
 
-    def query(self, q, sheddable=True):
-        """Run a SPARQL query. Returns a coroutine; successful results are cached."""
+    def query(self, q, sheddable=True, fmt=JSON):
+        """Run a SPARQL query. Returns a coroutine; successful results are cached (per format).
+
+        ``fmt`` is :data:`JSON` unless the caller knows :data:`TSV` suits its query (see there)."""
         if self.client is None:
             self.connect()
-        return self._query(q, sheddable)
+        return self._query(q, sheddable, fmt)
 
-    async def _query(self, q, sheddable):
+    async def _query(self, q, sheddable, fmt):
         # Shedding is decided per call, outside the cache: a query shed once
         # under load must not keep answering "Too many open requests".
         if sheddable and self.open_requests > self.max_open:
             return dict(SHED_RESPONSE)
         fetch = self._query_httpx if self.use_httpx else self._query_aiohttp
         try:
-            return await fetch(q)
+            return await fetch(q, fmt)
         except _QueryFailed as failed:
             return failed.result
 
@@ -170,35 +284,35 @@ class QLeverClient:
     # left the count a step higher until every sheddable query was shed.
 
     @alru_cache(maxsize=500)
-    async def _query_aiohttp(self, q):
+    async def _query_aiohttp(self, q, fmt=JSON):
         response = None
         self.open_requests += 1
         try:
             async with self.client.post(
                 self.endpoint,
                 data=self._form(q),
-                headers={"Accept": "application/qlever-results+json"},
+                headers=headers_for(fmt),
             ) as response:
-                ret = await response.json()
+                results = process_results(response.status, await response.text(), fmt)
         except Exception as e:
             raise self._failure(q, e, response) from e
         finally:
             self.open_requests -= 1
-        return self._checked(process_qlever_results(ret))
+        return self._checked(results)
 
     @alru_cache(maxsize=500)
-    async def _query_httpx(self, q):
+    async def _query_httpx(self, q, fmt=JSON):
         response = None
         self.open_requests += 1
         try:
             response = await self.client.post(
                 self.endpoint,
                 data=self._form(q),
-                headers={"Accept": "application/qlever-results+json"},
+                headers=headers_for(fmt),
             )
-            ret = response.json()
+            results = process_results(response.status_code, response.text, fmt)
         except Exception as e:
             raise self._failure(q, e, response) from e
         finally:
             self.open_requests -= 1
-        return self._checked(process_qlever_results(ret))
+        return self._checked(results)

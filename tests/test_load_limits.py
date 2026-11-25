@@ -41,7 +41,7 @@ class HangingHttp:
     async def post(self, endpoint, data, headers):
         self.forms.append(data)
         await self.release.wait()
-        return SimpleNamespace(json=lambda: {"status": "OK", "res": [], "selected": []})
+        return SimpleNamespace(status_code=200, text='{"head":{"vars":[]},"results":{"bindings":[]}}')
 
 
 def test_a_cancelled_query_does_not_leave_the_in_flight_count_raised(settings):
@@ -73,6 +73,61 @@ def test_a_query_asks_qlever_to_stop_when_the_client_stops_waiting(settings):
     assert "error" not in res
     assert forms[0]["timeout"] == f"{settings.qlever_timeout}s"
     assert open_requests == 0
+
+
+def test_results_are_asked_for_uncompressed_in_the_format_wanted(settings):
+    """httpx asks for gzip/deflate/br by default and QLever obliges: it compressed every result
+    and we decompressed it, on a local link, for results capped at ``send`` rows. The request
+    goes through a real httpx client here, so its default header is what is being overridden.
+    SPARQL JSON by default (it carries the total); TSV when asked (related lists)."""
+    import httpx
+
+    from qleverlux.clients.qlever import TSV
+
+    seen = []
+
+    def answer(request):
+        seen.append(request.headers)
+        if request.headers["accept"] == "text/tab-separated-values":
+            return httpx.Response(200, text="?uri\t?n\n<http://example.org/a>\t3\n")
+        return httpx.Response(200, json={"head": {"vars": ["n"]}, "results": {"bindings": [
+            {"n": {"type": "literal", "datatype": "http://www.w3.org/2001/XMLSchema#int", "value": "7"}}]},
+            "meta": {"query-time-ms": 2, "result-size-total": 1234}})
+
+    async def run():
+        qlever = QLeverClient(settings)
+        qlever.client = httpx.AsyncClient(transport=httpx.MockTransport(answer))
+        try:
+            return await qlever.query("SELECT ?n WHERE {}"), await qlever.query("SELECT ?uri ?n WHERE {}", fmt=TSV)
+        finally:
+            await qlever.client.aclose()
+
+    as_json, as_tsv = asyncio.run(run())
+    assert [h["accept-encoding"] for h in seen] == ["identity", "identity"]
+    assert [h["accept"] for h in seen] == ["application/sparql-results+json", "text/tab-separated-values"]
+    assert as_json == {"results": [[7]], "total": 1234, "time": "2ms", "variables": ["?n"]}
+    assert as_tsv["results"] == [["http://example.org/a", 3]] and as_tsv["variables"] == ["?uri", "?n"]
+
+
+def test_an_error_reported_as_json_is_an_error_in_either_format(settings):
+    """QLever answers a bad query with a JSON ``exception`` and HTTP 400 even when TSV was asked for."""
+    import httpx
+
+    from qleverlux.clients.qlever import TSV
+
+    def answer(request):
+        return httpx.Response(400, json={"exception": "Invalid SPARQL query", "status": "ERROR"})
+
+    async def run():
+        qlever = QLeverClient(settings)
+        qlever.client = httpx.AsyncClient(transport=httpx.MockTransport(answer))
+        try:
+            return await qlever.query("SELECT ?bad"), await qlever.query("SELECT ?bad", fmt=TSV)
+        finally:
+            await qlever.client.aclose()
+
+    for res in asyncio.run(run()):
+        assert res["error"] == "Invalid SPARQL query" and res["results"] == []
 
 
 def test_a_plain_text_refusal_from_qlever_reaches_the_log_and_the_count_recovers(settings, capsys):

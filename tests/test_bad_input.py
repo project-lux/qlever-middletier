@@ -25,7 +25,7 @@ class RecordingQLever:
     def __init__(self):
         self.queries = []
 
-    async def query(self, sparql, sheddable=True):
+    async def query(self, sparql, sheddable=True, fmt=None):
         self.queries.append(sparql)
         return {"results": [], "total": 0, "time": 1, "variables": ["?uri", "?total"]}
 

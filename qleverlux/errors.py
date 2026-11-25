@@ -59,10 +59,11 @@ class BadQuery(Exception):
     """The query could not be parsed or translated. Surfaces as a 400."""
 
 
-async def run_query(client, sparql, sheddable=True):
-    """Run a query and return its results, raising ``QLeverError`` on failure."""
+async def run_query(client, sparql, sheddable=True, fmt=None):
+    """Run a query and return its results, raising ``QLeverError`` on failure. ``fmt`` is the
+    client's result format (``clients.qlever.JSON`` / ``TSV``); None leaves it the client's default."""
     try:
-        res = await client.query(sparql, sheddable=sheddable)
+        res = await client.query(sparql, sheddable=sheddable, **({"fmt": fmt} if fmt else {}))
     except Exception as e:
         res = {"error": str(e), "results": [], "status": 0}
     if "error" in res:
