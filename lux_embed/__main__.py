@@ -117,8 +117,10 @@ def _export_cards(args):
                   f"({rate:,.0f}/s, ~{left / 60:,.0f} min left)", flush=True)
     writer.finish(limit=args.limit)
     read = next(seen)
+    reasons = "no name, a holding with nothing of its own" + (
+        ", or nothing but names and dates (--skip-name-only)" if args.skip_name_only else "")
     print(f"{args.scope}: {read:,} records read this run, {done:,} cards ({read - done:,} without one: "
-          f"no name, or a holding with nothing of its own)", flush=True)
+          f"{reasons})", flush=True)
     print(f"{args.scope}: complete, {writer.meta['count']:,} cards in {time.time() - started:,.0f}s -> {args.out}"
           + (f" (--limit {args.limit:,} trial; --restart for the full scope)" if args.limit else ""))
     writer.close()
@@ -194,7 +196,8 @@ def cmd_embed(args):
     for cards in batches:
         if not cards:
             continue
-        vectors = encoder.encode_documents([(title, text) for _, title, text in cards], dims, args.encode_batch)
+        vectors = encoder.encode_documents([(title, text) for _, title, text in cards], dims, args.encode_batch,
+                                           token_budget=args.token_budget)
         writer.append([iri for iri, _, _ in cards], vectors)
         done += len(cards)
         rate = done / (time.time() - started)
@@ -277,6 +280,8 @@ def main(argv=None):
             p.add_argument("--qlever", default=None, help="QLever endpoint for Stage 1 facets, e.g. http://localhost:7011")
             p.add_argument("--facets", default=None, help="Stage 1 facets extracted by `facets`, instead of --qlever")
             p.add_argument("--note-words", type=int, default=300)
+            p.add_argument("--skip-name-only", action="store_true",
+                           help="no card (so no vector) for a record with nothing but its names, or names and dates")
         if "device" in needs:
             p.add_argument("--device", default="auto", help="auto | cuda | mps | cpu")
         return p
@@ -315,6 +320,8 @@ def main(argv=None):
     p.add_argument("--limit", type=int, default=0, help="embed at most this many records (for trials)")
     p.add_argument("--batch", type=int, default=2048, help="records per card/facet batch")
     p.add_argument("--encode-batch", type=int, default=64)
+    p.add_argument("--token-budget", type=int, default=0,
+                   help="batch cards of one token length, up to this many tokens a batch, instead of --encode-batch cards (e.g. 16384, with --batch 65536 for fuller batches)")
     p.add_argument("--card-workers", type=int, default=-1,
                    help="processes building cards (default: the CPUs this job may use, less two; 0 = one thread)")
     p.add_argument("--max-seq-length", type=int, default=512)

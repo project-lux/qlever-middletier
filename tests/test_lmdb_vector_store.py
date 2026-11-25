@@ -275,3 +275,37 @@ def test_graph_dimensions_must_fit_the_vectors(tmp_path):
         assert s.meta["generation"] == generation  # nothing was published
     finally:
         s.close()
+
+
+def test_graph_bytes_matches_the_sizes_measured_on_real_graphs():
+    # e4m3 at connectivity 16: 1112, 600 and 344 bytes a vector at 1024, 512 and 256 dimensions
+    for dims, per_vector in ((1024, 1112), (512, 600), (256, 344)):
+        assert lvs.graph_bytes(1_000_000, dims, lvs.Scalar.E4M3) == 1_000_000 * per_vector
+    # full LUX's 4.85M agents at full width do not fit in one LMDB value; on 512 dimensions they do
+    assert lvs.graph_bytes(4_849_897, 1024, lvs.Scalar.E4M3) > lvs.LMDB_MAX_VALUE
+    assert lvs.graph_bytes(4_849_897, 512, lvs.Scalar.E4M3) < lvs.LMDB_MAX_VALUE
+
+
+def test_a_graph_too_big_for_lmdb_is_refused_before_it_is_built(tmp_path, monkeypatch):
+    data = np.random.default_rng(7).standard_normal((2000, 64)).astype(np.float32)
+    path = str(tmp_path / "store.lmdb")
+    iris = [f"https://example.org/data/concept/{i}" for i in range(2000)]
+    lvs.build_store(path, iris, data, scope="concept")
+    built = []
+    monkeypatch.setattr(lvs, "LMDB_MAX_VALUE", 300_000)  # 2000 x (64 + 88) bytes is 304,000
+    from types import SimpleNamespace  # DenseIndex is a C type: swap the module's name for it instead
+    monkeypatch.setattr(lvs, "DenseIndex", SimpleNamespace(init_ram=lambda *a, **k: built.append(1) or 1 / 0))
+    with pytest.raises(ValueError, match=r"over LMDB's .* limit .*--graph-dims 32 fits"):
+        lvs.build_index(path, "concept")
+    assert built == []  # refused up front, not after building
+
+
+def test_a_graph_bigger_than_guessed_is_still_refused_at_write(tmp_path, monkeypatch):
+    data = np.random.default_rng(8).standard_normal((500, 16)).astype(np.float32)
+    path = str(tmp_path / "store.lmdb")
+    iris = [f"https://example.org/data/concept/{i}" for i in range(500)]
+    lvs.build_store(path, iris, data, scope="concept")
+    monkeypatch.setattr(lvs, "graph_bytes", lambda *a, **k: 0)  # the estimate guesses low
+    monkeypatch.setattr(lvs, "LMDB_MAX_VALUE", 10_000)
+    with pytest.raises(ValueError, match="the graph is .* over LMDB's 4 GiB limit"):
+        lvs.build_index(path, "concept")

@@ -183,3 +183,114 @@ def test_bare_holdings_get_no_card_and_works_name_their_carrier(tmp_path):
     # the work names its carrier, without the blanket class, even though Books is on 77% of LUX objects
     facets = {"object type": [ids["item_class"], ids["books"]]}
     assert "Realized as: Books." in builder.card(records.get(ids["work"]), facets)[1]
+
+
+def test_skip_name_only_drops_cards_with_nothing_but_names(tmp_path):
+    """Half of full LUX's agents have only a name (and maybe other names): their vectors could only
+    match on how a name looks, so ``--skip-name-only`` gives them no card. Dates beside a name add
+    nothing either ("Works published: 1986", a birth year). Anything else - a field from the record,
+    a place of birth, a facet, a note - keeps the card."""
+    from lux_embed.cards import CardBuilder
+
+    D = "https://lux.collections.yale.edu/data/"
+    ids = {name: str(uuid.UUID(int=i + 1)) for i, name in enumerate(
+        ["bare", "aliases", "national", "noted", "faceted", "dated", "born_only", "born_in",
+         "french", "physics", "lyon"])}
+
+    def named(doc, label, *others):
+        doc["identified_by"] = [{"type": "Name", "content": label,
+                                 "classified_as": [{"id": "x", "equivalent": [{"id": PRIMARY}]}]}]
+        doc["identified_by"] += [{"type": "Name", "content": other} for other in others]
+        return doc
+
+    def person(key, *others, **fields):
+        return named({"id": f"{D}person/{ids[key]}", "type": "Person", **fields}, f"Person {key}", *others)
+
+    def birth(place=None):
+        event = {"type": "Birth", "timespan": {"type": "TimeSpan", "begin_of_the_begin": "1936-01-01T00:00:00",
+                                               "end_of_the_end": "1936-12-31T23:59:59"}}
+        if place:
+            event["took_place_at"] = [{"id": place, "type": "Place"}]
+        return event
+
+    nationality = {"id": f"{D}concept/{ids['french']}", "type": "Type",
+                   "classified_as": [{"id": "x", "equivalent": [{"id": "http://vocab.getty.edu/aat/300379842"}]}]}
+    docs = [
+        named({"id": f"{D}concept/{ids['french']}", "type": "Type"}, "French"),
+        named({"id": f"{D}concept/{ids['physics']}", "type": "Type"}, "Physics"),
+        person("bare"),
+        person("aliases", "P. Aliases", "Aliases, P."),
+        person("national", classified_as=[nationality]),
+        person("noted", referred_to_by=[{"type": "LinguisticObject", "content": "A physicist who taught in Lyon."}]),
+        person("faceted"),
+        person("dated", born=birth()),
+        person("born_only", born=birth()),
+        person("born_in", born=birth(f"{D}place/{ids['lyon']}")),
+        named({"id": f"{D}place/{ids['lyon']}", "type": "Place"}, "Lyon"),
+    ]
+    env = lmdb.open(str(tmp_path / "r.lmdb"), map_size=1 << 26, max_dbs=2, subdir=True)
+    with env.begin(write=True, db=env.open_db(b"data")) as txn:
+        for doc in docs:
+            txn.put(uuid.UUID(doc["id"].rsplit("/", 1)[-1]).bytes, zlib.compress(json.dumps(doc).encode()))
+    env.close()
+    build_labels(str(tmp_path / "r.lmdb"), str(tmp_path / "labels.lmdb"), workers=1)
+    records, labels = RecordStore(str(tmp_path / "r.lmdb")), LabelStore(str(tmp_path / "labels.lmdb"))
+    facets = {"faceted": {"subject": [ids["physics"]]}, "dated": {"published": ["1986", "1986"]}}
+
+    def cards(skip):
+        builder = CardBuilder(records, labels, skip_name_only=skip)
+        return {key: builder.card(records.get(ids[key]), facets.get(key))
+                for key in ("bare", "aliases", "national", "noted", "faceted", "dated", "born_only", "born_in")}
+
+    kept = cards(skip=False)
+    assert all(kept.values())  # off by default: every record still gets its card
+    assert kept["bare"] == ("Person bare", "Person bare")
+    assert kept["aliases"][1].startswith("Also known as: ")
+
+    skipped = cards(skip=True)
+    assert skipped["bare"] is None and skipped["aliases"] is None
+    assert "Nationality: French." in skipped["national"][1]
+    assert "taught in Lyon" in skipped["noted"][1]
+    assert "Subjects: Physics." in skipped["faceted"][1]
+    # a name and dates is still nothing to embed; a place of birth is something
+    assert kept["dated"][1].endswith("Works published: 1986.") and skipped["dated"] is None
+    assert "Born: 1936" in kept["born_only"][1] and skipped["born_only"] is None
+    assert "Born: 1936, Lyon." in skipped["born_in"][1]
+
+
+def test_agent_cards_name_the_relation_of_each_subject_and_both_date_spans(tmp_path):
+    """An author on Edo prints and an Edo print designer must not read alike: subjects of the agent's
+    works and subjects their objects depict are named apart. Publication is its own span, since an
+    old author's works mostly come out in modern editions. Facets extracted before the split carry a
+    single "subject", which still reads as Subjects."""
+    from lux_embed.cards import CardBuilder
+
+    D = "https://lux.collections.yale.edu/data/"
+    ids = {name: str(uuid.UUID(int=i + 1)) for i, name in enumerate(["hadith", "landscape", "agent"])}
+
+    def named(doc, label):
+        doc["identified_by"] = [{"type": "Name", "content": label,
+                                 "classified_as": [{"id": "x", "equivalent": [{"id": PRIMARY}]}]}]
+        return doc
+
+    docs = [named({"id": f"{D}concept/{ids['hadith']}", "type": "Type"}, "Hadith"),
+            named({"id": f"{D}concept/{ids['landscape']}", "type": "Type"}, "Landscapes"),
+            named({"id": f"{D}person/{ids['agent']}", "type": "Person"}, "An Agent")]
+    env = lmdb.open(str(tmp_path / "r.lmdb"), map_size=1 << 26, max_dbs=2, subdir=True)
+    with env.begin(write=True, db=env.open_db(b"data")) as txn:
+        for doc in docs:
+            txn.put(uuid.UUID(doc["id"].rsplit("/", 1)[-1]).bytes, zlib.compress(json.dumps(doc).encode()))
+    env.close()
+    build_labels(str(tmp_path / "r.lmdb"), str(tmp_path / "labels.lmdb"), workers=1)
+    records = RecordStore(str(tmp_path / "r.lmdb"))
+    builder = CardBuilder(records, LabelStore(str(tmp_path / "labels.lmdb")))
+    agent = records.get(ids["agent"])
+
+    _, text = builder.card(agent, {"work subject": [ids["hadith"]], "depicted subject": [ids["landscape"]],
+                                   "dates": ["1650", "1702"], "published": ["2022", "2023"]})
+    assert "Works about: Hadith." in text and "Depicted: Landscapes." in text
+    assert "Active: 1650–1702." in text and "Works published: 2022–2023." in text
+    assert "Subjects" not in text
+
+    _, legacy = builder.card(agent, {"subject": [ids["hadith"]], "published": ["2022", "2022"]})
+    assert "Subjects: Hadith." in legacy and "Works published: 2022." in legacy

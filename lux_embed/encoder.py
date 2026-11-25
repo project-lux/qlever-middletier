@@ -91,13 +91,46 @@ class Encoder:
             raise FloatingPointError("the encoder produced NaN, Inf or zero vectors")
         return vectors / norms
 
-    def encode_documents(self, cards: list[tuple[str, str]], dims: int, batch_size: int = 64) -> np.ndarray:
+    def encode_documents(self, cards: list[tuple[str, str]], dims: int, batch_size: int = 64,
+                         token_budget: int = 0) -> np.ndarray:
+        """Vectors for ``cards``, in their order.
+
+        ``token_budget`` batches cards of exactly one token length, as many as fit the budget, instead
+        of ``batch_size`` cards whatever their lengths. Agent cards are short (median 36 tokens) with a
+        long tail, so batching by count pads 1.7-2.7x, and padding needs an attention mask, which keeps
+        the fast attention kernels from running: on a DGX Spark one length per batch encoded 441
+        cards/s against 229 (files/encode_benchmark.py). Bigger windows (``embed --batch``) give each
+        length more cards and so fuller batches.
+        """
         self.check_dims(dims)
         texts = [self.document(title, text) for title, text in cards]
-        vectors = self.model.encode(
-            texts, batch_size=batch_size, truncate_dim=dims, normalize_embeddings=True, convert_to_numpy=True
-        )
-        return self._finish(vectors)
+        if not token_budget:
+            vectors = self.model.encode(
+                texts, batch_size=batch_size, truncate_dim=dims, normalize_embeddings=True, convert_to_numpy=True
+            )
+            return self._finish(vectors)
+        out = np.empty((len(texts), dims), dtype=np.float32)
+        for rows in self.length_batches(texts, token_budget):
+            out[rows] = self.model.encode(
+                [texts[i] for i in rows], batch_size=len(rows), truncate_dim=dims,
+                normalize_embeddings=True, convert_to_numpy=True,
+            )
+        return self._finish(out)
+
+    def length_batches(self, texts: list[str], token_budget: int, most: int = 4096) -> list[list[int]]:
+        """Indexes of ``texts`` in batches of one token length each (as the model will see them, so
+        cut at ``max_seq_length``), longest first, each at most ``token_budget`` tokens and ``most``
+        texts."""
+        cap = self.model.max_seq_length
+        lengths = [min(len(ids), cap) for ids in self.model.tokenizer(texts, add_special_tokens=True)["input_ids"]]
+        groups: dict[int, list[int]] = {}
+        for i in sorted(range(len(texts)), key=lambda i: -lengths[i]):
+            groups.setdefault(lengths[i], []).append(i)
+        batches = []
+        for length, rows in groups.items():
+            size = max(1, min(most, token_budget // max(length, 1)))
+            batches += [rows[start:start + size] for start in range(0, len(rows), size)]
+        return batches
 
     def encode_query(self, query: str, dims: int) -> np.ndarray:
         self.check_dims(dims)

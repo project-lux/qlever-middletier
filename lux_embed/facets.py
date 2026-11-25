@@ -42,20 +42,46 @@ WORK_FACETS = {
     "work type": ("?x lux:workClassification ?v", ["workClassification"]),
 }
 
-# scope -> list of (how a member ?x relates to ?target, member facets, kinds kept, predicates needed)
+# scope -> list of (how a member ?x relates to ?target, member facets, kinds kept, predicates needed).
+# A kind kept may be (member facet, kind it is stored as): an agent's subjects are two different things
+# - what the objects they made depict, and what the works they wrote or made are about - and a card
+# that merged them could not tell an author on Edo prints from an Edo print designer.
 SCOPE_FACETS = {
     "work": [("?x lux:carries ?target", ITEM_FACETS, ["creator", "material", "object type", "place"], ["carries"])],
     "agent": [
-        ("?x lux:agentOfItemBeginning ?target", ITEM_FACETS, ["place", "object type", "material", "subject"], ["agentOfItemBeginning"]),
-        ("?x lux:agentOfWorkBeginning ?target", WORK_FACETS, ["subject", "work type"], ["agentOfWorkBeginning"]),
+        ("?x lux:agentOfItemBeginning ?target", ITEM_FACETS,
+         ["place", "object type", "material", ("subject", "depicted subject")], ["agentOfItemBeginning"]),
+        ("?x lux:agentOfWorkBeginning ?target", WORK_FACETS,
+         [("subject", "work subject"), "work type"], ["agentOfWorkBeginning"]),
     ],
     "set": [("?x lux:itemMemberOfSet ?target", ITEM_FACETS, ["creator", "object type", "subject"], ["itemMemberOfSet"])],
 }
-# scope -> how a member's dates relate (min start / max end become "Active" or "Made")
+# scope -> {span: [(pattern binding ?s and ?e for a ?target, predicates it needs), ...]}. A span's
+# patterns are UNIONed and its min start / max end become one date range on the card.
 SCOPE_DATES = {
-    "work": "?x lux:carries ?target . ?x lux:startOfItemBeginning ?s . ?x lux:endOfItemBeginning ?e",
-    "agent": "?x lux:agentOfItemBeginning ?target . ?x lux:startOfItemBeginning ?s . ?x lux:endOfItemBeginning ?e",
+    "work": {"dates": [("?x lux:carries ?target . ?x lux:startOfItemBeginning ?s . ?x lux:endOfItemBeginning ?e",
+                        ["carries", "startOfItemBeginning", "endOfItemBeginning"])]},
+    "agent": {
+        # when they made things: objects produced and works created
+        "dates": [
+            ("?x lux:agentOfItemBeginning ?target . ?x lux:startOfItemBeginning ?s . ?x lux:endOfItemBeginning ?e",
+             ["agentOfItemBeginning", "startOfItemBeginning", "endOfItemBeginning"]),
+            ("?x lux:agentOfWorkBeginning ?target . ?x lux:startOfWorkBeginning ?s . ?x lux:endOfWorkBeginning ?e",
+             ["agentOfWorkBeginning", "startOfWorkBeginning", "endOfWorkBeginning"]),
+        ],
+        # when works they wrote or published came out: on full LUX far more works have this than a
+        # creation date (24M against 0.6M), but for an author of old works it is mostly modern
+        # editions, so it is its own range rather than stretching "Active" to the present
+        "published": [
+            ("?x lux:agentOfWorkBeginning ?target . ?x lux:startOfWorkPublication ?s . ?x lux:endOfWorkPublication ?e",
+             ["agentOfWorkBeginning", "startOfWorkPublication", "endOfWorkPublication"]),
+            ("?x lux:agentOfWorkPublication ?target . ?x lux:startOfWorkPublication ?s . ?x lux:endOfWorkPublication ?e",
+             ["agentOfWorkPublication", "startOfWorkPublication", "endOfWorkPublication"]),
+        ],
+    },
 }
+#: Kinds whose values are a (start year, end year) range rather than records.
+DATE_KINDS = frozenset(span for spans in SCOPE_DATES.values() for span in spans)
 TOP = {"work": 5, "agent": 8, "set": 10}
 TFIDF_SCOPES = {"agent", "set"}
 UBIQUITOUS = 0.5  # a value on more than half of all objects ("works") says nothing about anyone
@@ -108,12 +134,19 @@ class Facets:
         for join, member_facets, kinds, needs in SCOPE_FACETS.get(scope, []):
             if not set(needs) <= available:
                 continue
-            usable = {k: member_facets[k] for k in kinds if k in member_facets and set(member_facets[k][1]) <= available}
+            usable = {}
+            for spec in kinds:
+                facet, kind = (spec, spec) if isinstance(spec, str) else spec
+                if facet in member_facets and set(member_facets[facet][1]) <= available:
+                    usable[kind] = member_facets[facet]
             if usable:
                 self.plans.append((join, usable))
-        self.dates = SCOPE_DATES.get(scope) if all(
-            p in available for p in ("startOfItemBeginning", "endOfItemBeginning")
-        ) else None
+        # span -> the patterns of it this endpoint can answer
+        self.date_spans = {}
+        for span, sources in SCOPE_DATES.get(scope, {}).items():
+            patterns = [pattern for pattern, needs in sources if set(needs) <= available]
+            if patterns:
+                self.date_spans[span] = patterns
         self.df: dict[str, dict[str, int]] = {}
         self.total = 1
         if self.plans:
@@ -143,7 +176,8 @@ class Facets:
         self.df, self.total = cached["df"], cached["total"]
 
     def fetch(self, targets: list[str]) -> dict[str, dict]:
-        """``{target IRI: {kind: [value IRI, ...] ranked, "dates": (min, max)}}`` for one batch."""
+        """``{target IRI: {kind: [value IRI, ...] ranked, span: (min, max)}}`` for one batch, a span
+        being one of DATE_KINDS (``dates``, ``published``)."""
         out: dict[str, dict] = defaultdict(dict)
         if not targets:
             return out
@@ -155,9 +189,9 @@ class Facets:
                 for kind, values in kinds.items():
                     out[target].setdefault(kind, [])
                     out[target][kind] += self._rank(kind, values)
-        if self.dates:
-            for target, start, end in self._dates(targets):
-                out[target]["dates"] = (start[:4].lstrip("0") or "0", end[:4].lstrip("0") or "0")
+        for span, patterns in self.date_spans.items():
+            for target, start, end in self._dates(targets, patterns):
+                out[target][span] = (start[:4].lstrip("0") or "0", end[:4].lstrip("0") or "0")
         return out
 
     def _rank(self, kind: str, values: dict[str, int]) -> list[str]:
@@ -178,12 +212,13 @@ class Facets:
         )
         return self._run(query, targets, lambda part: self._grouped(part, join, usable))
 
-    def _dates(self, targets):
+    def _dates(self, targets, patterns):
+        union = " UNION ".join(f"{{ {pattern} }}" for pattern in patterns)
         query = (
             f"SELECT ?target (MIN(?s) AS ?start) (MAX(?e) AS ?end) WHERE {{ VALUES ?target {{ {_values(targets)} }} "
-            f"{self.dates} }} GROUP BY ?target"
+            f"{union} }} GROUP BY ?target"
         )
-        return self._run(query, targets, self._dates)
+        return self._run(query, targets, lambda part: self._dates(part, patterns))
 
     def _run(self, query, targets, retry):
         """Runs one batch; on a timeout or error, halves the batch, and drops a lone target that

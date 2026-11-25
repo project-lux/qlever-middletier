@@ -10,9 +10,11 @@ so the document frequencies (``facet_df.json``) are only needed on the extractin
 Layout of ``facets.lmdb`` (an LMDB directory):
 
 * sub-DB ``facets:<scope>`` - key = 16-byte UUID of the target, value = zlib JSON
-  ``{kind: [value UUID, ...], "dates": [start, end]}``. Values are stored as UUIDs because that is
-  all the label store needs to resolve them. Targets with no facets have no entry.
-* sub-DB ``meta`` - key = scope, value = JSON ``{"done", "total", "complete", "kinds", "dates"}``.
+  ``{kind: [value UUID, ...], span: [start, end]}``, a span being one of ``DATE_KINDS`` (``dates``,
+  and for agents ``published``). Values are stored as UUIDs because that is all the label store
+  needs to resolve them. Targets with no facets have no entry.
+* sub-DB ``meta`` - key = scope, value = JSON ``{"done", "total", "complete", "kinds", "dates"}``, ``dates``
+  listing the spans extracted.
 * ``targets-<scope>.txt`` - every target IRI, one per line, fetched once so a resumed run walks the
   same list; ``done`` counts a committed prefix of it.
 * ``facet_df.json`` - the document-frequency cache :class:`Facets` keeps.
@@ -34,7 +36,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import lmdb
 
-from .facets import FACET_BATCH, PREFIX, SCOPE_FACETS, Facets, QLever
+from .facets import DATE_KINDS, FACET_BATCH, PREFIX, SCOPE_FACETS, Facets, QLever
 from .records import uuid_bytes, uuid_of
 
 FACET_SCOPES = tuple(SCOPE_FACETS)  # work, agent, set
@@ -50,7 +52,7 @@ def _open_env(path: str, readonly: bool = False) -> lmdb.Environment:
 def _encode(facets: dict) -> bytes:
     out = {}
     for kind, values in facets.items():
-        out[kind] = list(values) if kind == "dates" else [uuid_of(v) for v in values]
+        out[kind] = list(values) if kind in DATE_KINDS else [uuid_of(v) for v in values]
     return zlib.compress(json.dumps(out, separators=(",", ":")).encode(), 6)
 
 
@@ -139,7 +141,7 @@ def dump_scope(qlever: QLever, scope: str, out: str, batch: int = FACET_BATCH, w
         print(f"{scope}: {total:,} targets in {time.time() - started:,.0f}s -> {targets_path}", flush=True)
         meta = {"done": 0, "total": total, "complete": False,
                 "kinds": sorted({kind for _, usable in facets.plans for kind in usable}),
-                "dates": bool(facets.dates)}
+                "dates": sorted(facets.date_spans)}
         with env.begin(write=True, db=meta_db) as txn:
             txn.put(scope.encode(), json.dumps(meta).encode())
     else:

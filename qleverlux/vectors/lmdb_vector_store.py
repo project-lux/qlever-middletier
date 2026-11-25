@@ -111,9 +111,38 @@ def scopes_in(path_or_env: str | lmdb.Environment) -> list[str]:
     return sorted({name[: -len(".meta")] for name in names if name.endswith(".meta")})
 
 
+#: LMDB's largest value. A scope's graph is one value, so that it can be served in place from the
+#: map, and so no bigger than this: at full width (1112 bytes a vector for 1024d e4m3) that is
+#: about 3.9M vectors - fewer than full LUX's agents.
+LMDB_MAX_VALUE = 0xFFFFFFFF
+#: Bytes a vector for one dimension, by quantization; the neighbour lists add about
+#: NEIGHBOUR_BYTES at connectivity 16 (measured: 1112, 600 and 344 bytes at 1024, 512 and 256 e4m3).
+SCALAR_BYTES = {"F64": 8, "F32": 4, "F16": 2, "BF16": 2, "E5M2": 1, "E4M3": 1, "E3M2": 1, "E2M3": 1}
+NEIGHBOUR_BYTES = 88
+
+
+def graph_bytes(count: int, dims: int, quantization: Scalar, connectivity: int = 16) -> int:
+    """About how big a graph of ``count`` vectors on ``dims`` dimensions will be."""
+    per_vector = dims * SCALAR_BYTES.get(quantization.name, 4) + NEIGHBOUR_BYTES * connectivity / 16
+    return int(count * per_vector)
+
+
+def _too_big(size: int, count: int, dims: int, quantization: Scalar, connectivity: int) -> str:
+    """Why a graph of ``size`` bytes cannot be stored, and which --graph-dims would fit."""
+    fits = [d for d in (768, 512, 384, 256, 128, 64, 32)
+            if d < dims and graph_bytes(count, d, quantization, connectivity) < LMDB_MAX_VALUE * 0.95]
+    advice = f"build it on fewer dimensions (--graph-dims {fits[0]} fits)" if fits else "split the scope"
+    return (f"a graph of {count:,} vectors is {size / 1e9:.1f} GB, over LMDB's {LMDB_MAX_VALUE / 2**30:.0f} GiB "
+            f"limit on one value, which the graph must be to be served in place; {advice}")
+
+
 def _write_graph(txn: lmdb.Transaction, env: lmdb.Environment, dbs: dict, monolith) -> int:
     """Stores a SafeGraphs monolith on a page boundary; returns the pad in front of it."""
     graph_pad = env.stat()["psize"] - LMDB_PAGE_HEADER
+    if graph_pad + len(monolith) > LMDB_MAX_VALUE:  # graph_bytes guessed low: say so plainly
+        raise ValueError(f"the graph is {(graph_pad + len(monolith)) / 1e9:.1f} GB, over LMDB's 4 GiB limit on "
+                         f"one value, which it must be to be served in place; build it on fewer dimensions "
+                         f"(--graph-dims)")
     value = bytearray(graph_pad + len(monolith))
     value[graph_pad:] = monolith
     txn.put(b"safegraphs", value, db=dbs["graph"])
@@ -157,6 +186,10 @@ def _build_graph(chunks: Iterable[tuple[int, np.ndarray]], count: int, dims: int
         raise ValueError(f"cannot build a {quantization.name} graph: the store gives USearch float vectors, "
                          f"which that kind does not convert. Use one of {', '.join(FLOAT_QUANTIZATIONS)} "
                          f"(E4M3 for one byte a dimension).")
+    # Before building, not after: a full-width agent graph takes minutes to build and is then refused.
+    size = graph_bytes(count, dims, quantization, connectivity)
+    if size > LMDB_MAX_VALUE:
+        raise ValueError(_too_big(size, count, dims, quantization, connectivity))
     pool = usearch.Executor.for_ram()
     index = DenseIndex.init_ram(dims, DenseMetric.ANGULAR, quantization, connectivity=connectivity)
     index.reserve(count)
