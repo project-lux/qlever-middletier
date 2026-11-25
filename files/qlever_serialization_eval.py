@@ -25,9 +25,18 @@ actually sends, what each choice costs end to end, and whether it could be a dro
    parsing in Python. Each (query, format, encoding) is then timed ``--repeats`` times,
    interleaved, and the median kept. QLever's own compute time from the warm-up is reported
    beside it, for scale.
-4. **Throughput.** ``--concurrency`` clients share one event loop and one httpx client, as in a
+4. **Cache misses** (``--cold N``). The format also changes what QLever computes: on a miss, the
+   related-list queries (dozens of OPTIONAL count sub-selects, summed and sorted) took 360-900 ms
+   as either JSON format and 17-65 ms as TSV, CSV or XML, with or without ``send`` - the two JSON
+   formats are the ones that report the total size. Searches, facets and HAL queries cost the same
+   in every format. This phase clears QLever's result cache before every run, so run it only on a
+   QLever nobody else is using; ``--access-token`` (or ``$QLEVER_ACCESS_TOKEN``) where clearing
+   needs one.
+5. **Throughput.** ``--concurrency`` clients share one event loop and one httpx client, as in a
    middle tier worker, cycling through the workload for ``--seconds``: requests a second and
-   p50/p95 latency including the parse.
+   p50/p95 latency including the parse. QLever's cache keeps ``cache-max-num-entries`` results
+   (200 by default, printed at the start); a workload with more distinct queries than that keeps
+   missing as it cycles, so these runs include the cache-miss costs above.
 
 Formats QLever answers but the middle tier cannot use are still timed, and flagged: CSV cannot
 tell an IRI from a literal or a number from a string, and the binary IDs are QLever's internal
@@ -386,6 +395,36 @@ async def latency(endpoint, workload, formats, encodings, repeats, timeout):
         return workload, checks, timings, sizes
 
 
+def qlever_cache_settings(endpoint: str) -> dict:
+    try:
+        with urllib.request.urlopen(f"{endpoint}?cmd=get-settings", timeout=30) as response:
+            settings = json.load(response)
+    except Exception as error:  # an endpoint that hides its settings still gets measured
+        return {"unavailable": str(error)}
+    return {k: v for k, v in settings.items() if k.startswith("cache-")}
+
+
+async def cold_costs(endpoint, workload, formats, repeats, token, timeout):
+    """Each query on a cache miss, per format: QLever's result cache is cleared before every run, the
+    order of formats rotated, and the median of ``repeats`` kept. Rows were already checked."""
+    params = {"cmd": "clear-cache", **({"access-token": token} if token else {})}
+    out = []
+    async with httpx.AsyncClient(timeout=timeout + 5) as client:
+        for i, item in enumerate(workload):
+            times = {fmt: [] for fmt in formats}
+            for rep in range(repeats):
+                shift = (i + rep) % len(formats)
+                for fmt in formats[shift:] + formats[:shift]:
+                    cleared = await client.get(endpoint, params=params)
+                    if cleared.status_code != 200:
+                        raise RuntimeError(f"clear-cache refused (HTTP {cleared.status_code}); pass --access-token")
+                    got = await fetch(client, endpoint, item, fmt, "identity", timeout)
+                    times[fmt].append(got["http_ms"] + got["parse_ms"])
+            out.append({"kind": item["kind"], "label": item["label"],
+                        "ms": {fmt: round(median(v), 1) for fmt, v in times.items()}})
+    return out
+
+
 async def throughput(endpoint, workload, fmt, encoding, concurrency, seconds, timeout):
     limits = httpx.Limits(max_connections=concurrency)
     latencies, errors = [], 0
@@ -432,6 +471,12 @@ def main() -> None:
     parser.add_argument("--timeout", type=int, default=60, help="seconds per query (QLever's own limit applies)")
     parser.add_argument("--records", default="", help='JSON {scope: uri} instead of picking from the endpoint')
     parser.add_argument("--out", default="", help="write every measurement here as JSON")
+    parser.add_argument("--cold", type=int, default=0,
+                        help="also time each query on a QLever cache miss this many times per format (clears QLever's "
+                             "result cache before every run: not on a server others are using)")
+    parser.add_argument("--cold-formats", default="qlever-json,sparql-json,tsv,sparql-xml")
+    parser.add_argument("--access-token", default=os.environ.get("QLEVER_ACCESS_TOKEN", ""),
+                        help="for clear-cache where QLever requires it (default $QLEVER_ACCESS_TOKEN)")
     args = parser.parse_args()
     formats = args.formats.split(",")
     encodings = args.encodings.split(",")
@@ -443,6 +488,12 @@ def main() -> None:
     workload += bulk_queries([int(n) for n in args.bulk.split(",") if n])
     kinds = sorted({w["kind"] for w in workload}, key=[w["kind"] for w in workload].index)
     print(f"workload: {len(workload)} queries - " + ", ".join(f"{k} {sum(w['kind'] == k for w in workload)}" for k in kinds))
+    cache = qlever_cache_settings(args.endpoint)
+    print(f"QLever result cache: {cache}")
+    entries = int(cache.get("cache-max-num-entries", 0) or 0)
+    if entries and entries < len(workload):
+        print(f"  NOTE: the workload has {len(workload)} distinct queries and the cache keeps {entries} results, so "
+              f"cycling through it (the throughput runs) keeps missing: those runs measure cache misses too")
 
     workload, checks, timings, sizes = asyncio.run(
         latency(args.endpoint, workload, formats, encodings, args.repeats, args.timeout))
@@ -494,10 +545,29 @@ def main() -> None:
                                          "rows": sizes[(i, fmt, enc)][2]}
                         for fmt in formats for enc in encodings}})
 
+    if args.cold:
+        cold_formats = [f for f in args.cold_formats.split(",") if f in FORMATS]
+        cold = asyncio.run(cold_costs(args.endpoint, [w for w in workload if w["kind"] != "bulk"], cold_formats,
+                                      args.cold, args.access_token, args.timeout))
+        report["cold"] = cold
+        print(f"\n== On a QLever cache miss (cache cleared before every run): median ms, summed per kind")
+        print(f"  {'kind':12} " + "  ".join(f"{f:>12}" for f in cold_formats))
+        for kind in kinds:
+            rows = [c for c in cold if c["kind"] == kind]
+            if rows:
+                print(f"  {kind:12} " + "  ".join(f"{sum(c['ms'][f] for c in rows):12.0f}" for f in cold_formats))
+        print(f"  {'ALL':12} " + "  ".join(f"{sum(c['ms'][f] for c in cold):12.0f}" for f in cold_formats))
+        base = cold_formats[0]
+        worst = sorted(cold, key=lambda c: c["ms"][base] - min(c["ms"].values()), reverse=True)[:5]
+        print(f"  largest gaps against {base}:")
+        for c in worst:
+            print(f"    {c['kind']:10} {c['label'][:48]:48} " + "  ".join(f"{f} {c['ms'][f]:.0f}" for f in cold_formats))
+
     levels = [int(c) for c in args.concurrency.split(",") if c]
     if levels:
         mixed = [w for w in workload if w["kind"] != "bulk"]
-        print(f"\n== Throughput over the middle tier's queries ({len(mixed)}, warm cache), {args.seconds:g} s each")
+        state = "warm cache" if not entries or entries >= len(mixed) else f"a {entries}-entry cache: partly misses"
+        print(f"\n== Throughput over the middle tier's queries ({len(mixed)}, {state}), {args.seconds:g} s each")
         print(f"  {'format':12} {'encoding':8} " + "  ".join(f"{'c=' + str(c):>26}" for c in levels))
         for fmt in [f for f in args.throughput_formats.split(",") if f in formats]:
             for enc in encodings:
