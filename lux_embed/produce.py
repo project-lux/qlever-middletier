@@ -24,9 +24,9 @@ from concurrent.futures import ProcessPoolExecutor
 from types import SimpleNamespace
 
 from .card_store import pack
-from .facets import FACET_BATCH
+from .facets import FACET_BATCH, SCOPE_FACETS
 
-FACET_SCOPES = {"work", "agent", "set"}
+FACET_SCOPES = set(SCOPE_FACETS)
 PIECE = 512  # members per task handed to a worker
 
 

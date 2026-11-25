@@ -294,3 +294,53 @@ def test_agent_cards_name_the_relation_of_each_subject_and_both_date_spans(tmp_p
 
     _, legacy = builder.card(agent, {"subject": [ids["hadith"]], "published": ["2022", "2022"]})
     assert "Subjects: Hadith." in legacy and "Works published: 2022." in legacy
+
+
+def test_place_cards_say_what_the_works_about_them_cover(tmp_path):
+    """A place card is otherwise a name and a part-of chain; the facets of the works about it (their
+    subjects, and what kind of works they are) say what the place is known for. Specimen localities
+    are not joined. A place no work is about gets the card it always had."""
+    from lux_embed.cards import CardBuilder
+    from lux_embed.facets import SCOPE_FACETS, TFIDF_SCOPES
+
+    D = "https://lux.collections.yale.edu/data/"
+    ids = {name: str(uuid.UUID(int=i + 1)) for i, name in enumerate(
+        ["tuscany", "town", "quiet", "hill towns", "frescoes", "guidebooks", "books"])}
+
+    def named(doc, label):
+        doc["identified_by"] = [{"type": "Name", "content": label,
+                                 "classified_as": [{"id": "x", "equivalent": [{"id": PRIMARY}]}]}]
+        return doc
+
+    def concept(key, label, aat=None):
+        doc = {"id": f"{D}concept/{ids[key]}", "type": "Type"}
+        if aat:
+            doc["equivalent"] = [{"id": f"http://vocab.getty.edu/aat/{aat}"}]
+        return named(doc, label)
+
+    def place(key, label, **fields):
+        return named({"id": f"{D}place/{ids[key]}", "type": "Place", **fields}, label)
+
+    tuscany = [{"id": f"{D}place/{ids['tuscany']}", "type": "Place"}]
+    docs = [place("tuscany", "Tuscany"), place("town", "San Gimignano", part_of=tuscany),
+            place("quiet", "Poggibonsi", part_of=tuscany), concept("hill towns", "Hill towns"),
+            concept("frescoes", "Fresco painting"), concept("guidebooks", "Guidebooks"),
+            concept("books", "Books", "300028051")]
+    env = lmdb.open(str(tmp_path / "r.lmdb"), map_size=1 << 26, max_dbs=2, subdir=True)
+    with env.begin(write=True, db=env.open_db(b"data")) as txn:
+        for doc in docs:
+            txn.put(uuid.UUID(doc["id"].rsplit("/", 1)[-1]).bytes, zlib.compress(json.dumps(doc).encode()))
+    env.close()
+    build_labels(str(tmp_path / "r.lmdb"), str(tmp_path / "labels.lmdb"), workers=1)
+    records = RecordStore(str(tmp_path / "r.lmdb"))
+    builder = CardBuilder(records, LabelStore(str(tmp_path / "labels.lmdb")))
+
+    assert [join for join, *_ in SCOPE_FACETS["place"]] == ["?x lux:workAboutPlace ?target"]
+    assert "place" in TFIDF_SCOPES
+    facets = {"work subject": [ids["hill towns"], ids["frescoes"]], "work type": [ids["books"], ids["guidebooks"]]}
+    _, card = builder.card(records.get(ids["town"]), facets)
+    assert "Part of: Tuscany." in card
+    assert "Works about it cover: Hill towns" in card and "Fresco painting" in card
+    assert "Works about it: Books, Guidebooks." in card
+    _, bare = builder.card(records.get(ids["quiet"]), {})
+    assert "Works about" not in bare
