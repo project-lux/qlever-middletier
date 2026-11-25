@@ -25,6 +25,11 @@ python tester.py [scope]                # REPL: type a query string or JSON, pri
 python -m pytest tests/ -q              # SPARQL builder conformance tests (W3C + SPARQL 1.1 suites)
 ```
 
+`requirements.txt` sets minimum versions for dependencies, mostly indirect ones, with published
+vulnerabilities below them. They come from `pip-audit` over what the middle tier installs. Run it again on a
+deployed environment, and raise or add a minimum when a new advisory names something:
+`pip freeze | grep -v -E '^-e|@ ' > /tmp/req.txt && pip-audit --no-deps --disable-pip -r /tmp/req.txt`.
+
 Vector similarity has two more commands, run from this root with their own venv (`requirements-vectors.txt`;
 the middle tier never imports them, enforced by `tests/test_import_boundaries.py`):
 
@@ -44,7 +49,11 @@ vector code; the request path and translator have none, so treat the compiled ou
 feedback loop for query-translation changes: it exercises the parser → JsonReader → SparqlTranslator chain
 without needing QLever running.
 
-Configuration is env-var first (`.env` via `dotenv`, all keys prefixed `QLMT_`), overridden by CLI flags. Each
+Configuration is env-var first (all keys prefixed `QLMT_`), overridden by CLI flags. A `.env` in the directory
+the process starts in is read by pydantic-settings, and its `QLMT_` keys win over the real environment. It is
+never loaded into `os.environ`: it once was, with `override=True`, so any variable in it (`HTTPS_PROXY`,
+`SSL_CERT_FILE`, ...) replaced the real one for the whole process. The package is `python-dotenv`; `dotenv` on
+PyPI is a different, deprecated project. Each
 setting is declared exactly once, as a field on `Settings` in `qleverlux/settings.py`; its env var is `QLMT_` +
 the field name unless the field carries an explicit alias, and its flag is the field name with hyphens unless
 it is listed in `NO_CLI`. Booleans get `--flag` / `--no-flag`. Passing `--pgpass` deliberately aborts the
@@ -446,6 +455,10 @@ Placeholders used across the templates: `URI-HERE`, `V_TARGET_URI`, `V_FROM_URI`
 
 ### Caching layers
 
+- PostgreSQL connections take keyword arguments (`PostgresCache.connect_args`), never a pasted conninfo string,
+  and over TCP (`QLMT_PGHOST` set) apply `QLMT_PGSSLMODE`, `require` by default; empty leaves libpq's own
+  default, `prefer`, which silently falls back to an unencrypted connection. With no host it is a Unix socket,
+  with no password or SSL, as before.
 - Record JSON: PostgreSQL `lux_data_cache` (`QLMT_USE_PG_DATA_CACHE`) and/or LMDB (`QLMT_LMDB_PATH`, zlib-
   compressed values). Loaded by `files/load-json-to-postgres.py`. `RecordCache` (`clients/record_cache.py`)
   picks between them; with both PostgreSQL tables on, one joined query fetches the record and its links
@@ -538,7 +551,9 @@ so there is nothing to map it onto. Hand corrections that must survive regenerat
 `<config-path>/derive_overrides.json` as per-file `patch`/`delete` rules; an instance without its own file falls
 back to this checkout's.
 
-`files/translate_query.py` is the earlier, regex-based version of the same idea and is superseded by it.
+The script runs the upstream JavaScript (it imports `lib/build-query/` through `node`, and evaluates the
+MarkLogic config literals), so only point it at checkouts you trust. Its regex-based predecessor,
+`files/translate_query.py`, `eval`ed the upstream query files in Python and has been removed.
 
 ## Verifying a change
 

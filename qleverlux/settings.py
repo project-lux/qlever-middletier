@@ -5,7 +5,8 @@ variable is ``QLMT_`` + the field name unless the field carries an explicit
 alias, and its command-line flag is the field name with underscores turned into
 hyphens unless it is listed in ``NO_CLI``. Precedence is env (including
 ``.env``, which wins over the real environment) first, then any flag actually
-passed on the command line.
+passed on the command line. Only ``QLMT_`` settings are read from ``.env``, and
+it is never loaded into ``os.environ``.
 
 The old version declared each setting twice - once reading ``os.getenv`` and
 once as an ``argparse`` argument whose default was the env value - which is
@@ -24,7 +25,6 @@ import sys
 from getpass import getuser
 from typing import Annotated
 
-from dotenv import load_dotenv
 from pydantic import BeforeValidator, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -33,8 +33,14 @@ if "--pgpass" in sys.argv:
     print("Instead use the .env file with QLMT_PGPASS")
     sys.exit(1)
 
-loaded = load_dotenv(dotenv_path=os.path.join(os.getcwd(), ".env"), override=True)
-if not loaded:
+#: The .env read for settings: the one in the directory the process started in.
+#: Only its QLMT_ settings are read, into the Settings model alone. It is never
+#: loaded into os.environ: that once let any variable in it (HTTPS_PROXY,
+#: SSL_CERT_FILE, ...) replace the real one for the whole process and every
+#: library in it, so whoever could write a .env where a tool was run could
+#: redirect its outbound calls, the ones carrying an AI API key among them.
+DOTENV_PATH = os.path.join(os.getcwd(), ".env")
+if not os.path.isfile(DOTENV_PATH):
     print(f"Warning: No .env file found in {os.getcwd()}")
 
 
@@ -68,7 +74,16 @@ CLI_ALIASES = {"use_pg_hal_cache": "--use-postgres-hal-cache"}
 class Settings(BaseSettings):
     """Every knob the middle tier has. Pure data - no I/O beyond reading env."""
 
-    model_config = SettingsConfigDict(env_prefix="QLMT_", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_prefix="QLMT_", extra="ignore", env_file=DOTENV_PATH, env_file_encoding="utf-8"
+    )
+
+    @classmethod
+    def settings_customise_sources(
+        cls, settings_cls, init_settings, env_settings, dotenv_settings, file_secret_settings
+    ):
+        # .env before the real environment, as when it was loaded with override=True
+        return init_settings, dotenv_settings, env_settings, file_secret_settings
 
     # -- where config and queries live
     config_path: str = "config"
