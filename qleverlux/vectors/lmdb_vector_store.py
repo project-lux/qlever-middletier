@@ -22,6 +22,18 @@ On 327k concepts a Harrier graph on 512 of 1024 dimensions kept full-width recal
 vector instead of 1112; at 256 text recall@100 fell to 0.79 (files/graph_quantization.py).
 It needs a bigger rerank pool for that, which :data:`NARROW_RERANK_FACTOR` gives it by default.
 
+Or the graph is built on a linear projection of the vectors, ``normalize((v - mean) @ basis)``,
+which keeps far more than slicing at the same width: a map from files/learn_projection.py, or
+query-aware PCA (the same script with ``--epochs 0``). On local LUX data at 256 dimensions a learned
+map matched full-width recall for concepts, events, sets and places, and query-aware PCA at 320 was
+the best agent graph that fits (agents' full-width graph is over LMDB's 4 GiB limit), where slicing
+lost 10-25 points of topical recall@100. The projection is stored beside the graph, written in
+the same transaction (``{scope}.graph`` b"projection": f32 mean then the D x G basis), and recorded
+in the meta as ``graph_projection`` with ``graph_dimensions`` = G, so everything that walks the
+graph - queries, rewalk seeds, filtered walks - goes through it, and the rerank uses the full
+vectors as for a sliced graph. A smaller graph is also fewer pages to fault in per walk when the
+store is not all in memory.
+
 Large LMDB values live in contiguous overflow pages starting 16 bytes past a page boundary (the
 page header), so a 48-byte PAD makes a vector chunk 64-byte aligned, and a (page - 16)-byte pad
 puts the graph exactly on a page boundary. Reading a chunk is a zero-copy NumPy view: fetching
@@ -170,6 +182,54 @@ def _graph_rows(vectors: np.ndarray, graph_dims: int) -> np.ndarray:
     return sliced / np.where(norms > 0, norms, 1)
 
 
+#: Key of a graph's projection in the scope's graph table.
+PROJECTION_KEY = b"projection"
+
+
+def _check_projection(projection, dims: int) -> tuple[np.ndarray, np.ndarray]:
+    """``(mean, basis)`` as f32, checked to map ``dims``-wide vectors to fewer (or as many) dimensions."""
+    mean, basis = (np.ascontiguousarray(part, dtype=np.float32) for part in projection)
+    if mean.shape != (dims,) or basis.ndim != 2 or basis.shape[0] != dims or not 0 < basis.shape[1] <= dims:
+        raise ValueError(f"a projection with mean {mean.shape} and basis {basis.shape} does not fit {dims}d vectors")
+    return mean, basis
+
+
+def _projected(vectors: np.ndarray, mean: np.ndarray, basis: np.ndarray) -> np.ndarray:
+    """``vectors`` as a projected graph sees them: centred, projected, re-normalized (a zero row stays zero)."""
+    out = (np.asarray(vectors, dtype=np.float32) - mean) @ basis
+    norms = np.linalg.norm(out, axis=1, keepdims=True)
+    return out / np.where(norms > 0, norms, 1)
+
+
+def _graph_settings(dims: int, graph_dimensions: int, projection, projection_info: dict | None,
+                    meta: dict) -> tuple[int, tuple[np.ndarray, np.ndarray] | None]:
+    """The graph's width and projection for a build, checked against the store's ``meta``."""
+    if projection is None:
+        return _check_graph_dims(graph_dimensions, dims), None
+    if graph_dimensions:
+        raise ValueError("a graph is built on a projection or on the leading dimensions, not both")
+    mean, basis = _check_projection(projection, dims)
+    trained_on, built_by = (projection_info or {}).get("model"), meta.get("model")
+    if trained_on and built_by and trained_on != built_by:
+        raise ValueError(f"the projection was fitted to {trained_on} vectors; this scope holds {built_by} vectors")
+    return basis.shape[1], (mean, basis)
+
+
+def _write_projection(txn: lmdb.Transaction, dbs: dict, meta: dict, dims: int, graph_dims: int, projection,
+                      projection_info: dict | None) -> None:
+    """Records the build's width and projection in ``meta`` (to be written by the caller) and the
+    graph table, removing any a previous build left: they are properties of the build."""
+    meta.pop("graph_dimensions", None)
+    meta.pop("graph_projection", None)
+    txn.delete(PROJECTION_KEY, db=dbs["graph"])
+    if graph_dims < dims or projection is not None:
+        meta["graph_dimensions"] = graph_dims
+    if projection is not None:
+        mean, basis = projection
+        txn.put(PROJECTION_KEY, mean.tobytes() + basis.tobytes(), db=dbs["graph"])
+        meta["graph_projection"] = {**(projection_info or {}), "dimensions": graph_dims}
+
+
 def _check_graph_dims(graph_dims: int, dims: int) -> int:
     """``graph_dims`` as stored: 0 means the vectors' full width."""
     if graph_dims == 0:
@@ -214,15 +274,19 @@ def build_store(
     chunk_rows: int = CHUNK_ROWS,
     generation: int = 1,
     graph_dimensions: int = 0,
+    projection: tuple[np.ndarray, np.ndarray] | None = None,
+    projection_info: dict | None = None,
 ) -> None:
     """Builds a scope in one go from in-memory arrays: graph, vectors and IRI maps in one transaction.
-    ``graph_dimensions`` builds the graph on that many leading dimensions (0: all of them)."""
+    ``graph_dimensions`` builds the graph on that many leading dimensions (0: all of them);
+    ``projection`` (mean, basis) on ``normalize((v - mean) @ basis)`` instead."""
     vectors = np.ascontiguousarray(vectors, dtype=np.float32)
     n, dim = vectors.shape
     if len(iris) != n:
         raise ValueError(f"{len(iris)} IRIs for {n} vectors")
-    graph_dims = _check_graph_dims(graph_dimensions, dim)
-    monolith = _build_graph([(0, _graph_rows(vectors, graph_dims))], n, graph_dims, quantization, connectivity, refine)
+    graph_dims, projection = _graph_settings(dim, graph_dimensions, projection, projection_info, {})
+    rows = _projected(vectors, *projection) if projection is not None else _graph_rows(vectors, graph_dims)
+    monolith = _build_graph([(0, rows)], n, graph_dims, quantization, connectivity, refine)
 
     iri_bytes = sum(len(s.encode()) for s in iris)
     payload = vectors.nbytes + len(monolith) + 2 * (iri_bytes + 32 * n)
@@ -251,8 +315,7 @@ def build_store(
             "graph_pad": graph_pad,
             "complete": True,
         }
-        if graph_dims < dim:
-            meta["graph_dimensions"] = graph_dims
+        _write_projection(txn, dbs, meta, dim, graph_dims, projection, projection_info)
         txn.put(b"meta", json.dumps(meta).encode(), db=dbs["meta"])
     env.close()
 
@@ -345,19 +408,22 @@ class VectorWriter:
 
 
 def build_index(path: str, scope: str | None, *, quantization: Scalar = GRAPH_QUANTIZATION, connectivity: int = 16,
-                refine: bool = True, map_size: int = 1 << 40, graph_dimensions: int = 0) -> dict:
+                refine: bool = True, map_size: int = 1 << 40, graph_dimensions: int = 0,
+                projection: tuple[np.ndarray, np.ndarray] | None = None, projection_info: dict | None = None) -> dict:
     """Builds a scope's HNSW graph from its stored vectors and publishes it as the next generation.
 
-    ``graph_dimensions`` builds it on that many leading dimensions of each vector (0: all of them).
-    Like the quantization it is a property of this build, not the store: rebuilding without it
-    goes back to the full width."""
+    ``graph_dimensions`` builds it on that many leading dimensions of each vector (0: all of them);
+    ``projection`` (mean, basis) on ``normalize((v - mean) @ basis)`` instead, the projection
+    stored beside the graph in the same transaction. ``projection_info`` is recorded with it (where
+    it came from); a ``model`` there must match the scope's. Like the quantization both are
+    properties of this build, not the store: rebuilding without them goes back to the full width."""
     env = lmdb.open(path, map_size=map_size, max_dbs=MAX_DBS, subdir=True)
     dbs = _open_dbs(env, scope, create=False)
     with env.begin() as txn:
         meta = json.loads(txn.get(b"meta", db=dbs["meta"]))
     dims, rows, dtype = meta["dimensions"], meta["chunk_rows"], np.dtype(meta.get("vector_dtype", "float32"))
     try:
-        graph_dims = _check_graph_dims(graph_dimensions, dims)
+        graph_dims, projection = _graph_settings(dims, graph_dimensions, projection, projection_info, meta)
     except ValueError:
         env.close()
         raise
@@ -366,18 +432,32 @@ def build_index(path: str, scope: str | None, *, quantization: Scalar = GRAPH_QU
         with env.begin(buffers=True) as txn:
             for key, value in txn.cursor(db=dbs["vectors"]):
                 block = np.frombuffer(value, dtype=dtype, offset=PAD).reshape(-1, dims)
-                yield struct.unpack(">I", bytes(key))[0] * rows, _graph_rows(block, graph_dims)
+                first = struct.unpack(">I", bytes(key))[0] * rows
+                yield first, _projected(block, *projection) if projection is not None else _graph_rows(block, graph_dims)
 
     monolith = _build_graph(chunks(), meta["count"], graph_dims, quantization, connectivity, refine)
     with env.begin(write=True) as txn:
         meta.update(graph_pad=_write_graph(txn, env, dbs, monolith), quantization=quantization.name,
                     connectivity=connectivity, generation=meta.get("generation", 0) + 1)
-        meta.pop("graph_dimensions", None)
-        if graph_dims < dims:
-            meta["graph_dimensions"] = graph_dims
+        _write_projection(txn, dbs, meta, dims, graph_dims, projection, projection_info)
         txn.put(b"meta", json.dumps(meta).encode(), db=dbs["meta"])
     env.close()
     return meta
+
+
+def load_projection(path: str) -> tuple[tuple[np.ndarray, np.ndarray], dict]:
+    """A map saved by files/learn_projection.py: ``((mean, basis), info)``, info naming the file and,
+    where it was saved with them, the model and scope it was fitted to and the training step."""
+    saved = np.load(path, allow_pickle=False)
+    info = {"file": os.path.basename(path)}
+    for key in ("model", "scope", "step"):
+        if key in saved.files:
+            try:
+                value = saved[key]
+            except ValueError:  # saved as None: an object array, which is not unpickled
+                continue
+            info[key] = value.item() if value.shape == () else value.tolist()
+    return (saved["mean"], saved["basis"]), info
 
 
 class _GraphSnapshot:
@@ -388,8 +468,16 @@ class _GraphSnapshot:
     def __init__(self, env: lmdb.Environment, dbs: dict, threads: int = 0):
         self.txn: lmdb.Transaction | None = env.begin(buffers=True)
         self.index: DenseIndex | None = None
+        self.projection: tuple[np.ndarray, np.ndarray] | None = None
         try:
             self.meta = json.loads(bytes(self.txn.get(b"meta", db=dbs["meta"])))
+            if "graph_projection" in self.meta:  # read in the same snapshot as the graph it belongs to
+                raw = self.txn.get(PROJECTION_KEY, db=dbs["graph"])
+                if raw is None:
+                    raise LookupError(f"scope {self.meta.get('scope')!r} names a graph projection it does not hold")
+                dims, width = self.meta["dimensions"], self.meta["graph_dimensions"]
+                values = np.frombuffer(raw, dtype=np.float32).copy()
+                self.projection = (values[:dims], values[dims:].reshape(dims, width))
             graph = self.txn.get(b"safegraphs", db=dbs["graph"])
             if graph is None:
                 raise LookupError(f"scope {self.meta.get('scope')!r} has no graph yet; run build_index")
@@ -408,6 +496,12 @@ class _GraphSnapshot:
         except BaseException:
             self.close()
             raise
+
+    def rows(self, vectors: np.ndarray) -> np.ndarray:
+        """Full-width rows as this graph was built on them: projected, sliced, or as they are."""
+        if self.projection is not None:
+            return _projected(vectors, *self.projection)
+        return _graph_rows(vectors, self.meta.get("graph_dimensions", self.meta["dimensions"]))
 
     @property
     def in_place(self) -> bool:
@@ -579,6 +673,7 @@ class LmdbVectorStore:
             "entries": len(graph.index),
             "dimensions": graph.meta["dimensions"],
             "graph_dimensions": graph.meta.get("graph_dimensions", graph.meta["dimensions"]),
+            "projection": graph.meta.get("graph_projection"),
             "owned_bytes": graph.index.describe().memory_usage,
             "generation": graph.meta["generation"],
         }
@@ -692,8 +787,8 @@ class LmdbVectorStore:
 
     @staticmethod
     def _for_graph(graph: _GraphSnapshot, queries: np.ndarray) -> np.ndarray:
-        """Query rows of the vectors' width cut to the width ``graph`` was built on."""
-        return _graph_rows(queries, graph.meta.get("graph_dimensions", graph.meta["dimensions"]))
+        """Query rows of the vectors' width as ``graph`` was built on them (projected or cut)."""
+        return graph.rows(queries)
 
     def _walk(self, graph: _GraphSnapshot, queries: np.ndarray, wanted: int, expansion_factor: int) -> dict[int, float]:
         """One HNSW walk per query row; each id found with its best quantized cosine (over the

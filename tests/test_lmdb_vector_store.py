@@ -14,6 +14,8 @@ middle tier's own environment does not need them). Run with the vectors venv:
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 np = pytest.importorskip("numpy")
@@ -253,6 +255,106 @@ def test_a_graph_on_fewer_dimensions_walks_narrow_and_scores_full(tmp_path):
         s.close()
     # Rebuilding without it goes back to the full width.
     assert "graph_dimensions" not in lvs.build_index(path, "concept")
+
+
+def _pca(data, width):
+    mean = data.mean(axis=0)
+    basis = np.linalg.svd(data - mean, full_matrices=False)[2][:width].T
+    return mean.astype(np.float32), np.ascontiguousarray(basis, dtype=np.float32)
+
+
+def test_a_projected_graph_walks_projected_and_scores_full(tmp_path):
+    rng = np.random.default_rng(11)
+    # Clustered, so the leading principal directions carry the neighbourhoods.
+    centres = rng.standard_normal((40, 32)).astype(np.float32) * 3
+    data = centres[rng.integers(0, 40, 2000)] + rng.standard_normal((2000, 32)).astype(np.float32)
+    unit = data / np.linalg.norm(data, axis=1, keepdims=True)
+    iris = [f"https://example.org/data/concept/{i}" for i in range(2000)]
+    path = str(tmp_path / "store.lmdb")
+    lvs.build_store(path, iris, data, scope="concept")
+    mean, basis = _pca(data, 12)
+    meta = lvs.build_index(path, "concept", projection=(mean, basis), projection_info={"file": "pca12.npz"})
+    assert (meta["graph_dimensions"], meta["dimensions"]) == (12, 32)
+    assert meta["graph_projection"] == {"file": "pca12.npz", "dimensions": 12}
+    s = lvs.LmdbVectorStore(path, "concept")
+    try:
+        assert s.describe()["projection"]["file"] == "pca12.npz"
+        # The graph sees projected rows: a query walks as (q - mean) @ basis, renormalised.
+        seen = []
+        rows = s._graph.rows
+        s._graph.rows = lambda v: seen.append(v) or rows(v)
+        hits = s.search_global(data[7], 10, rerank_factor=1, expansion_factor=200)
+        del s._graph.rows
+        projected = (data[7] - mean) @ basis
+        assert np.allclose(rows(seen[0][:1]), projected / np.linalg.norm(projected), atol=1e-5)
+        # Scores are full-width cosines, and the top hit is the record itself.
+        assert hits[0][0] == iris[7]
+        for iri, score in hits:
+            assert score == pytest.approx(float(unit[iris.index(iri)] @ unit[7]), abs=1e-5)
+        # With the default (narrow) rerank pool, recall against exact search is high.
+        recall = []
+        for row in rng.choice(2000, 50, replace=False):
+            truth = set(np.argsort(-(unit @ unit[row]))[:10].tolist())
+            found = {iris.index(iri) for iri, _ in s.search_global(data[row], 10, expansion_factor=200)}
+            recall.append(len(truth & found) / 10)
+        assert np.mean(recall) >= 0.95
+        # Rewalk seeds and filtered walks go through the projection too.
+        assert s.search_global(data[3], 5, expansion_factor=200, rewalk=3)[0][0] == iris[3]
+        assert s.search_candidates(data[3], iris[:1500], 5, exact_threshold=10, expansion_factor=400)[0][0] == iris[3]
+    finally:
+        s.close()
+
+    # Rebuilding without it goes back to the full width and drops the stored projection. (A writer
+    # is another process in practice; py-lmdb opens a path once per process, so not concurrently here.)
+    meta = lvs.build_index(path, "concept")
+    assert "graph_dimensions" not in meta and "graph_projection" not in meta
+    s = lvs.LmdbVectorStore(path, "concept")
+    try:
+        assert s.describe()["projection"] is None and s._graph.projection is None
+        with s.env.begin() as txn:
+            assert txn.get(lvs.PROJECTION_KEY, db=s.dbs["graph"]) is None
+        assert s.search_global(data[7], 1, expansion_factor=200)[0][0] == iris[7]
+    finally:
+        s.close()
+
+
+def test_a_projection_must_fit_the_vectors_and_their_model(tmp_path):
+    data = np.random.default_rng(12).standard_normal((200, 8)).astype(np.float32)
+    iris = [f"https://example.org/data/concept/{i}" for i in range(200)]
+    path = str(tmp_path / "store.lmdb")
+    lvs.build_store(path, iris, data, scope="concept")
+    mean, basis = _pca(data, 4)
+    with pytest.raises(ValueError, match="does not fit"):
+        lvs.build_index(path, "concept", projection=(mean[:7], basis))
+    with pytest.raises(ValueError, match="does not fit"):
+        lvs.build_index(path, "concept", projection=(mean, np.ones((8, 9), np.float32)))
+    with pytest.raises(ValueError, match="not both"):
+        lvs.build_index(path, "concept", projection=(mean, basis), graph_dimensions=4)
+    # A map fitted to one model's vectors is refused for another's (meta["model"] is the writer's).
+    with lvs.lmdb.open(path, max_dbs=lvs.MAX_DBS, subdir=True) as env:
+        dbs = lvs._open_dbs(env, "concept", create=False)
+        with env.begin(write=True) as txn:
+            meta = json.loads(txn.get(b"meta", db=dbs["meta"]))
+            txn.put(b"meta", json.dumps({**meta, "model": "microsoft/harrier-oss-v1-0.6b"}).encode(), db=dbs["meta"])
+    with pytest.raises(ValueError, match="fitted to google/embeddinggemma-2"):
+        lvs.build_index(path, "concept", projection=(mean, basis), projection_info={"model": "google/embeddinggemma-2"})
+    s = lvs.LmdbVectorStore(path, "concept")
+    try:
+        assert s.meta["generation"] == 1 and "graph_projection" not in s.meta  # nothing was published
+    finally:
+        s.close()
+
+
+def test_a_saved_map_loads_with_where_it_came_from(tmp_path):
+    mean, basis = np.zeros(8, np.float32), np.eye(8, 4, dtype=np.float32)
+    np.savez(tmp_path / "harrier320.npz", mean=mean, basis=basis, model="microsoft/harrier-oss-v1-0.6b",
+             scope="agent", step=50)
+    (m, b), info = lvs.load_projection(str(tmp_path / "harrier320.npz"))
+    assert np.array_equal(m, mean) and np.array_equal(b, basis)
+    assert info == {"file": "harrier320.npz", "model": "microsoft/harrier-oss-v1-0.6b", "scope": "agent", "step": 50}
+    # learn_projection.py saves model=None for a store with no model: not unpickled, just left out
+    np.savez(tmp_path / "anon.npz", mean=mean, basis=basis, model=None)
+    assert lvs.load_projection(str(tmp_path / "anon.npz"))[1] == {"file": "anon.npz"}
 
 
 def test_graph_dimensions_must_fit_the_vectors(tmp_path):

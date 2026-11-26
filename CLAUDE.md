@@ -350,6 +350,11 @@ SERVICE <http://127.0.0.1:8081/sparql> {
   (`../vectors/data/`), and so does the USearch checkout. Serving in place needs USearch `840374af` with
   `files/usearch-view-ram-buffer.patch` applied; drop the patch once upstream has `view_ram_buffer`. Their
   tests skip without numpy, lmdb and usearch.
+  A scope's graph can be built narrower than its vectors, on the leading dimensions (`index --graph-dims`)
+  or on a linear map stored with the graph (`index --projection`, from `files/learn_projection.py`; `--epochs
+  0` there is query-aware PCA); either way the rerank uses the full vectors, over a 10× pool. Keep both:
+  agents' full-width graph is over LMDB's 4 GiB value limit, and under heavy load, with the store mostly
+  out of memory, a smaller graph is fewer pages to fault in per walk.
   Three things to keep: slice HNSW results to `counts[row]` *before* `keys_to_integers` (the rest of the buffer
   is garbage, and the walk returns at most `expansion_factor` hits), and never hold a `usearch.Executor`
   past the call that needs it — an undrained one spins about two cores even when idle. And don't read

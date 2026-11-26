@@ -236,14 +236,17 @@ def _limited(batches, limit: int):
 def cmd_index(args):
     from usearch import Scalar
 
-    from qleverlux.vectors.lmdb_vector_store import build_index
+    from qleverlux.vectors.lmdb_vector_store import build_index, load_projection
 
     started = time.time()
+    projection, info = load_projection(args.projection) if args.projection else (None, None)
     meta = build_index(args.store, args.scope, quantization=getattr(Scalar, args.quantization.upper()),
-                       connectivity=args.connectivity, graph_dimensions=args.graph_dims)
+                       connectivity=args.connectivity, graph_dimensions=args.graph_dims,
+                       projection=projection, projection_info=info)
     width = meta.get("graph_dimensions", meta["dimensions"])
+    how = f" through {meta['graph_projection']['file']}" if "graph_projection" in meta else ""
     print(f"{args.scope}: graph generation {meta['generation']} over {meta['count']:,} vectors "
-          f"({meta['quantization']}, M={meta['connectivity']}, {width} of {meta['dimensions']} dimensions) "
+          f"({meta['quantization']}, M={meta['connectivity']}, {width} of {meta['dimensions']} dimensions{how}) "
           f"in {time.time() - started:,.0f}s")
 
 
@@ -333,6 +336,9 @@ def main(argv=None):
     p.add_argument("--connectivity", type=int, default=16)
     p.add_argument("--graph-dims", type=int, default=0,
                    help="build the graph on the first N dimensions, reranking on all of them (default: all)")
+    p.add_argument("--projection", default=None,
+                   help="build the graph on this map (mean, basis .npz from files/learn_projection.py; "
+                        "--epochs 0 there saves query-aware PCA), reranking on all dimensions")
     p = add("load", cmd_load, "store", "scope")
     p.add_argument("shards", nargs="+", help="shard directories written by `embed --out` (other scopes are ignored)")
     p.add_argument("--restart", action="store_true", help="replace the scope if the store already has it")
@@ -341,11 +347,17 @@ def main(argv=None):
     p.add_argument("--connectivity", type=int, default=16)
     p.add_argument("--graph-dims", type=int, default=0,
                    help="build the graph on the first N dimensions, reranking on all of them (default: all)")
+    p.add_argument("--projection", default=None,
+                   help="build the graph on this map (mean, basis .npz from files/learn_projection.py; "
+                        "--epochs 0 there saves query-aware PCA), reranking on all dimensions")
     p = add("index", cmd_index, "store", "scope")
     p.add_argument("--quantization", default="e4m3", help="graph scalar type: e4m3 (default), bf16, f16, f32")
     p.add_argument("--connectivity", type=int, default=16)
     p.add_argument("--graph-dims", type=int, default=0,
                    help="build the graph on the first N dimensions, reranking on all of them (default: all)")
+    p.add_argument("--projection", default=None,
+                   help="build the graph on this map (mean, basis .npz from files/learn_projection.py; "
+                        "--epochs 0 there saves query-aware PCA), reranking on all dimensions")
     p = add("query", cmd_query, "store", "labels", "scope", "device")
     p.add_argument("text")
     p.add_argument("--top", type=int, default=10)
