@@ -126,7 +126,7 @@ When the embedding machine can't reach QLever, extract Stage 1 on the QLever hos
 this repo's `lux_embed/` and Python 3.10+ with `lmdb`: no torch, and no record LMDB.
 
 ```bash
-python -m lux_embed facets --qlever http://localhost:7011 --out facets.lmdb             # work, agent, set
+python -m lux_embed facets --qlever http://localhost:7011 --out facets.lmdb             # work, agent, set, place
 python -m lux_embed facets --qlever http://localhost:7011 --out facets.lmdb --scope set  # or one scope
 ```
 

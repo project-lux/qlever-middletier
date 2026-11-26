@@ -294,7 +294,7 @@ def main(argv=None):
     p = add("facets", cmd_facets)
     p.add_argument("--qlever", required=True, help="QLever endpoint serving the dataset, e.g. http://localhost:7011")
     p.add_argument("--out", required=True, help="facet LMDB directory to write (copy it to the embedding machine)")
-    p.add_argument("--scope", default=None, choices=sorted(FACET_SCOPES), help="one scope (default: all three)")
+    p.add_argument("--scope", default=None, choices=sorted(FACET_SCOPES), help="one scope (default: all of them)")
     p.add_argument("--batch", type=int, default=FACET_BATCH, help="targets per QLever query (default %(default)s)")
     p.add_argument("--workers", type=int, default=4, help="concurrent QLever queries")
     p.add_argument("--timeout", type=float, default=120, help="seconds per QLever query before the batch is split")

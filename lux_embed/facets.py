@@ -1,4 +1,4 @@
-"""Stage 1: incoming facets from QLever - what *other* records say about a work, agent or set.
+"""Stage 1: incoming facets from QLever - what *other* records say about a work, agent, set or place.
 
 The design doc imagined bulk TSV exports; batched ``VALUES`` queries do the same job without
 multi-GB intermediate files, resume with the embedding loop, and stay inside QLever's query
@@ -6,7 +6,7 @@ timeout. Each batch answers ``(target, kind, value, count)`` rows, grouped per t
 
 Ranking:
 * works   - by frequency (a work's carrying objects mostly agree; this just caps edition noise);
-* agents, sets - by tf-idf, ``count * log((N + 1) / (df + 1))``, where ``df`` is how many objects
+* agents, sets, places - by tf-idf, ``count * log((N + 1) / (df + 1))``, where ``df`` is how many objects
   carry that value overall, so "photograph" or "England" stops crowding out what is distinctive.
 
 The graph patterns use the ``lux:`` predicates the LUX QLever export emits. A pattern whose
@@ -55,6 +55,12 @@ SCOPE_FACETS = {
          [("subject", "work subject"), "work type"], ["agentOfWorkBeginning"]),
     ],
     "set": [("?x lux:itemMemberOfSet ?target", ITEM_FACETS, ["creator", "object type", "subject"], ["itemMemberOfSet"])],
+    # A place card is otherwise a name and its part-of chain; the works about a place say what it is
+    # known for. On full LUX 41% of places have one, two thirds of those exactly one. Specimen
+    # collecting localities (placeOfItemEncounter, 28% of places) are left out: almost none has a
+    # work about it, and what was collected there is not how people search for a place.
+    "place": [("?x lux:workAboutPlace ?target", WORK_FACETS, [("subject", "work subject"), "work type"],
+               ["workAboutPlace"])],
 }
 # scope -> {span: [(pattern binding ?s and ?e for a ?target, predicates it needs), ...]}. A span's
 # patterns are UNIONed and its min start / max end become one date range on the card.
@@ -82,8 +88,8 @@ SCOPE_DATES = {
 }
 #: Kinds whose values are a (start year, end year) range rather than records.
 DATE_KINDS = frozenset(span for spans in SCOPE_DATES.values() for span in spans)
-TOP = {"work": 5, "agent": 8, "set": 10}
-TFIDF_SCOPES = {"agent", "set"}
+TOP = {"work": 5, "agent": 8, "set": 10, "place": 8}
+TFIDF_SCOPES = {"agent", "set", "place"}
 UBIQUITOUS = 0.5  # a value on more than half of all objects ("works") says nothing about anyone
 # Kinds kept however common. A work's carrier type is what tells a book from a journal, and on full
 # LUX Books is on 77% of objects; the blanket "Collection Item" (99.8%) is dropped by the cards.

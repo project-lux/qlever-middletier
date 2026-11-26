@@ -39,7 +39,7 @@ import lmdb
 from .facets import DATE_KINDS, FACET_BATCH, PREFIX, SCOPE_FACETS, Facets, QLever
 from .records import uuid_bytes, uuid_of
 
-FACET_SCOPES = tuple(SCOPE_FACETS)  # work, agent, set
+FACET_SCOPES = tuple(SCOPE_FACETS)  # work, agent, set, place
 MAP_SIZE = 1 << 40
 
 
